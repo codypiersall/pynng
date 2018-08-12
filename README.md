@@ -10,3 +10,4 @@ TODO
 * Generating the API file is fragile, becuase it is not remotely C syntax
   aware; it's just dumb old sed.
 * Do the right thing for 32/64 bit Python on Windows.
+* Support Mac
