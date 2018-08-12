@@ -10,6 +10,7 @@ ffibuilder.set_source("_nng",
    r""" // passed to the real C compiler,
         // contains implementation of things declared in cdef()
         #include <nng.h>
+        #include <protocol/pair1/pair.h>
 
     """,
     # libraries=['nng'],
