@@ -16,7 +16,7 @@ else:
     libraries = []
 
 
-ffibuilder.set_source("_nng",
+ffibuilder.set_source("pynng._nng",
    r""" // passed to the real C compiler,
         // contains implementation of things declared in cdef()
         #define NNG_DECL

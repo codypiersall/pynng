@@ -1,5 +1,13 @@
 Python bindings for Nanomsg, using cffi
 
+Goals
+=====
+
+Provide a Pythonic, works-out-of-the box on Windows and Unix-y platforms.
+
+This project is in the very early stages now; support for Mac is non-existent,
+support for Windows is limited.
+
 TODO
 ====
 

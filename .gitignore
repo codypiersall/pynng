@@ -2,3 +2,7 @@
 *.o
 *.so
 _nng_py.c
+Release
+_nng.c
+*.pyd
+__pycache__
