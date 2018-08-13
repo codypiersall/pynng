@@ -57,9 +57,9 @@ class Socket:
         ret = lib.nng_recv(self.socket, data, size_t, lib.NNG_FLAG_ALLOC)
         if ret:
             raise Exception('TODO: better exception')
-        the_data = ffi.unpack(data[0], size_t[0])
-        lib.nng_free(data[0], len(data))
-        return the_data
+        recvd = ffi.unpack(data[0], size_t[0])
+        lib.nng_free(data[0], size_t[0])
+        return recvd
 
     def send(self, data):
         """
@@ -67,6 +67,7 @@ class Socket:
         Sends ``data`` on socket.
 
         """
+
         lib.nng_send(self.socket, data, len(data), 0)
 
 
