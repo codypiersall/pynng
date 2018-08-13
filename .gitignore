@@ -6,3 +6,4 @@ Release
 _nng.c
 *.pyd
 __pycache__
+*.swp
