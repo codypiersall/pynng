@@ -12,4 +12,14 @@ function process_header() {
 
 }
 process_header nng/src/nng.h >> nng_api.h
+process_header nng/src/protocol/bus0/bus.h >> nng_api.h
+process_header nng/src/protocol/pair0/pair.h >> nng_api.h
 process_header nng/src/protocol/pair1/pair.h >> nng_api.h
+process_header nng/src/protocol/pipeline0/pull.h >> nng_api.h
+process_header nng/src/protocol/pipeline0/push.h >> nng_api.h
+process_header nng/src/protocol/pubsub0/pub.h >> nng_api.h
+process_header nng/src/protocol/pubsub0/sub.h >> nng_api.h
+process_header nng/src/protocol/reqrep0/rep.h >> nng_api.h
+process_header nng/src/protocol/reqrep0/req.h >> nng_api.h
+process_header nng/src/protocol/survey0/respond.h >> nng_api.h
+process_header nng/src/protocol/survey0/survey.h >> nng_api.h

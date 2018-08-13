@@ -21,7 +21,18 @@ ffibuilder.set_source("pynng._nng",
         // contains implementation of things declared in cdef()
         #define NNG_DECL
         #include <nng.h>
+        #include <protocol/bus0/bus.h>
+        #include <protocol/pair0/pair.h>
         #include <protocol/pair1/pair.h>
+        #include <protocol/pipeline0/pull.h>
+        #include <protocol/pipeline0/push.h>
+        #include <protocol/pubsub0/pub.h>
+        #include <protocol/pubsub0/sub.h>
+        #include <protocol/reqrep0/req.h>
+        #include <protocol/reqrep0/rep.h>
+        #include <protocol/survey0/respond.h>
+        #include <protocol/survey0/survey.h>
+
 
     """,
     libraries=libraries,
