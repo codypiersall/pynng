@@ -25,14 +25,19 @@ class Socket:
 
         ``dialer`` and ``flags`` usually do not need to be given.
         """
-        lib.nng_dial(self.socket, convert_address(address), dialer, flags)
+        ret = lib.nng_dial(self.socket, convert_address(address), dialer, flags)
+        if ret:
+            raise Exception('TODO: better exception')
 
     def listen(self, address, listener=ffi.NULL, flags=0):
         """Listen at specified address; similar to nanomsg.bind()
 
         ``listener`` and ``flags`` usually do not need to be given.
         """
-        lib.nng_listen(self.socket, convert_address(address), listener, flags)
+        ret = lib.nng_listen(self.socket, convert_address(address), listener, flags)
+        if ret:
+            raise Exception('TODO: better exception')
+
 
     def close(self):
         lib.nng_close(self.socket)
@@ -43,6 +48,27 @@ class Socket:
     @property
     def socket(self):
          return self._socket_pointer[0]
+
+    def recv(self):
+        """recv() on the socket.  Allows the nanomsg library to allocate and
+        manage the buffer, and calls nng_free afterward."""
+        data = ffi.new('char *[]', 1)
+        size_t = ffi.new('size_t []', 1)
+        ret = lib.nng_recv(self.socket, data, size_t, lib.NNG_FLAG_ALLOC)
+        if ret:
+            raise Exception('TODO: better exception')
+        the_data = ffi.unpack(data[0], size_t[0])
+        lib.nng_free(data[0], len(data))
+        return the_data
+
+    def send(self, data):
+        """
+
+        Sends ``data`` on socket.
+
+        """
+        lib.nng_send(self.socket, data, len(data), 0)
+
 
 class Pair1Socket(Socket):
     """A Pair v1 socket."""
