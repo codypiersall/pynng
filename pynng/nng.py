@@ -34,8 +34,26 @@ def check_open(ret_val):
 
 class Socket:
     """The base socket.  It should not be instantiated directly."""
-    def __init__(self):
+
+    def __init__(self, opener=None, dial=None, listen=None):
+        """Initialize socket.
+        ``opener`` is the function in the ffi bindings used to initialize the
+        specific socket.  For example, for a Pair1 socket, the function is
+        ``ffi.nng_pair1_open``
+        If ``dial`` is not None, attempt to dial the specified address.
+        If ``listen`` is not None, attempt to listen at the specified address.
+
+        """
         self._socket_pointer = ffi.new('nng_socket[]', 1)
+        if opener is not None:
+            self.opener = opener
+        if opener is None and not hasattr(self, 'opener'):
+            raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
+        check_open(self.opener(self._socket_pointer))
+        if dial is not None:
+            self.dial(dial)
+        if listen is not None:
+            self.listen(listen)
 
     def dial(self, address, dialer=ffi.NULL, flags=0):
         """Dial specified address; similar to nanomgs.connect().
@@ -89,78 +107,57 @@ class Socket:
 
 class Bus0(Socket):
     """A bus0 socket"""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_bus0_open(self._socket_pointer))
+    opener = lib.nng_bus0_open
 
 
 class Pair0(Socket):
     """A pair0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_pair0_open(self._socket_pointer))
+    opener = lib.nng_pair0_open
 
 
 class Pair1(Socket):
     """A pair1 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_pair1_open(self._socket_pointer))
+    opener = lib.nng_pair1_open
 
 
 class Pull0(Socket):
     """A pull0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_pull0_open(self._socket_pointer))
+    opener = lib.nng_pull0_open
 
 
 class Push0(Socket):
     """A push0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_push0_open(self._socket_pointer))
+    opener = lib.nng_push0_open
 
 
 class Pub0(Socket):
-    """A Pub0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_pub0_open(self._socket_pointer))
+    """A pub0 socket."""
+    opener = lib.nng_pub0_open
 
 
 class Sub0(Socket):
     """A Sub0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_sub0_open(self._socket_pointer))
+    opener = lib.nng_sub0_open
 
 
 class Req0(Socket):
     """A Req0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_req0_open(self._socket_pointer))
+    opener = lib.nng_req0_open
 
 
 class Rep0(Socket):
     """A Rep0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_rep0_open(self._socket_pointer))
-
-
-class Respondent0(Socket):
-    """A respondent0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_respondent0_open(self._socket_pointer))
+    opener = lib.nng_rep0_open
 
 
 class Surveyor0(Socket):
     """A surveyor0 socket."""
-    def __init__(self):
-        super().__init__()
-        check_open(lib.nng_surveyor0_open(self._socket_pointer))
+    opener = lib.nng_surveyor0_open
+
+
+class Respondent0(Socket):
+    """A respondent0 socket."""
+    opener = lib.nng_respondent0_open
+
 
 
