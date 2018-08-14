@@ -36,7 +36,7 @@ class _NNGOption:
 
 
 class IntOption(_NNGOption):
-    """Descriptor for getting/setting integers"""
+    """Descriptor for getting/setting integer options"""
     def __get__(self, instance, owner):
         return instance._getopt_int(self.option)
 
@@ -54,7 +54,7 @@ class MsOption(_NNGOption):
 
 
 class StringOption(_NNGOption):
-    """Descriptor for getting/setting durations (in milliseconds)"""
+    """Descriptor for getting/setting string options"""
     def __get__(self, instance, owner):
         return instance._getopt_string(self.option)
 
@@ -209,6 +209,12 @@ class Socket:
         # attempt to accept floats that are exactly int
         if nng.nng_setopt_int(self.socket, opt_as_char, value):
             raise Exception("TODO: Better setopt")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *tb_info):
+        self.close()
 
     recv_timeout = MsOption('recv-timeout')
     send_timeout = MsOption('send-timeout')
