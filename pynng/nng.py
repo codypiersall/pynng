@@ -14,6 +14,7 @@ Pair1
 Pull0 Push0
 Pub0 Sub0
 Req0 Rep0
+Socket
 Surveyor0 Respondent0
 '''.split()
 

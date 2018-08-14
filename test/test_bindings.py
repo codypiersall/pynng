@@ -83,3 +83,14 @@ def test_pubsub0():
         # responders can't send before receiving
         with pytest.raises(Exception):
             sub.send()
+
+
+def test_cannot_instantiate_socket_without_opener():
+    with pytest.raises(TypeError):
+        nng.Socket()
+
+
+def test_can_instantiate_socket_with_raw_opener():
+    with nng.Socket(opener=nng.nng.nng_sub0_open_raw):
+        pass
+
