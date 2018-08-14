@@ -312,10 +312,10 @@ int nng_pair0_open(nng_socket *);
 int nng_pair0_open_raw(nng_socket *);
 int nng_pair1_open(nng_socket *);
 int nng_pair1_open_raw(nng_socket *);
-int nng_pull0_open(nng_socket *);
-int nng_pull0_open_raw(nng_socket *);
 int nng_push0_open(nng_socket *);
 int nng_push0_open_raw(nng_socket *);
+int nng_pull0_open(nng_socket *);
+int nng_pull0_open_raw(nng_socket *);
 int nng_pub0_open(nng_socket *);
 int nng_pub0_open_raw(nng_socket *);
 int nng_sub0_open(nng_socket *);
@@ -324,7 +324,10 @@ int nng_req0_open(nng_socket *);
 int nng_req0_open_raw(nng_socket *);
 int nng_rep0_open(nng_socket *);
 int nng_rep0_open_raw(nng_socket *);
-int nng_respondent0_open(nng_socket *);
-int nng_respondent0_open_raw(nng_socket *);
 int nng_surveyor0_open(nng_socket *);
 int nng_surveyor0_open_raw(nng_socket *);
+int nng_respondent0_open(nng_socket *);
+int nng_respondent0_open_raw(nng_socket *);
+#define NNG_MAJOR_VERSION 1
+#define NNG_MINOR_VERSION 0
+#define NNG_PATCH_VERSION 1
