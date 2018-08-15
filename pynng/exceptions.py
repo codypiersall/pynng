@@ -177,7 +177,7 @@ EXCEPTION_MAP = {
 }
 
 
-def check_return(err):
+def check_err(err):
     """
     Raises an exception if the return value of an nng_function is nonzero.
 

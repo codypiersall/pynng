@@ -4,7 +4,7 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 from ._nng import ffi, lib as nng
-from .exceptions import check_return
+from .exceptions import check_err
 
 
 __all__ = '''
@@ -88,7 +88,7 @@ class Socket:
             self.opener = opener
         if opener is None and not hasattr(self, 'opener'):
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
-        check_return(self.opener(self._socket_pointer))
+        check_err(self.opener(self._socket_pointer))
         if dial is not None:
             self.dial(dial)
         if listen is not None:
@@ -104,7 +104,7 @@ class Socket:
         ``dialer`` and ``flags`` usually do not need to be given.
         """
         ret = nng.nng_dial(self.socket, to_char(address), dialer, flags)
-        check_return(ret)
+        check_err(ret)
 
     def listen(self, address, listener=ffi.NULL, flags=0):
         """Listen at specified address; similar to nanomsg.bind()
@@ -112,7 +112,7 @@ class Socket:
         ``listener`` and ``flags`` usually do not need to be given.
         """
         ret = nng.nng_listen(self.socket, to_char(address), listener, flags)
-        check_return(ret)
+        check_err(ret)
 
     def close(self):
         nng.nng_close(self.socket)
@@ -130,7 +130,7 @@ class Socket:
         data = ffi.new('char *[]', 1)
         size_t = ffi.new('size_t []', 1)
         ret = nng.nng_recv(self.socket, data, size_t, nng.NNG_FLAG_ALLOC)
-        check_return(ret)
+        check_err(ret)
         recvd = ffi.unpack(data[0], size_t[0])
         nng.nng_free(data[0], size_t[0])
         return recvd
@@ -138,7 +138,7 @@ class Socket:
     def send(self, data):
         """Sends ``data`` on socket."""
         err = nng.nng_send(self.socket, data, len(data), 0)
-        check_return(err)
+        check_err(err)
 
     def _setopt_int(self, option, value):
         """Sets the specified option to the specified value"""
@@ -157,7 +157,7 @@ class Socket:
         opt_as_char = to_char(option)
         # attempt to accept floats that are exactly int
         ret = nng.nng_getopt_int(self.socket, opt_as_char, i)
-        check_return(ret)
+        check_err(ret)
         return i[0]
 
     def _setopt_ms(self, option, value):
@@ -177,7 +177,7 @@ class Socket:
         ms = ffi.new('nng_duration []', 1)
         opt_as_char = to_char(option)
         ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
-        check_return(ret)
+        check_err(ret)
         return ms[0]
 
     def _setopt_string(self, option, value):
@@ -189,14 +189,14 @@ class Socket:
         opt_as_char = to_char(option)
         val_as_char = to_char(option)
         ret = nng.nng_setopt(self.socket, opt_as_char, val_as_char, len(value))
-        check_return(ret)
+        check_err(ret)
 
     def _getopt_string(self, option):
         """Gets the specified option"""
         ms = ffi.new('nng_duration []', 1)
         opt_as_char = to_char(option)
         ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
-        check_return(ret)
+        check_err(ret)
         return ms[0]
 
     def _setopt_bool(self, option, value):
@@ -205,7 +205,7 @@ class Socket:
         print(opt_as_char)
         # attempt to accept floats that are exactly int
         ret = nng.nng_setopt_int(self.socket, opt_as_char, value)
-        check_return(ret)
+        check_err(ret)
 
     def __enter__(self):
         return self
