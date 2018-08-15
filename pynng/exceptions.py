@@ -57,7 +57,7 @@ class AddressInUse(NNGException):  # NNG_EADDRINUSE
     pass
 
 
-class IncorrectState(NNGException):  # NNG_ESTATE
+class BadState(NNGException):  # NNG_ESTATE
     pass
 
 
@@ -153,7 +153,7 @@ EXCEPTION_MAP = {
     nng.NNG_EAGAIN: TryAgain,
     nng.NNG_ENOTSUP: NotSupported,
     nng.NNG_EADDRINUSE: AddressInUse,
-    nng.NNG_ESTATE: IncorrectState,
+    nng.NNG_ESTATE: BadState,
     nng.NNG_ENOENT: NoSuchFile,
     nng.NNG_EPROTO: ProtocolError,
     nng.NNG_EUNREACHABLE: DestinationUnreachable,
@@ -189,7 +189,9 @@ def check_err(err):
         return
 
     msg = nng.nng_strerror(err)
+    string = ffi.string(msg)
+    string = string.decode()
     exc = EXCEPTION_MAP.get(err, NNGException)
-    raise exc(msg, err)
+    raise exc(string, err)
 
 

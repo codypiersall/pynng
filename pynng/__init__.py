@@ -10,5 +10,5 @@ from .nng import (
     Socket,
     Surveyor0, Respondent0,
 )
-from . import exceptions as exc
+from . import exceptions
 

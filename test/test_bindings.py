@@ -23,7 +23,7 @@ def test_timeout_works():
         # default is -1
         assert s0.recv_timeout == -1
         s0.recv_timeout = 1  # 1 ms, not too long
-        with pytest.raises(Exception):  # TODO: better exception
+        with pytest.raises(nng.exceptions.Timeout):
             s0.recv()
 
 
@@ -55,14 +55,12 @@ def test_reqrep0():
         rep.send(response)
         assert req.recv() == response
 
-        # TODO: when changing exceptions elsewhere, change here!
-        # requesters can't receive before sending
-        with pytest.raises(Exception):
+        with pytest.raises(nng.exceptions.BadState):
             req.recv()
 
         # responders can't send before receiving
-        with pytest.raises(Exception):
-            rep.send()
+        with pytest.raises(nng.exceptions.BadState):
+            rep.send(b'I cannot do this why am I trying')
 
 
 def test_pubsub0():
@@ -77,12 +75,17 @@ def test_pubsub0():
 
         # TODO: when changing exceptions elsewhere, change here!
         # publishers can't recv
-        with pytest.raises(Exception):
+        with pytest.raises(nng.exceptions.NotSupported):
             pub.recv()
 
         # responders can't send before receiving
-        with pytest.raises(Exception):
-            sub.send()
+        with pytest.raises(nng.exceptions.NotSupported):
+            sub.send(b"""I am a bold subscribing socket.  I believe I was truly
+                         meant to be a publisher.  The world needs to hear what
+                         I have to say!
+                     """)
+            # alas, it was not meant to be, subscriber.  Not every socket was
+            # meant to publish.
 
 
 def test_cannot_instantiate_socket_without_opener():
@@ -95,5 +98,3 @@ def test_can_instantiate_socket_with_raw_opener():
         pass
 
 
-def test_exception_conditions_work():
-    pass

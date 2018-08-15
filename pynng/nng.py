@@ -193,6 +193,7 @@ class Socket:
 
     def _getopt_string(self, option):
         """Gets the specified option"""
+        # TODO COME ON CODY
         ms = ffi.new('nng_duration []', 1)
         opt_as_char = to_char(option)
         ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
