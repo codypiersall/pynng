@@ -91,6 +91,9 @@ def test_cannot_instantiate_socket_without_opener():
 
 
 def test_can_instantiate_socket_with_raw_opener():
-    with nng.Socket(opener=nng.nng.nng_sub0_open_raw):
+    with nng.Socket(opener=nng.lib.nng_sub0_open_raw):
         pass
 
+
+def test_exception_conditions_work():
+    pass

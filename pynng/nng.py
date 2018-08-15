@@ -4,6 +4,7 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 from ._nng import ffi, lib as nng
+from .exceptions import check_return
 
 
 __all__ = '''
@@ -63,11 +64,6 @@ class StringOption(_NNGOption):
         instance._setopt_string(self.option, value)
 
 
-def check_open(ret_val):
-    if ret_val:
-        raise Exception('TODO: Better exception')
-
-
 class Socket:
     """The base socket.  It should not be instantiated directly."""
 
@@ -92,7 +88,7 @@ class Socket:
             self.opener = opener
         if opener is None and not hasattr(self, 'opener'):
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
-        check_open(self.opener(self._socket_pointer))
+        check_return(self.opener(self._socket_pointer))
         if dial is not None:
             self.dial(dial)
         if listen is not None:
@@ -108,8 +104,7 @@ class Socket:
         ``dialer`` and ``flags`` usually do not need to be given.
         """
         ret = nng.nng_dial(self.socket, to_char(address), dialer, flags)
-        if ret:
-            raise Exception('TODO: better exception')
+        check_return(ret)
 
     def listen(self, address, listener=ffi.NULL, flags=0):
         """Listen at specified address; similar to nanomsg.bind()

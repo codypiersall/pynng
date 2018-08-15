@@ -7,3 +7,4 @@ _nng.c
 *.pyd
 __pycache__
 *.swp
+.pytest_cache
