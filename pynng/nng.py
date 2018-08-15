@@ -112,8 +112,7 @@ class Socket:
         ``listener`` and ``flags`` usually do not need to be given.
         """
         ret = nng.nng_listen(self.socket, to_char(address), listener, flags)
-        if ret:
-            raise Exception('TODO: better exception')
+        check_return(ret)
 
     def close(self):
         nng.nng_close(self.socket)
@@ -131,24 +130,24 @@ class Socket:
         data = ffi.new('char *[]', 1)
         size_t = ffi.new('size_t []', 1)
         ret = nng.nng_recv(self.socket, data, size_t, nng.NNG_FLAG_ALLOC)
-        if ret:
-            raise Exception('TODO: better exception')
+        check_return(ret)
         recvd = ffi.unpack(data[0], size_t[0])
         nng.nng_free(data[0], size_t[0])
         return recvd
 
     def send(self, data):
         """Sends ``data`` on socket."""
-        ret = nng.nng_send(self.socket, data, len(data), 0)
-        if ret:
-            raise Exception('TODO: better excecption')
+        err = nng.nng_send(self.socket, data, len(data), 0)
+        check_return(err)
 
     def _setopt_int(self, option, value):
         """Sets the specified option to the specified value"""
         opt_as_char = to_char(option)
         # attempt to accept floats that are exactly int
         if not int(value) == value:
-            raise Exception("TODO: better exception")
+            msg = 'Invalid value {} of type {}.  Expected int.'
+            msg = msg.format(value, type(value))
+            raise ValueError(msg)
         value = int(value)
         nng.nng_setopt_int(self.socket, opt_as_char, value)
 
@@ -157,16 +156,19 @@ class Socket:
         i = ffi.new('int []', 1)
         opt_as_char = to_char(option)
         # attempt to accept floats that are exactly int
-        if nng.nng_getopt_int(self.socket, opt_as_char, i):
-            raise Exception("TODO: better getopt exception")
+        ret = nng.nng_getopt_int(self.socket, opt_as_char, i)
+        check_return(ret)
         return i[0]
 
     def _setopt_ms(self, option, value):
         """Sets the specified option to the specified value"""
         opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
+        # attempt to accept floats that are exactly int (duration types are
+        # just integers)
         if not int(value) == value:
-            raise Exception("TODO: better exception")
+            msg = 'Invalid value {} of type {}.  Expected int.'
+            msg = msg.format(value, type(value))
+            raise ValueError(msg)
         value = int(value)
         nng.nng_setopt_ms(self.socket, opt_as_char, value)
 
@@ -174,9 +176,8 @@ class Socket:
         """Gets the specified option"""
         ms = ffi.new('nng_duration []', 1)
         opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
-        if nng.nng_getopt_ms(self.socket, opt_as_char, ms):
-            raise Exception("TODO: better getopt exception")
+        ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
+        check_return(ret)
         return ms[0]
 
     def _setopt_string(self, option, value):
@@ -187,15 +188,15 @@ class Socket:
         """
         opt_as_char = to_char(option)
         val_as_char = to_char(option)
-        nng.nng_setopt(self.socket, opt_as_char, val_as_char, len(value))
+        ret = nng.nng_setopt(self.socket, opt_as_char, val_as_char, len(value))
+        check_return(ret)
 
     def _getopt_string(self, option):
         """Gets the specified option"""
         ms = ffi.new('nng_duration []', 1)
         opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
-        if nng.nng_getopt_ms(self.socket, opt_as_char, ms):
-            raise Exception("TODO: better getopt exception")
+        ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
+        check_return(ret)
         return ms[0]
 
     def _setopt_bool(self, option, value):
@@ -203,8 +204,8 @@ class Socket:
         opt_as_char = to_char(option)
         print(opt_as_char)
         # attempt to accept floats that are exactly int
-        if nng.nng_setopt_int(self.socket, opt_as_char, value):
-            raise Exception("TODO: Better setopt")
+        ret = nng.nng_setopt_int(self.socket, opt_as_char, value)
+        check_return(ret)
 
     def __enter__(self):
         return self
