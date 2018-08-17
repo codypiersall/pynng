@@ -2,6 +2,8 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
+import functools
+
 
 from ._nng import ffi, lib as nng
 from .exceptions import check_err
@@ -187,25 +189,30 @@ class Socket:
         expects the string to be NULL terminated, and we don't.
         """
         opt_as_char = to_char(option)
-        val_as_char = to_char(option)
+        val_as_char = to_char(value)
         ret = nng.nng_setopt(self.socket, opt_as_char, val_as_char, len(value))
         check_err(ret)
 
     def _getopt_string(self, option):
-        """Gets the specified option"""
-        # TODO COME ON CODY
-        ms = ffi.new('nng_duration []', 1)
+        """Gets the specified string option"""
+        opt = ffi.new('char *[]', 1)
         opt_as_char = to_char(option)
-        ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
+        ret = nng.nng_getopt_string(self.socket, opt_as_char, opt)
         check_err(ret)
-        return ms[0]
+        return ffi.string(opt[0]).decode()
+
+    def _getopt_bool(self, option, value):
+        """Return the boolean value of the specified option"""
+        opt_as_char = to_char(option)
+        b = ffi.new('bool []', 1)
+        ret = nng.nng_getopt_(self.socket, opt_as_char, b)
+        check_err(ret)
+        return b[0]
 
     def _setopt_bool(self, option, value):
         """Sets the specified option to the specified value"""
         opt_as_char = to_char(option)
-        print(opt_as_char)
-        # attempt to accept floats that are exactly int
-        ret = nng.nng_setopt_int(self.socket, opt_as_char, value)
+        ret = nng.nng_setopt_bool(self.socket, opt_as_char, value)
         check_err(ret)
 
     def __enter__(self):
@@ -216,6 +223,7 @@ class Socket:
 
     recv_timeout = MsOption('recv-timeout')
     send_timeout = MsOption('send-timeout')
+    name = StringOption('socket-name')
 
 
 class Bus0(Socket):

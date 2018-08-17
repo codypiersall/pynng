@@ -160,3 +160,13 @@ def test_can_instantiate_socket_with_raw_opener():
         pass
 
 
+def test_can_pass_addr_as_bytes_or_str():
+    with nng.Pair0(listen=b'tcp://127.0.0.1:42421'), \
+            nng.Pair0(dial='tcp://127.0.0.1:42421'):
+        pass
+
+def test_can_set_socket_name():
+    with nng.Pair0() as p:
+        assert p.name != 'this'
+        p.name = 'this'
+        assert p.name == 'this'
