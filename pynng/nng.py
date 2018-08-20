@@ -2,8 +2,6 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
-import functools
-
 
 from ._nng import ffi, lib as nng
 from .exceptions import check_err
@@ -35,41 +33,68 @@ def to_char(charlike):
 
 class _NNGOption:
     """A descriptor for more easily getting/setting NNG option."""
+    # this class should not be instantiated directly!  Instantiation will work,
+    # but getting/setting will fail.
+
+    # subclasses set _getter and _setter to the names of the getter/setter
+    # functions in the Socket class.
+    _getter = None
+    _setter = None
+
     def __init__(self, option_name):
         self.option = to_char(option_name)
+
+    def __get__(self, instance, owner):
+        getter = getattr(instance, self._getter)
+        return getter(self.option)
+
+    def __set__(self, instance, value):
+        setter = getattr(instance, self._setter)
+        setter(self.option, value)
 
 
 class IntOption(_NNGOption):
     """Descriptor for getting/setting integer options"""
-    def __get__(self, instance, owner):
-        return instance._getopt_int(self.option)
-
-    def __set__(self, instance, value):
-        instance._setopt_int(self.option, value)
+    _getter = '_getopt_int'
+    _setter = '_setopt_int'
 
 
 class MsOption(_NNGOption):
     """Descriptor for getting/setting durations (in milliseconds)"""
-    def __get__(self, instance, owner):
-        return instance._getopt_ms(self.option)
-
-    def __set__(self, instance, value):
-        instance._setopt_ms(self.option, value)
+    _getter = '_getopt_ms'
+    _setter = '_setopt_ms'
 
 
 class StringOption(_NNGOption):
     """Descriptor for getting/setting string options"""
+    _getter = '_getopt_string'
+    _setter = '_setopt_string'
+
+
+class BooleanOption(_NNGOption):
+    """Descriptor for getting/setting boolean values"""
+    _getter = '_getopt_bool'
+    _setter = '_setopt_bool'
+
+
+class NotImplementedOption(_NNGOption):
+    """Represents a currently un-implemented option in Python."""
+    def __init__(self, option_name, errmsg):
+        super().__init__(option_name)
+        self.errmsg = errmsg
+
     def __get__(self, instance, owner):
-        return instance._getopt_string(self.option)
+        raise NotImplementedError(self.errmsg)
 
     def __set__(self, instance, value):
-        instance._setopt_string(self.option, value)
+        raise NotImplementedError(self.errmsg)
 
 
 class Socket:
     """The base socket.  It should not be instantiated directly."""
 
-    def __init__(self, opener=None, *,
+    def __init__(self, *,
+                 opener=None,
                  dial=None,
                  listen=None,
                  recv_timeout=None,
@@ -201,11 +226,11 @@ class Socket:
         check_err(ret)
         return ffi.string(opt[0]).decode()
 
-    def _getopt_bool(self, option, value):
+    def _getopt_bool(self, option):
         """Return the boolean value of the specified option"""
         opt_as_char = to_char(option)
         b = ffi.new('bool []', 1)
-        ret = nng.nng_getopt_(self.socket, opt_as_char, b)
+        ret = nng.nng_getopt_bool(self.socket, opt_as_char, b)
         check_err(ret)
         return b[0]
 
@@ -224,6 +249,7 @@ class Socket:
     recv_timeout = MsOption('recv-timeout')
     send_timeout = MsOption('send-timeout')
     name = StringOption('socket-name')
+    raw = BooleanOption('raw')
 
 
 class Bus0(Socket):

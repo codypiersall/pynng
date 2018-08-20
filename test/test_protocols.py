@@ -19,15 +19,6 @@ def test_context_manager_works():
         pass
 
 
-def test_timeout_works():
-    with nng.Pair0(listen=addr) as s0:
-        # default is -1
-        assert s0.recv_timeout == -1
-        s0.recv_timeout = 1  # 1 ms, not too long
-        with pytest.raises(nng.exceptions.Timeout):
-            s0.recv()
-
-
 def test_pair0():
     with nng.Pair0(listen=addr, recv_timeout=100) as s0, \
             nng.Pair0(dial=addr, recv_timeout=100) as s1:
@@ -165,8 +156,4 @@ def test_can_pass_addr_as_bytes_or_str():
             nng.Pair0(dial='tcp://127.0.0.1:42421'):
         pass
 
-def test_can_set_socket_name():
-    with nng.Pair0() as p:
-        assert p.name != 'this'
-        p.name = 'this'
-        assert p.name == 'this'
+
