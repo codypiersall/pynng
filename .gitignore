@@ -8,3 +8,6 @@ _nng.c
 __pycache__
 *.swp
 .pytest_cache
+dist
+*.egg-info
+build
