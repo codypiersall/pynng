@@ -33,5 +33,6 @@ TODO
     on the Python version (ugh!).  Mac and Linux should Just Work™.
   - setup.py also needs to handle any necessary patching of the CMakeLists
     files.  paiiiin.
+  - Linux builds need to product a manylinux wheel, if possible.
 
 [nanomsg next generation]: https://nanomsg.github.io/nng/index.html
