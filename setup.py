@@ -15,9 +15,27 @@ def build_nng_lib():
         # just use it!
         return
     if sys.platform == 'win32':
-        # pick the correct cmake generator
+        # pick the correct cmake generator, based on the Python version.
+        # from https://wiki.python.org/moin/WindowsCompilers for Python
+        # version, and cmake --help for list of CMake generator names
+        major, minor, *_ = sys.version_info
+        cmake_generators = {
+            (3, 0): 'Visual Studio 9 2008',
+            (3, 1): 'Visual Studio 9 2008',
+            (3, 2): 'Visual Studio 9 2008',
+            (3, 3): 'Visual Studio 10 2010',
+            (3, 4): 'Visual Studio 10 2010',
+            (3, 5): 'Visual Studio 14 2015',
+            (3, 6): 'Visual Studio 14 2015',
+        }
+        gen = cmake_generators[(major, minor)]
+
         is_64bit = sys.maxsize > 2**32
-        cmd = [os.path.join(THIS_DIR, 'build_nng.bat')]
+        if is_64bit:
+            gen += ' Win64'
+
+        cmd = [os.path.join(THIS_DIR, 'build_nng.bat'), gen]
+
     else:
         script = os.path.join(THIS_DIR, 'build_nng.sh')
         cmd = ['/bin/bash', script]
