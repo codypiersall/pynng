@@ -19,16 +19,9 @@ for Windows is limited.  None of the installation is automated.
 TODO
 ====
 
-* Generating the API file is fragile, becuase it is not remotely C syntax
-  aware; it's just dumb old sed.
-* Do the right thing for 32/64 bit Python on Windows.
+* Get CI going for Linux and Windows, including building manylinux wheels if
+  possible.
+* Docs.
 * Support Mac
-* Automate the binding building
-  - setup.py should do everything;  it needs to build the nng library, and it
-    needs to make sure to use the right compiler version on Windows depending
-    on the Python version (ugh!).  Mac and Linux should Just Work™.
-  - setup.py also needs to handle any necessary patching of the CMakeLists
-    files.  paiiiin.
-  - Linux builds need to product a manylinux wheel, if possible.
 
 [nanomsg next generation]: https://nanomsg.github.io/nng/index.html
