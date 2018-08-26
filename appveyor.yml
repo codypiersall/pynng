@@ -1,0 +1,36 @@
+# The template for this file was from https://packaging.python.org/appveyor/
+
+environment:
+    matrix:
+        # For Python versions available on Appveyor, see
+        # http://www.appveyor.com/docs/installed-software#python
+        - PYTHON: "C:\\Python34"
+        - PYTHON: "C:\\Python35"
+        - PYTHON: "C:\\Python36"
+        - PYTHON: "C:\\Python37"
+        - PYTHON: "C:\\Python34-x64"
+        - PYTHON: "C:\\Python35-x64"
+        - PYTHON: "C:\\Python36-x64"
+        - PYTHON: "C:\\Python37-x64"
+
+install:
+    # We need wheel installed to build wheels
+    - "%PYTHON%\\python.exe -m pip install wheel"
+    - "%PYTHON%\\python.exe -m pip install pytest"
+
+build_script:
+    - "%PYTHON%\\python.exe -m pip install ."
+    - "%PYTHON%\\python.exe setup.py build"
+    - "%PYTHON%\\python.exe setup.py build_ext --inplace"
+
+test_script:
+    - "%PYTHON%\\python.exe -m pytest test"
+
+after_test:
+    # build the wheel.
+    # build.cmd sets up necessary variables for 64-bit builds
+    - "%PYTHON%\\python.exe setup.py bdist_wheel sdist"
+
+artifacts:
+    # bdist_wheel puts your built wheel in the dist directory
+    - path: dist\*
