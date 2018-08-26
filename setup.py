@@ -1,4 +1,3 @@
-import build_pynng
 import os
 import subprocess
 import sys
@@ -10,6 +9,10 @@ THIS_DIR = os.path.dirname(__file__)
 
 
 def build_nng_lib():
+    # cannot import build_pynng at the top level becuase cffi may not be
+    # installed yet (since it is a dependency, and this script installs
+    # dependencies).  Bootstrapping!
+    import build_pynng
     if os.path.exists(build_pynng.objects[0]):
         # the object file we were planning on building already exists; we'll
         # just use it!
@@ -41,6 +44,7 @@ def build_nng_lib():
         cmd = ['/bin/bash', script]
 
     subprocess.check_call(cmd)
+
 
 # TODO: this is basically a hack to get something to run before running cffi
 # extnsion builder. subclassing something else would be better!
@@ -79,6 +83,7 @@ setuptools.setup(
         'Topic :: System :: Networking',
     ),
     setup_requires=['cffi'],
+    install_requires=['cffi'],
     cffi_modules=['build_pynng.py:ffibuilder'],
 )
 

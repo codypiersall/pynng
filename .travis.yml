@@ -1,0 +1,17 @@
+language: python
+python:
+  - "3.6"
+
+install:
+    - sudo apt-get install ninja-build
+    - pip install .
+    - python setup.py build
+    - python setup.py build_ext --inplace
+    - python setup.py bdist_wheel sdist
+
+script:
+    - pytest
+
+deploy:
+    skip_cleanup: true
+
