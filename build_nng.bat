@@ -11,8 +11,8 @@ if {%1}=={} (
 )
 
 pushd .
-git submodule update --init
 rmdir /s /q nng\build
+git submodule update --init
 mkdir nng\build
 cd nng\build && ^
 cmake -G %1 .. && ^

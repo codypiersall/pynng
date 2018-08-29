@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 
@@ -18,32 +19,62 @@ def build_nng_lib():
         # just use it!
         return
     if sys.platform == 'win32':
+        is_64bit = sys.maxsize > 2**32
+        major, minor, *_ = sys.version_info
+        build_nng_script = os.path.join(THIS_DIR, 'build_nng.bat')
+        needs_shell = True
         # pick the correct cmake generator, based on the Python version.
         # from https://wiki.python.org/moin/WindowsCompilers for Python
         # version, and cmake --help for list of CMake generator names
-        major, minor, *_ = sys.version_info
-        cmake_generators = {
-            (3, 0): 'Visual Studio 9 2008',
-            (3, 1): 'Visual Studio 9 2008',
-            (3, 2): 'Visual Studio 9 2008',
-            (3, 3): 'Visual Studio 10 2010',
-            (3, 4): 'Visual Studio 10 2010',
-            (3, 5): 'Visual Studio 14 2015',
-            (3, 6): 'Visual Studio 14 2015',
-        }
-        gen = cmake_generators[(major, minor)]
 
-        is_64bit = sys.maxsize > 2**32
-        if is_64bit:
-            gen += ' Win64'
+        # If ninja build system is installed, use it, since it's way faster
+        # (this is especially important when feeling impatient for CI builds)
+        if shutil.which('ninja') and (major, minor) in ((3, 5), (3, 6), (3, 7)):
+            # gotta soruce the correct vcvarsall!
+            which_vcvars = {
+                (3, 5): r'Microsoft Visual Studio 14.0\VC',
+                (3, 6): r'Microsoft Visual Studio 14.0\VC',
+                (3, 7): r'Microsoft Visual Studio 14.0\VC',
+            }
+            vcvarsall = os.path.join(
+                r'C:\Program Files (x86)',
+                which_vcvars[(major, minor)],
+                'vcvarsall.bat',
+            )
+            if is_64bit:
+                gen = 'amd64'
+            else:
+                gen = 'x86'
+            cmd = '"{}" {} && {} Ninja'.format(vcvarsall, gen, build_nng_script)
+            print('-------------------')
+            print(cmd)
+            print('-------------------')
 
-        cmd = [os.path.join(THIS_DIR, 'build_nng.bat'), gen]
+        else:
+            cmake_generators = {
+                (3, 0): 'Visual Studio 9 2008',
+                (3, 1): 'Visual Studio 9 2008',
+                (3, 2): 'Visual Studio 9 2008',
+                (3, 3): 'Visual Studio 10 2010',
+                (3, 4): 'Visual Studio 10 2010',
+                (3, 5): 'Visual Studio 14 2015',
+                (3, 6): 'Visual Studio 14 2015',
+            }
+            gen = cmake_generators[(major, minor)]
+
+            if is_64bit:
+                gen += ' Win64'
+
+            cmd = [build_nng_script, gen]
 
     else:
+        # on Linux, build_nng.sh selects ninja if available
         script = os.path.join(THIS_DIR, 'build_nng.sh')
         cmd = ['/bin/bash', script]
+        needs_shell = False
 
-    subprocess.check_call(cmd)
+    # shell=True is required for Windows
+    subprocess.check_call(cmd, shell=needs_shell)
 
 
 # TODO: this is basically a hack to get something to run before running cffi

@@ -4,12 +4,16 @@
 # script should ensure that it is built before running.  It looks in this file
 # to see what the expected object file is based on the platform.
 from cffi import FFI
+import shutil
 import sys
 
 ffibuilder = FFI()
 
 if sys.platform == 'win32':
-    objects = ['./nng/build/Release/nng.lib']
+    if shutil.which('ninja'):
+        objects = ['./nng/build/nng.lib']
+    else:
+        objects = ['./nng/build/Release/nng.lib']
     # libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
 else:

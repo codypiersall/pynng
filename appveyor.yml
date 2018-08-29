@@ -4,19 +4,28 @@ environment:
     matrix:
         # For Python versions available on Appveyor, see
         # http://www.appveyor.com/docs/installed-software#python
-        - PYTHON: "C:\\Python34"
         - PYTHON: "C:\\Python35"
-        - PYTHON: "C:\\Python36"
-        - PYTHON: "C:\\Python37"
-        - PYTHON: "C:\\Python34-x64"
         - PYTHON: "C:\\Python35-x64"
+        - PYTHON: "C:\\Python36"
         - PYTHON: "C:\\Python36-x64"
+        - PYTHON: "C:\\Python37"
         - PYTHON: "C:\\Python37-x64"
+        - PYTHON: "C:\\Python34"
+        - PYTHON: "C:\\Python34-x64"
+
+cache:
+    - C:\ProgramData\chocolatey\bin -> appveyor.yml
+    - C:\ProgramData\chocolatey\lib -> appveyor.yml
 
 install:
     # We need wheel installed to build wheels
     - "%PYTHON%\\python.exe -m pip install wheel"
     - "%PYTHON%\\python.exe -m pip install pytest"
+    # python 3.4 needs stdbool to be copied over; we'll just take the version
+    # from VS 2015.
+    - ps: cp "C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\include\\stdbool.h"
+             "C:\\Program Files (x86)\\Microsoft Visual Studio 10.0\\VC\\include\\stdbool.h"
+    - ps: choco install ninja
 
 build_script:
     - "%PYTHON%\\python.exe -m pip install ."
