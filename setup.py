@@ -52,13 +52,9 @@ def build_nng_lib():
 
         else:
             cmake_generators = {
-                (3, 0): 'Visual Studio 9 2008',
-                (3, 1): 'Visual Studio 9 2008',
-                (3, 2): 'Visual Studio 9 2008',
-                (3, 3): 'Visual Studio 10 2010',
-                (3, 4): 'Visual Studio 10 2010',
                 (3, 5): 'Visual Studio 14 2015',
                 (3, 6): 'Visual Studio 14 2015',
+                (3, 7): 'Visual Studio 14 2015',
             }
             gen = cmake_generators[(major, minor)]
 
