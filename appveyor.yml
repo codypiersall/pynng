@@ -40,7 +40,7 @@ artifacts:
 
 branches:
   except:
-    -dockerbuild
+    - dockerbuild
 
 
 
