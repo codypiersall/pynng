@@ -6,7 +6,7 @@ install:
 script:
   - docker run -v "$(pwd)/artifacts:/mnt/artifacts" --rm -i -t codypiersall/manylinux1-pynng
         bash -x -c "cd && git clone https://github.com/codypiersall/pynng && cd pynng &&
-        git checkout $(git branch) && ./build_in_docker.sh"
+        git checkout $TRAVIS_BRANCH && ./build_in_docker.sh"
   - ls artifacts/dist
   # we're listing the files individually here because if one failed to build we
   # want Travis to acknowledge failure.
