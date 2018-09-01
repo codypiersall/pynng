@@ -4,10 +4,6 @@
 #
 # example usage:
 # docker run --rm -i -t codypiersall/manylinux1-pynng
-cd
-git clone https://github.com/codypiersall/pynng
-cd pynng
-git checkout dockerbuild
 python=/opt/python/cp35-35m/bin/python
 $python -m pip install .
 $python -m setup.py build
