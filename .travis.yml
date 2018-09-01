@@ -7,5 +7,12 @@ install:
 
 script:
   - docker run -v "$(pwd)/artifacts:/mnt/artifacts" --rm -i -t codypiersall/manylinux1-pynng bash -x -c "cd && git clone https://github.com/codypiersall/pynng && cd pynng && git checkout dockerbuild && ./build_in_docker.sh"
+  # show any artifacts that were built
   - ls artifacts/dist
+  # if any of the artifacts that were supposed to be build were not, ls will
+  # return a non-zero exit status.  We don't do the whole filename because that
+  # would require hard-coding the pynng version.
+  - ls dist/*cp35-cp35m-*.whl
+  - ls dist/*cp36-cp36m-*.whl
+  - ls dist/*cp37-cp37m-*.whl
 
