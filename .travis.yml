@@ -1,14 +1,11 @@
-language: python
-python:
-  - "3.6"
+services:
+  - docker
 
 install:
-    - sudo apt-get install ninja-build
-    - pip install .
-    - python setup.py build
-    - python setup.py build_ext --inplace
-    - python setup.py bdist_wheel sdist
+  - docker pull codypiersall/manylinux1-pynng
+  - mkdir artifacts
 
 script:
-    - pytest
+  - docker run -v "$(pwd)/artifacts:/mnt/artifacts" --rm -i -t codypiersall/manylinux1-pynng bash -x -c "cd && git clone https://github.com/codypiersall/pynng && cd pynng && git checkout dockerbuild && ./build_in_docker.sh"
+  - ls artifacts/dist
 

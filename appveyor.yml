@@ -37,3 +37,10 @@ after_test:
 artifacts:
     # bdist_wheel puts your built wheel in the dist directory
     - path: dist\*
+
+branches:
+  except:
+    - dockerbuild
+
+
+
