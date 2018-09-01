@@ -19,3 +19,6 @@ deploy:
   skip_cleanup: true
   on:
     repo: codypiersall/pynng
+    branches:
+      only:
+        - master
