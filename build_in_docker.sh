@@ -4,7 +4,7 @@
 #
 # example usage:
 # docker run --rm -i -t codypiersall/manylinux1-pynng
-python=/opt/python/cp35-35m/bin/python
+python=/opt/python/cp35-cp35m/bin/python
 $python -m pip install .
 $python -m setup.py build
 $python -m setup.py build_ext --inplace
