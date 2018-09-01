@@ -3,9 +3,6 @@ services:
 install:
   - docker pull codypiersall/manylinux1-pynng
   - mkdir artifacts
-  # tag so releases on GitHub have a little more meaning
-  # I'm hoping that tagged releases are already given meaning
-  - if ! $(git describe --exact-match --tags HEAD); then git tag travis-$(date +%Y%m%d_%H%M%S); fi
 script:
   - docker run -v "$(pwd)/artifacts:/mnt/artifacts" --rm -i -t codypiersall/manylinux1-pynng
         bash -x -c "cd && git clone https://github.com/codypiersall/pynng && cd pynng &&
@@ -25,6 +22,4 @@ deploy:
   skip_cleanup: true
   on:
     repo: codypiersall/pynng
-    branches:
-      only:
-        - master
+    tags: true
