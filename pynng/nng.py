@@ -2,9 +2,13 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
+import logging
 
 from ._nng import ffi, lib as nng
-from .exceptions import check_err
+from .exceptions import check_err, ConnectionRefused
+
+
+logger = logging.getLogger(__name__)
 
 
 __all__ = '''
@@ -181,7 +185,8 @@ class Socket:
                  recv_max_size=None,
                  reconnect_time_min=None,
                  reconnect_time_max=None,
-                 opener=None
+                 opener=None,
+                 block_on_dial=None
                  ):
         """Initialize socket.  It takes no positional arguments.
         Most socket options can be set through the initializer for convenience.
@@ -192,7 +197,7 @@ class Socket:
 
         Args:
             dial (str): The address to dial.  If not given, no address is
-                dialed.
+                dialed.  Note well: while the nng library
             listen (str): The address to listen at.  If not given, the socket
                 does not listen at any address.
             recv_timeout: The receive timeout, in milliseconds.  If not given,
@@ -209,7 +214,7 @@ class Socket:
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
         check_err(self._opener(self._socket_pointer))
         if dial is not None:
-            self.dial(dial)
+            self.dial(dial, block=block_on_dial)
         if listen is not None:
             self.listen(listen)
         if recv_timeout is not None:
@@ -217,8 +222,39 @@ class Socket:
         if send_timeout is not None:
             self.send_timeout = send_timeout
 
-    def dial(self, address, dialer=ffi.NULL, flags=0):
-        """Dial specified address; similar to nanomgs.connect().
+    def dial(self, address, *, block=None):
+        """Dial the specified address.
+
+        Args:
+            addres:  The address to dial.
+            block:  Whether to block or not.  There are three possible values
+                this can take:
+
+                1. If truthy, a blocking dial is attempted.  If it fails for
+                   any reason, an exception is raised.
+                2. If Falsy, a non-blocking dial is started.  The dial is
+                   retried periodically in the background until it is
+                   successful.
+                3. (**Default behavior**): If ``None``, which a blocking dial
+                   is first attempted. If it fails an exception is logged
+                   (using the Python logging module), then a non-blocking dial
+                   is done.
+
+        """
+        if block:
+            self._dial(address, flags=0)
+        elif block is None:
+            try:
+                self.dial(address, block=False)
+            except ConnectionRefused:
+                msg = 'Synchronous dial failed; attempting asynchronous now'
+                logger.exception(msg)
+                self.dial(address, block=False)
+        else:
+            self._dial(address, flags=nng.NNG_FLAG_NONBLOCK)
+
+    def _dial(self, address, dialer=ffi.NULL, flags=0):
+        """Dial specified address
 
         ``dialer`` and ``flags`` usually do not need to be given.
         """

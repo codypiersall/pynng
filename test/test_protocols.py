@@ -1,4 +1,4 @@
-import pynng as nng
+import pynng
 import pytest
 import time
 import threading
@@ -12,32 +12,32 @@ addr = 'tcp://127.0.0.1:13131'
 def test_context_manager_works():
     # we have to grab a reference to the sockets so garbage collection doesn't
     # close the socket for us automatically.
-    with nng.Pair0(listen=addr) as s0:  # noqa
+    with pynng.Pair0(listen=addr) as s0:  # noqa
         pass
     # we should be able to do it again if the context manager worked
-    with nng.Pair0(listen=addr) as s1:  # noqa
+    with pynng.Pair0(listen=addr) as s1:  # noqa
         pass
 
 
 def test_pair0():
-    with nng.Pair0(listen=addr, recv_timeout=100) as s0, \
-            nng.Pair0(dial=addr, recv_timeout=100) as s1:
+    with pynng.Pair0(listen=addr, recv_timeout=100) as s0, \
+            pynng.Pair0(dial=addr, recv_timeout=100) as s1:
         val = b'oaisdjfa'
         s1.send(val)
         assert s0.recv() == val
 
 
 def test_pair1():
-    with nng.Pair1(listen=addr, recv_timeout=100) as s0, \
-            nng.Pair1(dial=addr, recv_timeout=100) as s1:
+    with pynng.Pair1(listen=addr, recv_timeout=100) as s0, \
+            pynng.Pair1(dial=addr, recv_timeout=100) as s1:
         val = b'oaisdjfa'
         s1.send(val)
         assert s0.recv() == val
 
 
 def test_reqrep0():
-    with nng.Req0(listen=addr, recv_timeout=100) as req, \
-            nng.Rep0(dial=addr, recv_timeout=100) as rep:
+    with pynng.Req0(listen=addr, recv_timeout=100) as req, \
+            pynng.Rep0(dial=addr, recv_timeout=100) as rep:
 
         request = b'i am requesting'
         req.send(request)
@@ -47,17 +47,17 @@ def test_reqrep0():
         rep.send(response)
         assert req.recv() == response
 
-        with pytest.raises(nng.exceptions.BadState):
+        with pytest.raises(pynng.BadState):
             req.recv()
 
         # responders can't send before receiving
-        with pytest.raises(nng.exceptions.BadState):
+        with pytest.raises(pynng.BadState):
             rep.send(b'I cannot do this why am I trying')
 
 
 def test_pubsub0():
-    with nng.Sub0(listen=addr, recv_timeout=100) as sub, \
-            nng.Pub0(dial=addr, recv_timeout=100) as pub:
+    with pynng.Sub0(listen=addr, recv_timeout=100) as sub, \
+            pynng.Pub0(dial=addr, recv_timeout=100) as pub:
 
         sub.subscribe(b'')
         msg = b'i am requesting'
@@ -67,11 +67,11 @@ def test_pubsub0():
 
         # TODO: when changing exceptions elsewhere, change here!
         # publishers can't recv
-        with pytest.raises(nng.exceptions.NotSupported):
+        with pytest.raises(pynng.NotSupported):
             pub.recv()
 
         # responders can't send before receiving
-        with pytest.raises(nng.exceptions.NotSupported):
+        with pytest.raises(pynng.NotSupported):
             sub.send(b"""I am a bold subscribing socket.  I believe I was truly
                          meant to be a publisher.  The world needs to hear what
                          I have to say!
@@ -82,9 +82,9 @@ def test_pubsub0():
 
 def test_push_pull():
     received = {'pull1': False, 'pull2': False}
-    with nng.Push0(listen=addr) as push, \
-            nng.Pull0(dial=addr, recv_timeout=1000) as pull1, \
-            nng.Pull0(dial=addr, recv_timeout=1000) as pull2:
+    with pynng.Push0(listen=addr) as push, \
+            pynng.Pull0(dial=addr, recv_timeout=1000) as pull1, \
+            pynng.Pull0(dial=addr, recv_timeout=1000) as pull2:
 
         def recv1():
             pull1.recv()
@@ -109,9 +109,9 @@ def test_push_pull():
 
 
 def test_surveyor_respondent():
-    with nng.Surveyor0(listen=addr, recv_timeout=1000) as surveyor, \
-            nng.Respondent0(dial=addr, recv_timeout=1000) as resp1, \
-            nng.Respondent0(dial=addr, recv_timeout=2000) as resp2:
+    with pynng.Surveyor0(listen=addr, recv_timeout=1000) as surveyor, \
+            pynng.Respondent0(dial=addr, recv_timeout=1000) as resp1, \
+            pynng.Respondent0(dial=addr, recv_timeout=2000) as resp2:
         query = b"hey how's it going buddy?"
         # wait for sockets to connect
         time.sleep(0.01)
@@ -137,23 +137,23 @@ def test_surveyor_respondent():
         # if they're not the same
         assert msg2 in resp
 
-        with pytest.raises(nng.exceptions.BadState):
+        with pytest.raises(pynng.BadState):
             resp2.send(b'oadsfji')
 
 
 def test_cannot_instantiate_socket_without_opener():
     with pytest.raises(TypeError):
-        nng.Socket()
+        pynng.Socket()
 
 
 def test_can_instantiate_socket_with_raw_opener():
-    with nng.Socket(opener=nng.lib.nng_sub0_open_raw):
+    with pynng.Socket(opener=pynng.lib.nng_sub0_open_raw):
         pass
 
 
 def test_can_pass_addr_as_bytes_or_str():
-    with nng.Pair0(listen=b'tcp://127.0.0.1:42421'), \
-            nng.Pair0(dial='tcp://127.0.0.1:42421'):
+    with pynng.Pair0(listen=b'tcp://127.0.0.1:42421'), \
+            pynng.Pair0(dial='tcp://127.0.0.1:42421'):
         pass
 
 
