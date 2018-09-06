@@ -7,14 +7,14 @@ therefore pynng, make it easy to communicate between processes on a single
 computer or computers across a network.
 
 Goals
-=====
+-----
 
 Provide a Pythonic, works-out-of-the box library on Windows and Unix-y
 platforms.  Like nng itself, the license is MIT, so it can be used without
 restriction.
 
 Installation
-============
+------------
 
 On Windows and 64-bit Linux, the usual
 
@@ -31,16 +31,58 @@ done:
     python setup.py build_ext --inplace
     pytest
 
-Installing on Mac
------------------
+### Installing on Mac
+
 
 This project does not yet know how to build for Mac, because I don't have a Mac
 to test on.  The tricky bit is letting cffi know the correct object file to
 link to, and ensuring whatever the Mac equivalent of -fPIC is set when
 compiling.
 
+Using pynng
+-----------
+
+Using pynng is easy peasy:
+
+```python
+from pynng import Pair0
+
+s1 = Pair0()
+s1.listen('tcp://127.0.0.1:54321')
+s2 = Pair0()
+s2.dial('tcp://127.0.0.1:54321')
+s1.send(b'Well hello there')
+print(s2.recv())
+s1.close()
+s2.close()
+```
+
+Since pynng sockets support setting most parameters in the socket's `__init__`
+method and is a context manager, the above code can be written much shorter:
+
+```python
+from pynng import Pair0
+
+with Pair0(listen='tcp://127.0.0.1:54321') as s1, \
+        Pair0(dial='tcp://127.0.0.1:54321') as s2:
+    s1.send(b'Well hello there')
+    print(s2.recv())
+```
+
+Many other protocols are available as well:
+
+* `Pair0`: one-to-one, bidirectional communication.
+* `Pair1`: one-to-one, bidirectional communication, but also supporting
+  polyamorous sockets
+* `Pub0`, `Sub0`: publish/subscribe sockets.
+* `Surveyor0`, `Respondent0`: Broadcast a survey to respondents, e.g. to find
+  out what services are available.
+* `Req0`, `Rep0`: request/response pattern.
+* `Push0`, `Pull0`: Aggregate messages from multiple sources and load balance
+  among many destinations.
+
 TODO
-====
+----
 
 * Support Mac
 * More docs
