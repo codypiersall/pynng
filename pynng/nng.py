@@ -207,6 +207,9 @@ class Socket:
             recv_buffer_size: is not None, it sets receive message buffer size.
 
         """
+        # list of nng_dialers
+        self._dialers = []
+        self._listeners = []
         self._socket_pointer = ffi.new('nng_socket[]', 1)
         if opener is not None:
             self._opener = opener
@@ -253,21 +256,27 @@ class Socket:
         else:
             self._dial(address, flags=nng.NNG_FLAG_NONBLOCK)
 
-    def _dial(self, address, dialer=ffi.NULL, flags=0):
+    def _dial(self, address, flags=0):
         """Dial specified address
 
         ``dialer`` and ``flags`` usually do not need to be given.
         """
+        dialer = ffi.new('nng_dialer []', 1)
         ret = nng.nng_dial(self.socket, to_char(address), dialer, flags)
         check_err(ret)
+        # we can only get here if check_err doesn't raise
+        self._dialers.append(dialer)
 
-    def listen(self, address, listener=ffi.NULL, flags=0):
+    def listen(self, address, flags=0):
         """Listen at specified address; similar to nanomsg.bind()
 
         ``listener`` and ``flags`` usually do not need to be given.
         """
+        listener = ffi.new('nng_listener []', 1)
         ret = nng.nng_listen(self.socket, to_char(address), listener, flags)
         check_err(ret)
+        # we can only get here if check_err doesn't raise
+        self._listeners.append(listener)
 
     def close(self):
         nng.nng_close(self.socket)
@@ -396,6 +405,22 @@ class Socket:
     def __exit__(self, *tb_info):
         self.close()
 
+    @property
+    def dialers(self):
+        """A list of the active dialers"""
+        # return a copy of the list, because we need to make sure we keep a
+        # reference alive for cffi.  If someone else removes an item from the
+        # list we return it doesn't matter.
+        return self._dialers.copy()
+
+    @property
+    def listeners(self):
+        """A list of the active listeners"""
+        # return a copy of the list, because we need to make sure we keep a
+        # reference alive for cffi.  If someone else removes an item from the
+        # list we return it doesn't matter.
+        return self._listeners.copy()
+
 
 class Bus0(Socket):
     """A bus0 socket."""
@@ -461,4 +486,8 @@ class Respondent0(Socket):
     _opener = nng.nng_respondent0_open
 
 
+class Dialer:
+    """Wrapper class for the nng_dialer struct."""
+    def __init__(self, dialer):
+        pass
 

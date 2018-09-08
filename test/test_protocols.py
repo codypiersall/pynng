@@ -61,7 +61,7 @@ def test_pubsub0():
 
         sub.subscribe(b'')
         msg = b'i am requesting'
-        time.sleep(0.01)
+        time.sleep(0.04)
         pub.send(msg)
         assert sub.recv() == msg
 
