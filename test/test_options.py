@@ -22,7 +22,7 @@ def test_can_set_socket_name():
         p.name = 'this'
         assert p.name == 'this'
         # make sure we're actually testing the right thing
-        assert p._getopt_string('socket-name') == 'this'
+        assert pynng.nng._getopt_string(p, 'socket-name') == 'this'
 
 
 def test_can_read_sock_raw():
@@ -44,3 +44,20 @@ def test_dial_blocking_behavior():
         s1.listen(addr)
         s0.send(b'what a message')
         assert s1.recv() == b'what a message'
+
+
+def test_can_overwrite_recvmaxsize_on_listener():
+    with pynng.Pair1(listen=addr, recv_timeout=100) as s0, pynng.Pair1(dial=addr) as s1:
+        listener = s0.listeners[0]
+        assert s0.recv_max_size < 2e6
+        assert listener.recv_max_size == s0.recv_max_size
+        s1.send(b'\0' * int(2e6))
+        with pytest.raises(pynng.Timeout):
+            s0.recv()
+        listener.recv_max_size = int(3e6)
+        msg = b'\0' * int(2e6)
+        s1.send(msg)
+        assert s0.recv() == msg
+        assert s0.recv_max_size != listener.recv_max_size
+
+

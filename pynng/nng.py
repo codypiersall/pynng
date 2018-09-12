@@ -24,6 +24,199 @@ Surveyor0 Respondent0
 '''.split()
 
 
+def _get_inst_and_func(wrapper_object, option_type, get_or_set):
+    """
+    Given the Python wrapper for one of nng's object types, return a tuple of
+    (nng_object, nng_function).
+
+    Args:
+        wrapper_object Union(Socket, Dialer, Listener): the Python wrapper of
+          the library type.
+        option_type (str): The type of option.
+
+    Returns:
+        The tuple (nng_object, nng_func) for use in the module-level getopt*,
+            setopt* functions
+
+    """
+
+    # map Python wrapper class to nng attribute
+    nng_type_map = {
+        Socket: 'socket',
+        Dialer: 'dialer',
+        Listener: 'listener'
+    }
+
+    option_to_func_map = {
+        'int': 'nng_getopt_int',
+        'size': 'nng_getopt_size',
+        'ms': 'nng_getopt_ms',
+        'string': 'nng_getopt_string',
+        'bool': 'nng_getopt_bool',
+        'sockaddr': 'nng_getopt_sockaddr',
+    }
+
+    t = type(wrapper_object)
+    type_ok = True
+    if issubclass(t, Socket):
+        base_type = Socket
+    elif issubclass(t, Dialer):
+        base_type = Dialer
+    elif issubclass(t, Listener):
+        base_type = Listener
+    option_ok = option_type in option_to_func_map
+    get_ok = get_or_set in ('get', 'set')
+    assert type_ok, 'The type {} is not supported'.format(t)
+    assert option_ok, 'The option "{}" is not supported'.format(option_type)
+    assert get_ok, 'get_or_set of "{}" is not supported'.format(get_or_set)
+
+    obj = getattr(wrapper_object, nng_type_map[base_type])
+    basic_funcname = option_to_func_map[option_type]
+    if base_type is Socket:
+        funcname = basic_funcname
+    elif base_type is Dialer:
+        funcname = basic_funcname.replace('nng_', 'nng_dialer_')
+    elif base_type is Listener:
+        funcname = basic_funcname.replace('nng_', 'nng_listener_')
+    else:
+        assert False
+
+    if get_or_set == 'set':
+        funcname = funcname.replace('getopt', 'setopt')
+        # special-case for nng_setopt_string, which expects NULL-terminated
+        # strings; we use the generic setopt in that case.
+        if option_type == 'string':
+            funcname = funcname.replace('_string', '')
+
+    nng_func = getattr(nng, funcname)
+    return obj, nng_func
+
+
+def _getopt_int(obj, option):
+    """Gets the specified option"""
+    i = ffi.new('int []', 1)
+    opt_as_char = to_char(option)
+    obj, lib_func = _get_inst_and_func(obj, 'int', 'get')
+    # attempt to accept floats that are exactly int
+    ret = lib_func(obj, opt_as_char, i)
+    check_err(ret)
+    return i[0]
+
+
+def _setopt_int(py_obj, option, value):
+    """Sets the specified option to the specified value"""
+    opt_as_char = to_char(option)
+    # attempt to accept floats that are exactly int
+    if not int(value) == value:
+        msg = 'Invalid value {} of type {}.  Expected int.'
+        msg = msg.format(value, type(value))
+        raise ValueError(msg)
+    obj, lib_func = _get_inst_and_func(py_obj, 'int', 'set')
+    value = int(value)
+    err = lib_func(obj, opt_as_char, value)
+    check_err(err)
+
+
+def _getopt_size(py_obj, option):
+    """Gets the specified size option"""
+    i = ffi.new('size_t []', 1)
+    opt_as_char = to_char(option)
+    # attempt to accept floats that are exactly int
+    obj, lib_func = _get_inst_and_func(py_obj, 'size', 'get')
+    ret = lib_func(obj, opt_as_char, i)
+    check_err(ret)
+    return i[0]
+
+
+def _setopt_size(py_obj, option, value):
+    """Sets the specified size option to the specified value"""
+    opt_as_char = to_char(option)
+    # attempt to accept floats that are exactly int
+    if not int(value) == value:
+        msg = 'Invalid value {} of type {}.  Expected int.'
+        msg = msg.format(value, type(value))
+        raise ValueError(msg)
+    value = int(value)
+    obj, lib_func = _get_inst_and_func(py_obj, 'size', 'set')
+    lib_func(obj, opt_as_char, value)
+
+
+def _getopt_ms(py_obj, option):
+    """Gets the specified option"""
+    ms = ffi.new('nng_duration []', 1)
+    opt_as_char = to_char(option)
+    obj, lib_func = _get_inst_and_func(py_obj, 'ms', 'get')
+    ret = lib_func(obj, opt_as_char, ms)
+    check_err(ret)
+    return ms[0]
+
+
+def _setopt_ms(py_obj, option, value):
+    """Sets the specified option to the specified value"""
+    opt_as_char = to_char(option)
+    # attempt to accept floats that are exactly int (duration types are
+    # just integers)
+    if not int(value) == value:
+        msg = 'Invalid value {} of type {}.  Expected int.'
+        msg = msg.format(value, type(value))
+        raise ValueError(msg)
+    value = int(value)
+    obj, lib_func = _get_inst_and_func(py_obj, 'ms', 'set')
+    lib_func(obj, opt_as_char, value)
+
+
+def _getopt_string(py_obj, option):
+    """Gets the specified string option"""
+    opt = ffi.new('char *[]', 1)
+    opt_as_char = to_char(option)
+    obj, lib_func = _get_inst_and_func(py_obj, 'string', 'get')
+    ret = lib_func(obj, opt_as_char, opt)
+    check_err(ret)
+    py_string = ffi.string(opt[0]).decode()
+    nng.nng_strfree(opt[0])
+    return py_string
+
+
+def _setopt_string(py_obj, option, value):
+    """Sets the specified option to the specified value
+
+    This is different than the library's nng_setopt_string, because it
+    expects the string to be NULL terminated, and we don't.
+    """
+    opt_as_char = to_char(option)
+    val_as_char = to_char(value)
+    obj, lib_func = _get_inst_and_func(py_obj, 'string', 'set')
+    ret = lib_func(obj, opt_as_char, val_as_char, len(value))
+    check_err(ret)
+
+
+def _getopt_bool(py_obj, option):
+    """Return the boolean value of the specified option"""
+    opt_as_char = to_char(option)
+    b = ffi.new('bool []', 1)
+    obj, lib_func = _get_inst_and_func(py_obj, 'bool', 'get')
+    ret = lib_func(obj, opt_as_char, b)
+    check_err(ret)
+    return b[0]
+
+
+def _setopt_bool(py_obj, option, value):
+    """Sets the specified option to the specified value."""
+    opt_as_char = to_char(option)
+    obj, lib_func = _get_inst_and_func(py_obj, 'bool', 'set')
+    ret = lib_func(obj, opt_as_char, value)
+    check_err(ret)
+
+
+def _getopt_sockaddr(py_obj, option):
+    opt_as_char = to_char(option)
+    sock_addr = ffi.new('nng_sockaddr []', 1)
+    obj, lib_func = _get_inst_and_func(py_obj, 'sockaddr', 'get')
+    ret = lib_func(obj, opt_as_char, sock_addr)
+    check_err(ret)
+    return SockAddr(sock_addr)
+
+
 def to_char(charlike):
     """Convert str or bytes to char*."""
     # fast path for stuff that doesn't need to be changed.
@@ -40,8 +233,8 @@ class _NNGOption:
     # this class should not be instantiated directly!  Instantiation will work,
     # but getting/setting will fail.
 
-    # subclasses set _getter and _setter to the names of the getter/setter
-    # functions in the Socket class.
+    # subclasses set _getter and _setter to the module-level getter and setter
+    # functions
     _getter = None
     _setter = None
 
@@ -49,42 +242,50 @@ class _NNGOption:
         self.option = to_char(option_name)
 
     def __get__(self, instance, owner):
-        getter = getattr(instance, self._getter)
-        return getter(self.option)
+        # have to look up the getter on the class
+        if self._getter is None:
+            raise TypeError("{} cannot be set".format(self.__class__))
+        return self.__class__._getter(instance, self.option)
 
     def __set__(self, instance, value):
-        setter = getattr(instance, self._setter)
-        setter(self.option, value)
+        if self._setter is None:
+            raise TypeError("{} is readonly".format(self.__class__))
+        self.__class__._setter(instance, self.option, value)
 
 
 class IntOption(_NNGOption):
     """Descriptor for getting/setting integer options"""
-    _getter = '_getopt_int'
-    _setter = '_setopt_int'
+    _getter = _getopt_int
+    _setter = _setopt_int
 
 
 class MsOption(_NNGOption):
     """Descriptor for getting/setting durations (in milliseconds)"""
-    _getter = '_getopt_ms'
-    _setter = '_setopt_ms'
+    _getter = _getopt_ms
+    _setter = _setopt_ms
+
+
+class SockAddrOption(_NNGOption):
+    """Descriptor for getting/setting durations (in milliseconds)"""
+    _getter = _getopt_sockaddr
 
 
 class SizeOption(_NNGOption):
     """Descriptor for getting/setting size_t options"""
-    _getter = '_getopt_size'
-    _setter = '_setopt_size'
+    _getter = _getopt_size
+    _setter = _setopt_size
 
 
 class StringOption(_NNGOption):
     """Descriptor for getting/setting string options"""
-    _getter = '_getopt_string'
-    _setter = '_setopt_string'
+    _getter = _getopt_string
+    _setter = _setopt_string
 
 
 class BooleanOption(_NNGOption):
     """Descriptor for getting/setting boolean values"""
-    _getter = '_getopt_bool'
-    _setter = '_setopt_bool'
+    _getter = _getopt_bool
+    _setter = _setopt_bool
 
 
 class NotImplementedOption(_NNGOption):
@@ -122,7 +323,7 @@ class Socket:
         peer (int): Returns the peer protocol id for the socket.
         recv_timeout (int): Receive timeout, in ms.  If a socket takes longer
             than the specified time, raises a pynng.exceptions.Timeout.
-            Corresponds to library option``NNG_OPT_RECVTIMEO`` *
+            Corresponds to library option``NNG_OPT_RECVTIMEO``
         send_timeout (int): Send timeout, in ms.  If the message cannot be
             queued in the specified time, raises a pynng.exceptions.Timeout.
             Corresponds to library option ``NNG_OPT_SENDTIMEO``.
@@ -131,12 +332,23 @@ class Socket:
             [nng_sockaddr](https://nanomsg.github.io/nng/man/v1.0.1/nng_sockaddr.5.html)
             needs to be completed first.  Corresponds to ``NNG_OPT_LOCADDR``.
         reconnect_time_min (int): The minimum time to wait before attempting
-            reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMINT``.
+            reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMINT``.  This
+            can also be overridden on the dialers.
         reconnect_time_max (int): The maximum time to wait before attempting
             reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMAXT``.  If this
             is non-zero, then the time between successive connection attempts
             will start at the value of reconnect_time_min, and grow
-            exponentially, until it reaches this value.
+            exponentially, until it reaches this value.  This option can be set
+            on the socket, or on the dialers associated with the socket.
+        recv_fd (int): The receive file descriptor associated with the socket.
+            This is suitable to be passed into poll functions like poll(),
+            or select().
+        send_fd (int): The sending file descriptor associated with the socket.
+            This is suitable to be passed into poll functions like poll(),
+            or select().
+        recv_max_size (int): The largest size of a message to receive.
+            Messages larger than this size will be silently dropped.  A size of
+            -1 indicates unlimited size.
 
     See also the nng man pages document for options:
 
@@ -155,25 +367,13 @@ class Socket:
     send_buffer_size = IntOption('send-buffer')
     recv_timeout = MsOption('recv-timeout')
     send_timeout = MsOption('send-timeout')
-    # TODO: local_address and rmeote_address are dialer/connected pipe options,
-    # NOT socket options.
-    local_address = NotImplementedOption(
-        'local-address',
-        'NNG_OPT_LOCADDR requires a Python wrapper for nng_sockaddr, which '
-        'has not been done yet.'
-    )
-    remote_address = NotImplementedOption(
-        'peer-address',
-        'NNG_OPT_REMADDR requires a Python wrapper for nng_sockaddr, which '
-        'has not been done yet.'
-    )
-    # TODO: url belongs on listner/dialers, not socket
-    url = StringOption('url')
     # TODO: does this belong here?
     ttl_max = IntOption('ttl-max')
     recv_max_size = SizeOption('recv-size-max')
     reconnect_time_min = MsOption('reconnect-time-min')
     reconnect_time_max = MsOption('reconnect-time-max')
+    recv_fd = IntOption('recv-fd')
+    send_fd = IntOption('send-fd')
 
     def __init__(self, *,
                  dial=None,
@@ -265,7 +465,7 @@ class Socket:
         ret = nng.nng_dial(self.socket, to_char(address), dialer, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
-        self._dialers.append(dialer)
+        self._dialers.append(Dialer(dialer, self))
 
     def listen(self, address, flags=0):
         """Listen at specified address; similar to nanomsg.bind()
@@ -276,10 +476,16 @@ class Socket:
         ret = nng.nng_listen(self.socket, to_char(address), listener, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
-        self._listeners.append(listener)
+        self._listeners.append(Listener(listener, self))
 
     def close(self):
+        """Close the socket, freeing all system resources."""
         nng.nng_close(self.socket)
+        # cleanup the list of listeners/dialers.  A program would be likely to
+        # segfault if a user accessed the listeners or dialers after this
+        # point.
+        self._listeners = []
+        self._dialers = []
 
     def __del__(self):
         self.close()
@@ -303,101 +509,6 @@ class Socket:
         """Sends ``data`` on socket."""
         err = nng.nng_send(self.socket, data, len(data), 0)
         check_err(err)
-
-    def _getopt_int(self, option):
-        """Gets the specified option"""
-        i = ffi.new('int []', 1)
-        opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
-        ret = nng.nng_getopt_int(self.socket, opt_as_char, i)
-        check_err(ret)
-        return i[0]
-
-    def _setopt_int(self, option, value):
-        """Sets the specified option to the specified value"""
-        opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
-        if not int(value) == value:
-            msg = 'Invalid value {} of type {}.  Expected int.'
-            msg = msg.format(value, type(value))
-            raise ValueError(msg)
-        value = int(value)
-        nng.nng_setopt_int(self.socket, opt_as_char, value)
-
-    def _getopt_size(self, option):
-        """Gets the specified size option"""
-        i = ffi.new('size_t []', 1)
-        opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
-        ret = nng.nng_getopt_size(self.socket, opt_as_char, i)
-        check_err(ret)
-        return i[0]
-
-    def _setopt_size(self, option, value):
-        """Sets the specified size option to the specified value"""
-        opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int
-        if not int(value) == value:
-            msg = 'Invalid value {} of type {}.  Expected int.'
-            msg = msg.format(value, type(value))
-            raise ValueError(msg)
-        value = int(value)
-        nng.nng_setopt_size(self.socket, opt_as_char, value)
-
-    def _getopt_ms(self, option):
-        """Gets the specified option"""
-        ms = ffi.new('nng_duration []', 1)
-        opt_as_char = to_char(option)
-        ret = nng.nng_getopt_ms(self.socket, opt_as_char, ms)
-        check_err(ret)
-        return ms[0]
-
-    def _setopt_ms(self, option, value):
-        """Sets the specified option to the specified value"""
-        opt_as_char = to_char(option)
-        # attempt to accept floats that are exactly int (duration types are
-        # just integers)
-        if not int(value) == value:
-            msg = 'Invalid value {} of type {}.  Expected int.'
-            msg = msg.format(value, type(value))
-            raise ValueError(msg)
-        value = int(value)
-        nng.nng_setopt_ms(self.socket, opt_as_char, value)
-
-    def _getopt_string(self, option):
-        """Gets the specified string option"""
-        opt = ffi.new('char *[]', 1)
-        opt_as_char = to_char(option)
-        ret = nng.nng_getopt_string(self.socket, opt_as_char, opt)
-        check_err(ret)
-        py_obj = ffi.string(opt[0]).decode()
-        nng.nng_strfree(opt[0])
-        return py_obj
-
-    def _setopt_string(self, option, value):
-        """Sets the specified option to the specified value
-
-        This is different than the library's nng_setopt_string, because it
-        expects the string to be NULL terminated, and we don't.
-        """
-        opt_as_char = to_char(option)
-        val_as_char = to_char(value)
-        ret = nng.nng_setopt(self.socket, opt_as_char, val_as_char, len(value))
-        check_err(ret)
-
-    def _getopt_bool(self, option):
-        """Return the boolean value of the specified option"""
-        opt_as_char = to_char(option)
-        b = ffi.new('bool []', 1)
-        ret = nng.nng_getopt_bool(self.socket, opt_as_char, b)
-        check_err(ret)
-        return b[0]
-
-    def _setopt_bool(self, option, value):
-        """Sets the specified option to the specified value."""
-        opt_as_char = to_char(option)
-        ret = nng.nng_setopt_bool(self.socket, opt_as_char, value)
-        check_err(ret)
 
     def __enter__(self):
         return self
@@ -459,11 +570,11 @@ class Sub0(Socket):
 
     def subscribe(self, topic):
         """Subscribe to the specified topic."""
-        self._setopt_string(b'sub:subscribe', topic)
+        _setopt_string(self, b'sub:subscribe', topic)
 
     def unsubscribe(self, topic):
         """Unsubscribe to the specified topic."""
-        self._setopt_string(b'sub:unsubscribe', topic)
+        _setopt_string(self, b'sub:unsubscribe', topic)
 
 
 class Req0(Socket):
@@ -487,7 +598,95 @@ class Respondent0(Socket):
 
 
 class Dialer:
+    """Wrapper class for the nng_dialer struct.
+
+    You probably don't need to instantiate this directly.
+    """
+    def __init__(self, dialer, socket):
+        """
+        Args:
+            dialer: the initialized `lib.nng_dialer`.
+            socket: The Socket associated with the dialer
+
+        """
+        # I can't think of a reason you would need to directly instantiate this
+        # class
+        self._dialer = dialer
+        self.socket = socket
+
+    @property
+    def dialer(self):
+        return self._dialer[0]
+
+    local_address = SockAddrOption('local-address')
+    remote_address = SockAddrOption('peer-address')
+    reconnect_time_min = MsOption('reconnect-time-min')
+    reconnect_time_max = MsOption('reconnect-time-max')
+    recv_max_size = SizeOption('recv-size-max')
+    url = StringOption('url')
+
+    def close(self):
+        """
+        Close the dialer.
+        """
+        nng.nng_dialer_close(self.dialer)
+        self.socket._dialers.remove(self)
+
+
+class Listener:
     """Wrapper class for the nng_dialer struct."""
-    def __init__(self, dialer):
-        pass
+    def __init__(self, listener, socket):
+        """
+        Args:
+            listener: the initialized `lib.nng_dialer`.
+            socket: The Socket associated with the dialer
+
+        """
+        # I can't think of a reason you would need to directly instantiate this
+        # class
+        self._listener = listener
+        self.socket = socket
+
+    @property
+    def listener(self):
+        return self._listener[0]
+
+    def close(self):
+        """
+        Close the dialer.
+        """
+        nng.nng_listener_close(self.listener)
+        self.socket._listeners.remove(self)
+
+    local_address = SockAddrOption('local-address')
+    remote_address = SockAddrOption('peer-address')
+    recv_max_size = SizeOption('recv-size-max')
+    url = StringOption('url')
+
+
+class SockAddr:
+    """
+    Python wrapper for struct nng_sockaddr.
+    """
+    def __init__(self, ffi_sock_addr):
+        self._sock_addr = ffi_sock_addr
+
+    @property
+    def sock_addr(self):
+        return self._sock_addr[0]
+
+    def __repr__(self):
+        type_to_str = {
+            nng.NNG_AF_UNSPEC: "NNG_AF_UNSPEC",
+            nng.NNG_AF_INPROC: "NNG_AF_INPROC",
+            nng.NNG_AF_IPC: "NNG_AF_IPC",
+            nng.NNG_AF_INET: "NNG_AF_INET",
+            nng.NNG_AF_INETV6: "NNG_AF_INETV6",
+            nng.NNG_AF_ZT: "NNG_AF_ZT",
+        }
+        family = self.sock_addr.s_family
+        family_str = type_to_str[family]
+        template = "SockAddr.s_family == {}"
+        # now walk the union to figure out which structure to grab
+        return template.format(family_str)
 
