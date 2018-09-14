@@ -49,15 +49,15 @@ def test_dial_blocking_behavior():
 def test_can_overwrite_recvmaxsize_on_listener():
     with pynng.Pair1(listen=addr, recv_timeout=100) as s0, pynng.Pair1(dial=addr) as s1:
         listener = s0.listeners[0]
-        assert s0.recv_max_size < 2e6
+        s0.recv_max_size = 100
+        msg = b'\0' * 101
         assert listener.recv_max_size == s0.recv_max_size
-        s1.send(b'\0' * int(2e6))
+        s1.send(msg)
         with pytest.raises(pynng.Timeout):
             s0.recv()
-        listener.recv_max_size = int(3e6)
-        msg = b'\0' * int(2e6)
+        listener.recv_max_size = 200
+        assert s0.recv_max_size != listener.recv_max_size
         s1.send(msg)
         assert s0.recv() == msg
-        assert s0.recv_max_size != listener.recv_max_size
 
 
