@@ -404,7 +404,10 @@ class Socket:
                 there is no timeout.
             send_timeout: The send timeout, in milliseconds.  If not given,
                 there is no timeout.
-            recv_buffer_size: is not None, it sets receive message buffer size.
+            recv_buffer_size: Set receive message buffer size.
+            send_buffer_size: Sets send message buffer size.
+            recv_max_size: Maximum size of message to receive.  Messages larger
+                than this size are silently dropped.
 
         """
         # list of nng_dialers
@@ -416,14 +419,25 @@ class Socket:
         if opener is None and not hasattr(self, '_opener'):
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
         check_err(self._opener(self._socket_pointer))
-        if dial is not None:
-            self.dial(dial, block=block_on_dial)
-        if listen is not None:
-            self.listen(listen)
         if recv_timeout is not None:
             self.recv_timeout = recv_timeout
         if send_timeout is not None:
             self.send_timeout = send_timeout
+        if recv_max_size is not None:
+            self.recv_max_size = recv_max_size
+        if reconnect_time_min is not None:
+            self.reconnect_time_min = reconnect_time_min
+        if reconnect_time_max is not None:
+            self.reconnect_time_max = reconnect_time_max
+        if recv_buffer_size is not None:
+            self.recv_buffer_size = recv_buffer_size
+        if send_buffer_size is not None:
+            self.send_buffer_size = send_buffer_size
+        if listen is not None:
+            self.listen(listen)
+        if dial is not None:
+            self.dial(dial, block=block_on_dial)
+
 
     def dial(self, address, *, block=None):
         """Dial the specified address.

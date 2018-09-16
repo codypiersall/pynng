@@ -46,10 +46,14 @@ def test_dial_blocking_behavior():
         assert s1.recv() == b'what a message'
 
 
+@pytest.mark.skip(reason="NNG issue 724")
 def test_can_overwrite_recvmaxsize_on_listener():
-    with pynng.Pair1(listen=addr, recv_timeout=100) as s0, pynng.Pair1(dial=addr) as s1:
+    with pynng.Pair1(
+            recv_timeout=100,
+            recv_max_size=100,
+            listen=addr) as s0, \
+             pynng.Pair1(dial=addr) as s1:
         listener = s0.listeners[0]
-        s0.recv_max_size = 100
         msg = b'\0' * 101
         assert listener.recv_max_size == s0.recv_max_size
         s1.send(msg)
