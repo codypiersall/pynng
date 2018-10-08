@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import setuptools.command.build_py
+import setuptools.command.build_ext
 
 
 THIS_DIR = os.path.dirname(__file__)
@@ -75,20 +76,25 @@ def build_nng_lib():
 
 # TODO: this is basically a hack to get something to run before running cffi
 # extnsion builder. subclassing something else would be better!
-class BuildCommand(setuptools.command.build_py.build_py):
-    """Custom build command."""
-
+class BuildPyCommand(setuptools.command.build_py.build_py):
+    """Build nng library before anything else."""
     def run(self):
         build_nng_lib()
-        super(BuildCommand, self).run()
+        super(BuildPyCommand, self).run()
 
+class BuildExtCommand(setuptools.command.build_ext.build_ext):
+    """Build nng library before anything else."""
+    def run(self):
+        build_nng_lib()
+        super(BuildExtCommand, self).run()
 
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
 
 setuptools.setup(
     cmdclass={
-        'build_py': BuildCommand,
+        'build_py': BuildPyCommand,
+        'build_ext': BuildExtCommand,
     },
     name='pynng',
     version='0.1.2-dev1',

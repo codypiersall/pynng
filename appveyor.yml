@@ -22,7 +22,7 @@ install:
   - ps: choco install ninja
 
 build_script:
-  - "%PYTHON%\\python.exe -m pip install ."
+  - "%PYTHON%\\python.exe -m pip install cffi"
   - "%PYTHON%\\python.exe setup.py build"
   - "%PYTHON%\\python.exe setup.py build_ext --inplace"
 
