@@ -549,7 +549,6 @@ class Socket:
 
 class Bus0(Socket):
     """A bus0 socket."""
-
     _opener = nng.nng_bus0_open
 
 
@@ -579,7 +578,7 @@ class Pub0(Socket):
 
 
 class Sub0(Socket):
-    """A Sub0 socket."""
+    """A sub0 socket."""
     _opener = nng.nng_sub0_open
 
     def subscribe(self, topic):
@@ -592,12 +591,12 @@ class Sub0(Socket):
 
 
 class Req0(Socket):
-    """A Req0 socket."""
+    """A req0 socket."""
     _opener = nng.nng_req0_open
 
 
 class Rep0(Socket):
-    """A Rep0 socket."""
+    """A rep0 socket."""
     _opener = nng.nng_rep0_open
 
 
