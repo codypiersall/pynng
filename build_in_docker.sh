@@ -3,13 +3,13 @@
 # Meant to be called in Travis-ci, not really for anything else.
 for v in 35 36 37; do
     python=/opt/python/cp${v}-cp${v}m/bin/python
-    $python -m pip insall cffi
+    $python -m pip install cffi
     $python setup.py build_ext --inplace
     $python setup.py bdist_wheel
     # if pytest fails we've got a problem.  This will allow us to check in
     # Docker that everything is okay.
-    $python -m pip install pytest || touch /mnt/artifacts/v${v}_failed
-    $python -m pytest .
+    $python -m pip install pytest
+    $python -m pytest . || touch /mnt/artifacts/v${v}_failed
     rm pynng/*.so
 done
 $python setup.py sdist
