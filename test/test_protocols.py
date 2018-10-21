@@ -100,6 +100,7 @@ def test_push_pull():
 
         t1.start()
         t2.start()
+        time.sleep(0.01)
         push.send(b'somewhere someone should see this')
         push.send(b'somewhereeeee')
         t1.join()

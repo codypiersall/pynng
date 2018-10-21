@@ -4,7 +4,9 @@ import pytest
 # TODO: all sockets need timeouts
 
 
-addr = 'tcp://127.0.0.1:13131'
+PORT = 13131
+IP = '127.0.0.1'
+addr = 'tcp://{}:{}'.format(IP, PORT)
 
 
 def test_timeout_works():
@@ -51,12 +53,49 @@ def test_can_set_recvmaxsize():
             recv_timeout=50,
             recv_max_size=100,
             listen=addr) as s0, \
-             pynng.Pair1(dial=addr) as s1:
+            pynng.Pair1(dial=addr) as s1:
         listener = s0.listeners[0]
         msg = b'\0' * 101
         assert listener.recv_max_size == s0.recv_max_size
         s1.send(msg)
         with pytest.raises(pynng.Timeout):
             s0.recv()
+
+
+def test_nng_sockaddr():
+    with pynng.Pair1(recv_timeout=50, listen=addr) as s0:
+        sa = s0.listeners[0].local_address
+        assert isinstance(sa, pynng.nng.InAddr)
+        # big-endian
+        expected_port = (PORT >> 8) | ((PORT & 0xff) << 8)
+        assert sa.port == expected_port
+        # big-endian
+        ip_parts = [int(x) for x in IP.split('.')]
+        expected_addr = (
+            ip_parts[0] |
+            ip_parts[1] << 8 |
+            ip_parts[2] << 16 |
+            ip_parts[3] << 24
+        )
+        assert expected_addr == sa.addr
+
+    path = '/tmp/thisisipc'
+    with pynng.Pair1(recv_timeout=50, listen='ipc://{}'.format(path)) as s0:
+        sa = s0.listeners[0].local_address
+        assert isinstance(sa, pynng.nng.IPCAddr)
+        assert sa.path == path
+
+    name = 'thisisinproc'
+    with pynng.Pair1(recv_timeout=50, listen='inproc://{}'.format(name)) as s0:
+        with pytest.raises(pynng.NotSupported):
+            sa = s0.listeners[0].local_address
+
+    ipv6 = 'tcp://[::1]:13131'
+    with pynng.Pair1(recv_timeout=50, listen=ipv6) as s0:
+        sa = s0.listeners[0].local_address
+        assert isinstance(sa, pynng.nng.In6Addr)
+        assert sa.addr == b'\x00' * 15 + b'\x01'
+
+    import IPython; IPython.embed()
 
 
