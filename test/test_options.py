@@ -96,6 +96,4 @@ def test_nng_sockaddr():
         assert isinstance(sa, pynng.nng.In6Addr)
         assert sa.addr == b'\x00' * 15 + b'\x01'
 
-    import IPython; IPython.embed()
-
 
