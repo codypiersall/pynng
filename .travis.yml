@@ -4,7 +4,8 @@ install:
   - docker pull codypiersall/manylinux1-pynng
   - mkdir artifacts
 script:
-  - docker run -v "$(pwd)/artifacts:/mnt/artifacts" --rm -i -t codypiersall/manylinux1-pynng
+  - docker run --sysctl net.ipv6.conf.all.disable_ipv6=0 -v "$(pwd)/artifacts:/mnt/artifacts"
+        --rm -i -t codypiersall/manylinux1-pynng
         bash -x -c "cd && git clone https://github.com/codypiersall/pynng && cd pynng &&
         git checkout $TRAVIS_BRANCH && ./build_in_docker.sh"
   - ls artifacts/dist
