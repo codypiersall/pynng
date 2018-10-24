@@ -10,6 +10,9 @@ import setuptools.command.build_ext
 THIS_DIR = os.path.dirname(__file__)
 
 
+NNG_REVISION = '6c334f3'
+
+
 def build_nng_lib():
     # cannot import build_pynng at the top level becuase cffi may not be
     # installed yet (since it is a dependency, and this script installs
@@ -62,12 +65,12 @@ def build_nng_lib():
             if is_64bit:
                 gen += ' Win64'
 
-            cmd = [build_nng_script, gen]
+            cmd = [build_nng_script, gen, NNG_REVISION]
 
     else:
         # on Linux, build_nng.sh selects ninja if available
         script = os.path.join(THIS_DIR, 'build_nng.sh')
-        cmd = ['/bin/bash', script]
+        cmd = ['/bin/bash', script, NNG_REVISION]
         needs_shell = False
 
     # shell=True is required for Windows
@@ -82,11 +85,13 @@ class BuildPyCommand(setuptools.command.build_py.build_py):
         build_nng_lib()
         super(BuildPyCommand, self).run()
 
+
 class BuildExtCommand(setuptools.command.build_ext.build_ext):
     """Build nng library before anything else."""
     def run(self):
         build_nng_lib()
         super(BuildExtCommand, self).run()
+
 
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()

@@ -10,7 +10,13 @@ fi
 cmake_args="$cmake_args"
 
 (
-    git submodule update --init &&
+    if [ ! -e nng ]; then
+        git clone https://github.com/nanomsg/nng
+        (
+        cd nng
+        git checkout "$1"
+        )
+    fi
     cd nng &&
     rm -rf build &&
     mkdir build &&

@@ -12,7 +12,13 @@ if {%1}=={} (
 
 pushd .
 rmdir /s /q nng\build
-git submodule update --init
+:: check if nng library already exists
+if not exist nng (
+    git clone https://github.com/nanomsg/nng nng
+    pushd nng
+    git checkout %2
+    popd
+)
 mkdir nng\build
 cd nng\build && ^
 cmake -G %1 .. && ^
