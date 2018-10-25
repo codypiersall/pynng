@@ -16,7 +16,6 @@ typedef struct nng_socket_s {
 } nng_socket;
 typedef int32_t nng_duration;
 typedef struct nng_msg nng_msg;
-typedef struct nng_snapshot nng_snapshot;
 typedef struct nng_stat nng_stat;
 typedef struct nng_aio nng_aio;
 struct nng_sockaddr_inproc {
@@ -193,7 +192,10 @@ extern int nng_aio_set_output(nng_aio *, unsigned, void *);
 extern void *nng_aio_get_output(nng_aio *, unsigned);
 extern void nng_aio_set_timeout(nng_aio *, nng_duration);
 extern int nng_aio_set_iov(nng_aio *, unsigned, const nng_iov *);
+extern bool nng_aio_begin(nng_aio *);
 extern void nng_aio_finish(nng_aio *, int);
+typedef void (*nng_aio_cancelfn)(nng_aio *, void *, int);
+extern void nng_aio_defer(nng_aio *, nng_aio_cancelfn, void *);
 extern void nng_sleep_aio(nng_duration, nng_aio *);
 extern int nng_msg_alloc(nng_msg **, size_t);
 extern void nng_msg_free(nng_msg *);
@@ -210,14 +212,30 @@ extern int nng_msg_header_append(nng_msg *, const void *, size_t);
 extern int nng_msg_header_insert(nng_msg *, const void *, size_t);
 extern int nng_msg_header_trim(nng_msg *, size_t);
 extern int nng_msg_header_chop(nng_msg *, size_t);
+extern int nng_msg_header_append_u16(nng_msg *, uint16_t);
 extern int nng_msg_header_append_u32(nng_msg *, uint32_t);
+extern int nng_msg_header_append_u64(nng_msg *, uint64_t);
+extern int nng_msg_header_insert_u16(nng_msg *, uint16_t);
 extern int nng_msg_header_insert_u32(nng_msg *, uint32_t);
+extern int nng_msg_header_insert_u64(nng_msg *, uint64_t);
+extern int nng_msg_header_chop_u16(nng_msg *, uint16_t *);
 extern int nng_msg_header_chop_u32(nng_msg *, uint32_t *);
+extern int nng_msg_header_chop_u64(nng_msg *, uint64_t *);
+extern int nng_msg_header_trim_u16(nng_msg *, uint16_t *);
 extern int nng_msg_header_trim_u32(nng_msg *, uint32_t *);
+extern int nng_msg_header_trim_u64(nng_msg *, uint64_t *);
+extern int nng_msg_append_u16(nng_msg *, uint16_t);
 extern int nng_msg_append_u32(nng_msg *, uint32_t);
+extern int nng_msg_append_u64(nng_msg *, uint64_t);
+extern int nng_msg_insert_u16(nng_msg *, uint16_t);
 extern int nng_msg_insert_u32(nng_msg *, uint32_t);
+extern int nng_msg_insert_u64(nng_msg *, uint64_t);
+extern int nng_msg_chop_u16(nng_msg *, uint16_t *);
 extern int nng_msg_chop_u32(nng_msg *, uint32_t *);
+extern int nng_msg_chop_u64(nng_msg *, uint64_t *);
+extern int nng_msg_trim_u16(nng_msg *, uint16_t *);
 extern int nng_msg_trim_u32(nng_msg *, uint32_t *);
+extern int nng_msg_trim_u64(nng_msg *, uint64_t *);
 extern int nng_msg_dup(nng_msg **, const nng_msg *);
 extern void nng_msg_clear(nng_msg *);
 extern void nng_msg_header_clear(nng_msg *);
@@ -242,18 +260,33 @@ enum nng_flag_enum {
  NNG_FLAG_ALLOC = 1,
  NNG_FLAG_NONBLOCK = 2
 };
+extern int nng_stats_get(nng_stat **);
+extern void nng_stats_free(nng_stat *);
+extern void nng_stats_dump(nng_stat *);
+extern nng_stat *nng_stat_next(nng_stat *);
+extern nng_stat *nng_stat_child(nng_stat *);
+extern const char *nng_stat_name(nng_stat *);
+extern int nng_stat_type(nng_stat *);
 enum nng_stat_type_enum {
- NNG_STAT_LEVEL = 0,
- NNG_STAT_COUNTER = 1
+ NNG_STAT_SCOPE = 0,
+ NNG_STAT_LEVEL = 1,
+ NNG_STAT_COUNTER = 2,
+ NNG_STAT_STRING = 3,
+ NNG_STAT_BOOLEAN = 4,
+ NNG_STAT_ID = 5,
 };
+extern int nng_stat_unit(nng_stat *);
 enum nng_unit_enum {
  NNG_UNIT_NONE = 0,
  NNG_UNIT_BYTES = 1,
  NNG_UNIT_MESSAGES = 2,
- NNG_UNIT_BOOLEAN = 3,
- NNG_UNIT_MILLIS = 4,
- NNG_UNIT_EVENTS = 5
+ NNG_UNIT_MILLIS = 3,
+ NNG_UNIT_EVENTS = 4
 };
+extern uint64_t nng_stat_value(nng_stat *);
+extern const char *nng_stat_string(nng_stat *);
+extern const char *nng_stat_desc(nng_stat *);
+extern uint64_t nng_stat_timestamp(nng_stat *);
 extern int nng_device(nng_socket, nng_socket);
 enum nng_errno_enum {
  NNG_EINTR = 1,
