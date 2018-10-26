@@ -4,4 +4,8 @@ recursive-include nng *
 recursive-include test *.py
 recursive-include pynng *.py
 prune nng/build
-prune nng/docs
+prune nng/docs/man
+prune nng/.git
+prune nng/.circleci
+exclude nng/.gitignore
+
