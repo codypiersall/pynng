@@ -49,7 +49,7 @@ def build_nng_lib():
                 gen = 'amd64'
             else:
                 gen = 'x86'
-            cmd = '"{}" {} && {} Ninja'.format(vcvarsall, gen, build_nng_script)
+            cmd = '"{}" {} && {} Ninja {}'.format(vcvarsall, gen, build_nng_script, NNG_REVISION)
             print('-------------------')
             print(cmd)
             print('-------------------')
