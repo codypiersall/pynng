@@ -9,7 +9,10 @@ from .nng import (
     Req0, Rep0,
     Socket,
     Surveyor0, Respondent0,
+
+    Listener, Dialer
 )
+
 from .exceptions import (
     NNGException,
     Interrupted,
@@ -43,5 +46,6 @@ from .exceptions import (
     Ambiguous,
     BadType,
     Internal,
+    check_err,
 )
 

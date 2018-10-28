@@ -1,4 +1,4 @@
-import pynng
+import pynng.options
 import pytest
 
 # TODO: all sockets need timeouts
@@ -24,7 +24,7 @@ def test_can_set_socket_name():
         p.name = 'this'
         assert p.name == 'this'
         # make sure we're actually testing the right thing
-        assert pynng.nng._getopt_string(p, 'socket-name') == 'this'
+        assert pynng.options._getopt_string(p, 'socket-name') == 'this'
 
 
 def test_can_read_sock_raw():
@@ -65,7 +65,7 @@ def test_can_set_recvmaxsize():
 def test_nng_sockaddr():
     with pynng.Pair1(recv_timeout=50, listen=addr) as s0:
         sa = s0.listeners[0].local_address
-        assert isinstance(sa, pynng.nng.InAddr)
+        assert isinstance(sa, pynng.sockaddr.InAddr)
         # big-endian
         expected_port = (PORT >> 8) | ((PORT & 0xff) << 8)
         assert sa.port == expected_port
@@ -82,7 +82,7 @@ def test_nng_sockaddr():
     path = '/tmp/thisisipc'
     with pynng.Pair1(recv_timeout=50, listen='ipc://{}'.format(path)) as s0:
         sa = s0.listeners[0].local_address
-        assert isinstance(sa, pynng.nng.IPCAddr)
+        assert isinstance(sa, pynng.sockaddr.IPCAddr)
         assert sa.path == path
 
     name = 'thisisinproc'
@@ -93,7 +93,7 @@ def test_nng_sockaddr():
     ipv6 = 'tcp://[::1]:13131'
     with pynng.Pair1(recv_timeout=50, listen=ipv6) as s0:
         sa = s0.listeners[0].local_address
-        assert isinstance(sa, pynng.nng.In6Addr)
+        assert isinstance(sa, pynng.sockaddr.In6Addr)
         assert sa.addr == b'\x00' * 15 + b'\x01'
 
 
