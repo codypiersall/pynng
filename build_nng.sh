@@ -21,7 +21,7 @@ cmake_args="$cmake_args"
     rm -rf build &&
     mkdir build &&
     cd build &&
-    cmake $cmake_args .. &&
-    cmake --build .
+    CFLAGS=-fPIC cmake $cmake_args .. &&
+    CFLAGS=-fPIC cmake --build .
 
 )
