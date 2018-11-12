@@ -315,12 +315,15 @@ class Socket:
     def socket(self):
         return self._socket_pointer[0]
 
-    def recv(self):
+    def recv(self, block=True):
         """recv() on the socket.  Allows the nanomsg library to allocate and
         manage the buffer, and calls nng_free afterward."""
+        flags = lib.NNG_FLAG_ALLOC
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
         data = ffi.new('char *[]', 1)
         size_t = ffi.new('size_t []', 1)
-        ret = lib.nng_recv(self.socket, data, size_t, lib.NNG_FLAG_ALLOC)
+        ret = lib.nng_recv(self.socket, data, size_t, flags)
         check_err(ret)
         recvd = ffi.unpack(data[0], size_t[0])
         lib.nng_free(data[0], size_t[0])

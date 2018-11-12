@@ -1,3 +1,5 @@
+import pytest
+
 import pynng
 
 
@@ -40,4 +42,10 @@ def test_closing_dialer_works():
         assert len(s.dialers) == 1
         s.dialers[0].close()
     assert len(s.listeners) == 0
+
+
+def test_nonblocking_recv_works():
+    with pynng.Pair0(listen=addr) as s:
+        with pytest.raises(pynng.TryAgain):
+            s.recv(block=False)
 
