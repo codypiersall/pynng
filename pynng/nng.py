@@ -2,6 +2,7 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
+import asyncio
 import logging
 
 from ._nng import ffi, lib
@@ -10,6 +11,9 @@ from . import options
 
 
 logger = logging.getLogger(__name__)
+# global variable for mapping asynchronous operations with the Python data
+# assocated with them.  Key is id(obj), value is obj
+_aio_map = {}
 
 
 __all__ = '''
@@ -107,6 +111,25 @@ class NotImplementedOption(_NNGOption):
 
     def __set__(self, instance, value):
         raise NotImplementedError(self.errmsg)
+
+
+@ffi.def_extern()
+def _async_complete(void_p):
+    """
+    This is the callback provided to nng_aio_* functions which completes the
+    Python future argument passed to it.  It schedules _set_future_finished
+    to run to complete the future associated with the event.
+    """
+    assert isinstance
+    id = int(ffi.cast('size_t', void_p))
+
+    loop, fut = _aio_map.pop(id)
+    loop.call_soon_threadsafe(_set_future_finished, fut)
+
+
+def _set_future_finished(fut):
+    # just needs a result, nothing fancy
+    fut.set_result(None)
 
 
 class Socket:
@@ -328,6 +351,28 @@ class Socket:
         recvd = ffi.unpack(data[0], size_t[0])
         lib.nng_free(data[0], size_t[0])
         return recvd
+
+    async def arecv(self):
+        """Asynchronously receive a message."""
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        aio_p = ffi.new('nng_aio **')
+        arg = loop, fut
+        _aio_map[id(arg)] = arg
+        idarg = id(arg)
+        as_void = ffi.cast('void *', idarg)
+        lib.nng_aio_alloc(aio_p, lib._async_complete, as_void)
+        aio = aio_p[0]
+        lib.nng_recv_aio(self.socket, aio)
+        await fut
+        err = lib.nng_aio_result(aio)
+        if err:
+            lib.nng_aio_free(aio)
+            check_err(err)
+        msg = lib.nng_aio_get_msg(aio)
+        size = lib.nng_msg_len(msg)
+        data = ffi.cast('char *', lib.nng_msg_body(msg))
+        return bytes(ffi.buffer(data[0:size]))
 
     def send(self, data):
         """Sends ``data`` on socket."""

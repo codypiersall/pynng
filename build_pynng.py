@@ -50,7 +50,10 @@ ffibuilder.set_source(
 with open('nng_api.h') as f:
     api = f.read()
 
-ffibuilder.cdef(api)
+rest = """
+    extern "Python" void _async_complete(void *);
+"""
+ffibuilder.cdef(api + rest)
 
 if __name__ == "__main__":
     ffibuilder.compile(verbose=True)
