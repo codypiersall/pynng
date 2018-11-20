@@ -372,7 +372,10 @@ class Socket:
         msg = lib.nng_aio_get_msg(aio)
         size = lib.nng_msg_len(msg)
         data = ffi.cast('char *', lib.nng_msg_body(msg))
-        return bytes(ffi.buffer(data[0:size]))
+        py_obj = bytes(ffi.buffer(data[0:size]))
+        lib.nng_msg_free(msg)
+        lib.nng_aio_free(aio)
+        return py_obj
 
     def send(self, data):
         """Sends ``data`` on socket."""
