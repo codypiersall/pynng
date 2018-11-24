@@ -2,7 +2,6 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
-import asyncio
 import logging
 
 from ._nng import ffi, lib

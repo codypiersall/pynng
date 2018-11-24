@@ -96,6 +96,7 @@ class BuildExtCommand(setuptools.command.build_ext.build_ext):
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
 
+
 setuptools.setup(
     cmdclass={
         'build_py': BuildPyCommand,
@@ -121,7 +122,7 @@ setuptools.setup(
         'Topic :: System :: Networking',
     ),
     setup_requires=['cffi'],
-    install_requires=['cffi'],
+    install_requires=['cffi', 'sniffio'],
     cffi_modules=['build_pynng.py:ffibuilder'],
 )
 
