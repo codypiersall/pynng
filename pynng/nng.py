@@ -8,12 +8,10 @@ import logging
 from ._nng import ffi, lib
 from .exceptions import check_err, ConnectionRefused
 from . import options
+from . import _aio
 
 
 logger = logging.getLogger(__name__)
-# global variable for mapping asynchronous operations with the Python data
-# assocated with them.  Key is id(obj), value is obj
-_aio_map = {}
 
 
 __all__ = '''
@@ -113,25 +111,6 @@ class NotImplementedOption(_NNGOption):
         raise NotImplementedError(self.errmsg)
 
 
-@ffi.def_extern()
-def _async_complete(void_p):
-    """
-    This is the callback provided to nng_aio_* functions which completes the
-    Python future argument passed to it.  It schedules _set_future_finished
-    to run to complete the future associated with the event.
-    """
-    assert isinstance
-    id = int(ffi.cast('size_t', void_p))
-
-    loop, fut = _aio_map.pop(id)
-    loop.call_soon_threadsafe(_set_future_finished, fut)
-
-
-def _set_future_finished(fut):
-    # just needs a result, nothing fancy
-    fut.set_result(None)
-
-
 class Socket:
     """
     The base socket.  It should generally not be instantiated directly.
@@ -217,7 +196,8 @@ class Socket:
                  reconnect_time_min=None,
                  reconnect_time_max=None,
                  opener=None,
-                 block_on_dial=None
+                 block_on_dial=None,
+                 async_backend=None,
                  ):
         """Initialize socket.  It takes no positional arguments.
         Most socket options can be set through the initializer for convenience.
@@ -239,12 +219,16 @@ class Socket:
             send_buffer_size: Sets send message buffer size.
             recv_max_size: Maximum size of message to receive.  Messages larger
                 than this size are silently dropped.
+            async_backend: The event loop backend for asyncronous socket
+                operations.  the currently supported backends are "asyncio" and
+                "trio".
 
         """
         # list of nng_dialers
         self._dialers = []
         self._listeners = []
         self._socket_pointer = ffi.new('nng_socket[]', 1)
+        self.async_backend = async_backend
         if opener is not None:
             self._opener = opener
         if opener is None and not hasattr(self, '_opener'):
@@ -354,28 +338,8 @@ class Socket:
 
     async def arecv(self):
         """Asynchronously receive a message."""
-        loop = asyncio.get_event_loop()
-        fut = loop.create_future()
-        aio_p = ffi.new('nng_aio **')
-        arg = loop, fut
-        _aio_map[id(arg)] = arg
-        idarg = id(arg)
-        as_void = ffi.cast('void *', idarg)
-        lib.nng_aio_alloc(aio_p, lib._async_complete, as_void)
-        aio = aio_p[0]
-        lib.nng_recv_aio(self.socket, aio)
-        await fut
-        err = lib.nng_aio_result(aio)
-        if err:
-            lib.nng_aio_free(aio)
-            check_err(err)
-        msg = lib.nng_aio_get_msg(aio)
-        size = lib.nng_msg_len(msg)
-        data = ffi.cast('char *', lib.nng_msg_body(msg))
-        py_obj = bytes(ffi.buffer(data[0:size]))
-        lib.nng_msg_free(msg)
-        lib.nng_aio_free(aio)
-        return py_obj
+        with _aio.AIOHelper(self, self.async_backend) as aio:
+            return await aio.arecv()
 
     def send(self, data):
         """Sends ``data`` on socket."""
