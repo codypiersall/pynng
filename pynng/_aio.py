@@ -38,6 +38,22 @@ def asyncio_helper(aio):
     loop = asyncio.get_event_loop()
     fut = loop.create_future()
 
+    async def wait_for_aio():
+        already_called_nng_aio_cancel = False
+        while True:
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                if not already_called_nng_aio_cancel:
+                    lib.nng_aio_cancel(aio.aio)
+                    already_called_nng_aio_cancel = True
+            else:
+                break
+        err = lib.nng_aio_result(aio.aio)
+        if err == lib.NNG_ECANCELED:
+            raise asyncio.CancelledError
+        check_err(err)
+
     def _set_future_finished(fut):
         fut.set_result(None)
 

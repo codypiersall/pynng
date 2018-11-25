@@ -31,6 +31,22 @@ def test_arecv_asyncio():
         thread.join()
 
 
+def test_arecv_asyncio_cancel():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def cancel_soon(fut, sleep_time=0.2):
+        await asyncio.sleep(sleep_time)
+        fut.cancel()
+
+    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
+        arecv = p0.arecv()
+        fut = asyncio.ensure_future(arecv)
+        g = asyncio.gather(fut, cancel_soon(fut))
+        with pytest.raises(asyncio.CancelledError):
+            loop.run_until_complete(g)
+
+
 def test_arecv_trio():
     with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, \
             pynng.Pair0(dial=addr) as dialer:
@@ -41,12 +57,13 @@ def test_arecv_trio():
         thread.join()
 
 
-def test_arecv_trio_cancel_works():
-    with pynng.Pair0(listen=addr, recv_timeout=5000) as listener:
-        async def cancel_real_fast():
-            with trio.fail_after(0.02):
-                await listener.arecv()
+def test_arecv_trio_cancel():
 
+    async def cancel_real_fast(sock):
+        with trio.fail_after(0.02):
+            return await sock.arecv()
+
+    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
         with pytest.raises(trio.TooSlowError):
-            trio.run(cancel_real_fast)
+            trio.run(cancel_real_fast, p0)
 
