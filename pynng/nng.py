@@ -196,7 +196,7 @@ class Socket:
                  reconnect_time_max=None,
                  opener=None,
                  block_on_dial=None,
-                 async_backend=None,
+                 async_backend=None
                  ):
         """Initialize socket.  It takes no positional arguments.
         Most socket options can be set through the initializer for convenience.
