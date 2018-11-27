@@ -88,7 +88,8 @@ async def send_and_recv(sender, receiver, message):
 with Pair0(listen='tcp://127.0.0.1:54321') as s1, \
         Pair0(dial='tcp://127.0.0.1:54321') as s2:
 
-    received = trio.run(s1, s2, b'hello there old pal!')
+    future = send_and_recv(s1, s2, b'hello there old pal!')
+    received = trio.run(future)
     assert recieved == 'hello there old pal!'
 
 ```
