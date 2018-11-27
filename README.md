@@ -69,6 +69,30 @@ with Pair0(listen='tcp://127.0.0.1:54321') as s1, \
     print(s2.recv())
 ```
 
+Asynchronous sending also works with
+[trio](https://trio.readthedocs.io/en/latest/) and
+[asyncio](https://docs.python.org/3/library/asyncio.html).  Here is an example
+using trio:
+
+
+```python
+
+import pynng
+import trio
+
+
+async def send_and_recv(sender, receiver, message):
+    await sender.asend(message)
+    return await receiver.arecv()
+
+with Pair0(listen='tcp://127.0.0.1:54321') as s1, \
+        Pair0(dial='tcp://127.0.0.1:54321') as s2:
+
+    received = trio.run(s1, s2, b'hello there old pal!')
+    assert recieved == 'hello there old pal!'
+
+```
+
 Many other protocols are available as well:
 
 * `Pair0`: one-to-one, bidirectional communication.
