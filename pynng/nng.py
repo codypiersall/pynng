@@ -200,7 +200,6 @@ class Socket:
                  ):
         """Initialize socket.  It takes no positional arguments.
         Most socket options can be set through the initializer for convenience.
-        the keyword function
 
         Note:
             The following arguments are all optional.
@@ -220,7 +219,8 @@ class Socket:
                 than this size are silently dropped.
             async_backend: The event loop backend for asyncronous socket
                 operations.  the currently supported backends are "asyncio" and
-                "trio".
+                "trio".  If ``async_backend`` is not provided, pynng will use
+                sniffio to attempt to find the currently running event loop.
 
         """
         # list of nng_dialers
