@@ -150,6 +150,15 @@ class AIOHelper:
         py_obj = bytes(ffi.buffer(data[0:size]))
         return py_obj
 
+    async def asend(self, data):
+        msg_p = ffi.new('nng_msg **')
+        check_err(lib.nng_msg_alloc(msg_p, 0))
+        msg = msg_p[0]
+        lib.nng_msg_append(msg, data, len(data))
+        lib.nng_aio_set_msg(self.aio, msg)
+        lib.nng_send_aio(self.socket.socket, self.aio)
+        return await self.awaitable
+
     def _free(self):
         """
         Free resources allocated with nng

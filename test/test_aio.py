@@ -58,7 +58,6 @@ def test_arecv_trio():
 
 
 def test_arecv_trio_cancel():
-
     async def cancel_real_fast(sock):
         with trio.fail_after(0.02):
             return await sock.arecv()
@@ -66,4 +65,18 @@ def test_arecv_trio_cancel():
     with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
         with pytest.raises(trio.TooSlowError):
             trio.run(cancel_real_fast, p0)
+
+
+def test_asend_asyncio():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, \
+            pynng.Pair0(dial=addr, send_timeout=2000) as dialer:
+        arecv = listener.arecv()
+        asend = dialer.asend(b'hello friend')
+        g = asyncio.gather(asend, arecv)
+        sent, received = loop.run_until_complete(g)
+        assert received == b'hello friend'
+        assert sent is None
 

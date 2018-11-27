@@ -335,15 +335,20 @@ class Socket:
         lib.nng_free(data[0], size_t[0])
         return recvd
 
+    def send(self, data):
+        """Sends ``data`` on socket."""
+        err = lib.nng_send(self.socket, data, len(data), 0)
+        check_err(err)
+
     async def arecv(self):
         """Asynchronously receive a message."""
         with _aio.AIOHelper(self, self.async_backend) as aio:
             return await aio.arecv()
 
-    def send(self, data):
-        """Sends ``data`` on socket."""
-        err = lib.nng_send(self.socket, data, len(data), 0)
-        check_err(err)
+    async def asend(self, data):
+        """Asynchronously send a message."""
+        with _aio.AIOHelper(self, self.async_backend) as aio:
+            return await aio.asend(data)
 
     def __enter__(self):
         return self
