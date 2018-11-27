@@ -80,3 +80,14 @@ def test_asend_asyncio():
         assert received == b'hello friend'
         assert sent is None
 
+
+def test_asend_trio():
+
+    async def asend_and_arecv(sender, receiver, msg):
+        await sender.asend(msg)
+        return await receiver.arecv()
+
+    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, \
+            pynng.Pair0(dial=addr, send_timeout=2000) as dialer:
+        msg = trio.run(asend_and_arecv, dialer, listener, b'hello there')
+        assert msg == b'hello there'
