@@ -55,7 +55,8 @@ def asyncio_helper(aio):
         check_err(err)
 
     def _set_future_finished(fut):
-        fut.set_result(None)
+        if not fut.done():
+            fut.set_result(None)
 
     def rescheduler():
         loop.call_soon_threadsafe(_set_future_finished, fut)
