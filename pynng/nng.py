@@ -7,6 +7,7 @@ import logging
 from ._nng import ffi, lib
 from .exceptions import check_err, ConnectionRefused
 from . import options
+from . import _aio
 
 
 logger = logging.getLogger(__name__)
@@ -194,11 +195,11 @@ class Socket:
                  reconnect_time_min=None,
                  reconnect_time_max=None,
                  opener=None,
-                 block_on_dial=None
+                 block_on_dial=None,
+                 async_backend=None
                  ):
         """Initialize socket.  It takes no positional arguments.
         Most socket options can be set through the initializer for convenience.
-        the keyword function
 
         Note:
             The following arguments are all optional.
@@ -216,12 +217,17 @@ class Socket:
             send_buffer_size: Sets send message buffer size.
             recv_max_size: Maximum size of message to receive.  Messages larger
                 than this size are silently dropped.
+            async_backend: The event loop backend for asyncronous socket
+                operations.  the currently supported backends are "asyncio" and
+                "trio".  If ``async_backend`` is not provided, pynng will use
+                sniffio to attempt to find the currently running event loop.
 
         """
         # list of nng_dialers
         self._dialers = []
         self._listeners = []
         self._socket_pointer = ffi.new('nng_socket[]', 1)
+        self.async_backend = async_backend
         if opener is not None:
             self._opener = opener
         if opener is None and not hasattr(self, '_opener'):
@@ -328,6 +334,11 @@ class Socket:
         recvd = ffi.unpack(data[0], size_t[0])
         lib.nng_free(data[0], size_t[0])
         return recvd
+
+    async def arecv(self):
+        """Asynchronously receive a message."""
+        with _aio.AIOHelper(self, self.async_backend) as aio:
+            return await aio.arecv()
 
     def send(self, data):
         """Sends ``data`` on socket."""
