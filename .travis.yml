@@ -5,9 +5,9 @@ install:
   - mkdir artifacts
 script:
   - docker run --sysctl net.ipv6.conf.all.disable_ipv6=0 -v "$(pwd)/artifacts:/mnt/artifacts"
+        -v "$(pwd):/root/pynng"
         --rm -i -t codypiersall/manylinux1-pynng
-        bash -x -c "cd && git clone https://github.com/codypiersall/pynng && cd pynng &&
-        git checkout $TRAVIS_BRANCH && ./build_in_docker.sh"
+        bash -x -c "cd ~/pynng && ./build_in_docker.sh"
   - ls artifacts
   - ls artifacts/dist
   # we're listing the files individually here because if one failed to build we
