@@ -16,28 +16,23 @@ restriction.
 Installation
 ------------
 
-On Windows and 64-bit Linux, the usual
+On Windows, MacOS, and Linux, the usual
 
     pip install pynng
 
-should suffice.  Building from source is a little convoluted, due to some
-issues with the way the setup.py script is written.  Nevertheless, it can be
-done:
+should suffice.  Note that on 32-bit Linux and on macOS no binary distributions
+are available, so [CMake](https://cmake.org/) is also required.
+
+Building from the GitHub repo works as well, natch:
 
     git clone https://github.com/codypiersall/pynng
     cd pynng
-    pip install .
-    python setup.py build
-    python setup.py build_ext --inplace
-    pytest
+    pip install -e .
 
-### Installing on Mac
+(If you want to run tests, you also need to `pip install pytest` and `pip
+install trio`, then just run `pytest`.)
 
-
-This project does not yet know how to build for Mac, because I don't have a Mac
-to test on.  The tricky bit is letting cffi know the correct object file to
-link to, and ensuring whatever the Mac equivalent of -fPIC is set when
-compiling.
+pynng might work on the BSDs as well.  Who knows!
 
 Using pynng
 -----------
@@ -107,7 +102,6 @@ Many other protocols are available as well:
 TODO
 ----
 
-* Support Mac
 * More docs
 
 [nanomsg next generation]: https://nanomsg.github.io/nng/index.html
