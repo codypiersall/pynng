@@ -322,8 +322,18 @@ class Socket:
         return self._socket_pointer[0]
 
     def recv(self, block=True):
-        """recv() on the socket.  Allows the nanomsg library to allocate and
-        manage the buffer, and calls nng_free afterward."""
+        """Receive data on the socket.
+
+        Args:
+
+          block: If block is True (the default), the function will not return
+            until the operation is completed or times out.  If block is False,
+            the function will return data immediately.  If no data is ready on
+            the socket, the function will raise ``pynng.TryAgain``.
+
+        """
+        # TODO: someday we should support some kind of recv_into() operation
+        # where the user provides the data buffer.
         flags = lib.NNG_FLAG_ALLOC
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
