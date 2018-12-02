@@ -6,6 +6,7 @@ import asyncio
 import sniffio
 
 from ._nng import ffi, lib
+import pynng
 from .exceptions import check_err
 
 
@@ -123,11 +124,25 @@ class AIOHelper:
         'trio': trio_helper,
     }
 
-    def __init__(self, socket, async_backend):
-        self.socket = socket
+    def __init__(self, obj, async_backend):
         # set to None now so we can know if we need to free it later
+        # This should be at the top of __init__ so that __del__ doesn't raise
+        # an unexpected AttributeError if something funky happens
         self.aio = None
         self.msg = None
+        # this is not a public place, let's make some assertions
+        assert isinstance(obj, (pynng.Socket, pynng.Context))
+        # we need to choose the correct nng lib functions based on the type of
+        # object we've been passed; but really, all the logic is identical
+        if isinstance(obj, pynng.Socket):
+            self._lib_obj = obj.socket
+            self._lib_arecv = lib.nng_recv_aio
+            self._lib_asend = lib.nng_send_aio
+        else:
+            self._lib_obj = obj.context
+            self._lib_arecv = lib.nng_ctx_recv
+            self._lib_asend = lib.nng_ctx_send
+        self.obj = obj
         if async_backend is None:
             async_backend = sniffio.current_async_library()
         if async_backend not in self._aio_helper_map:
@@ -141,7 +156,7 @@ class AIOHelper:
         self.aio = aio_p[0]
 
     async def arecv(self):
-        lib.nng_recv_aio(self.socket.socket, self.aio)
+        check_err(self._lib_arecv(self._lib_obj, self.aio))
         await self.awaitable
         err = lib.nng_aio_result(self.aio)
         check_err(err)
@@ -157,13 +172,14 @@ class AIOHelper:
         msg = msg_p[0]
         lib.nng_msg_append(msg, data, len(data))
         lib.nng_aio_set_msg(self.aio, msg)
-        lib.nng_send_aio(self.socket.socket, self.aio)
+        check_err(self._lib_asend(self._lib_obj, self.aio))
         return await self.awaitable
 
     def _free(self):
         """
         Free resources allocated with nng
         """
+        # TODO: Do we need to check if self.awaitable is not finished?
         if self.aio is not None:
             lib.nng_aio_free(self.aio)
             self.aio = None

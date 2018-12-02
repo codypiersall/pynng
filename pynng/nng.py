@@ -2,6 +2,7 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
+
 import logging
 
 from ._nng import ffi, lib
@@ -226,13 +227,13 @@ class Socket:
         # list of nng_dialers
         self._dialers = []
         self._listeners = []
-        self._socket_pointer = ffi.new('nng_socket[]', 1)
+        self._socket = ffi.new('nng_socket *',)
         self.async_backend = async_backend
         if opener is not None:
             self._opener = opener
         if opener is None and not hasattr(self, '_opener'):
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
-        check_err(self._opener(self._socket_pointer))
+        check_err(self._opener(self._socket))
         if recv_timeout is not None:
             self.recv_timeout = recv_timeout
         if send_timeout is not None:
@@ -288,7 +289,7 @@ class Socket:
 
         ``dialer`` and ``flags`` usually do not need to be given.
         """
-        dialer = ffi.new('nng_dialer []', 1)
+        dialer = ffi.new('nng_dialer *')
         ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
@@ -299,7 +300,7 @@ class Socket:
 
         ``listener`` and ``flags`` usually do not need to be given.
         """
-        listener = ffi.new('nng_listener []', 1)
+        listener = ffi.new('nng_listener *')
         ret = lib.nng_listen(self.socket, to_char(address), listener, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
@@ -307,19 +308,22 @@ class Socket:
 
     def close(self):
         """Close the socket, freeing all system resources."""
-        lib.nng_close(self.socket)
-        # cleanup the list of listeners/dialers.  A program would be likely to
-        # segfault if a user accessed the listeners or dialers after this
-        # point.
-        self._listeners = []
-        self._dialers = []
+        # if a TypeError occurs (e.g. a bad keyword to __init__) we don't have
+        # the attribute _socket yet.  This prevents spewing extra exceptions
+        if hasattr(self, '_socket'):
+            lib.nng_close(self.socket)
+            # cleanup the list of listeners/dialers.  A program would be likely to
+            # segfault if a user accessed the listeners or dialers after this
+            # point.
+            self._listeners = []
+            self._dialers = []
 
     def __del__(self):
         self.close()
 
     @property
     def socket(self):
-        return self._socket_pointer[0]
+        return self._socket[0]
 
     def recv(self, block=True):
         """Receive data on the socket.
@@ -337,8 +341,8 @@ class Socket:
         flags = lib.NNG_FLAG_ALLOC
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
-        data = ffi.new('char *[]', 1)
-        size_t = ffi.new('size_t []', 1)
+        data = ffi.new('char **')
+        size_t = ffi.new('size_t *')
         ret = lib.nng_recv(self.socket, data, size_t, flags)
         check_err(ret)
         recvd = ffi.unpack(data[0], size_t[0])
@@ -381,6 +385,18 @@ class Socket:
         # reference alive for cffi.  If someone else removes an item from the
         # list we return it doesn't matter.
         return self._listeners.copy()
+
+    def new_context(self):
+        """
+        Return a new Context for this socket.
+        """
+        return Context(self)
+
+    def new_contexts(self, n):
+        """
+        Return ``n`` new contexts for this socket
+        """
+        return [self.new_context() for _ in range(n)]
 
 
 class Bus0(Socket):
@@ -512,4 +528,83 @@ class Listener:
     recv_max_size = SizeOption('recv-size-max')
     url = StringOption('url')
 
+
+class Context:
+    """
+    A "context" keeps track of a protocol's state for stateful protocols (like
+    REQ/REP).  A context allows the same socket to be used for multiple
+    operations at the same time.  For example, the following code, **which does
+    not use contexts**, does terrible things:
+
+    .. code-block:: python
+
+        # start a socket to service requests.
+        # HEY THIS IS EXAMPLE BAD CODE, SO DON'T TRY TO USE IT
+        import pynng
+        import threading
+
+        def service_reqs(s):
+            while True:
+                data = s.recv()
+                # do something with data, e.g.
+                s.send(b"here's your answer, pal!")
+
+
+        threads = []
+        with pynng.Rep0(listen='tcp:127.0.0.1:12345') as s:
+            for _ in range(10):
+                t = threading.Thread(target=service_reqs, args=[s], daemon=True)
+                t.start()
+                threads.append(t)
+
+            for thread in threads:
+                thread.join()
+
+    Contexts allow multiplexing a socket in a way that is safe.  It removes one
+    of the biggest use cases for needing to use raw sockets.
+
+    Contexts should not be instantiated directly; instead, create a socket, and
+    call the new_context() method.
+    """
+
+    def __init__(self, socket):
+        # need to set attributes first, so that if anything goes wrong,
+        # __del__() doesn't throw an AttributeError
+        self._context = None
+        assert isinstance(socket, Socket)
+        self._socket = socket
+        self._context = ffi.new('nng_ctx *')
+        check_err(lib.nng_ctx_open(self._context, socket.socket))
+        assert lib.nng_ctx_id(self.context) != -1
+
+    async def arecv(self):
+        with _aio.AIOHelper(self, self._socket.async_backend) as aio:
+            return await aio.arecv()
+
+    async def asend(self, data):
+        with _aio.AIOHelper(self, self._socket.async_backend) as aio:
+            return await aio.asend(data)
+
+    def _free(self):
+        ctx_err = 0
+        if self._context is not None:
+            if lib.nng_ctx_id(self.context) != -1:
+                ctx_err = lib.nng_ctx_close(self.context)
+                self._context = None
+
+        check_err(ctx_err)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self._free()
+
+    @property
+    def context(self):
+        """Return the underlying nng object."""
+        return self._context[0]
+
+    def __del__(self):
+        self._free()
 

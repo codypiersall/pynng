@@ -1,11 +1,11 @@
 import pytest
+import trio
 
 import pynng
 
 
 addr = 'tcp://127.0.0.1:13131'
 addr2 = 'tcp://127.0.0.1:13132'
-
 
 def test_dialers_get_added():
     with pynng.Pair0() as s:
@@ -48,4 +48,52 @@ def test_nonblocking_recv_works():
     with pynng.Pair0(listen=addr) as s:
         with pytest.raises(pynng.TryAgain):
             s.recv(block=False)
+
+
+def test_context():
+    async def test_them_up(req, rep):
+        assert isinstance(req, pynng.Context)
+        assert isinstance(rep, pynng.Context)
+        request = b'i am requesting'
+        await req.asend(request)
+        assert await rep.arecv() == request
+
+        response = b'i am responding'
+        await rep.asend(response)
+        assert await req.arecv() == response
+
+        with pytest.raises(pynng.BadState):
+            await req.arecv()
+
+        # responders can't send before receiving
+        with pytest.raises(pynng.BadState):
+            await rep.asend(b'I cannot do this why am I trying')
+
+    with pynng.Req0(listen=addr, recv_timeout=1000) as req, \
+            pynng.Rep0(dial=addr, recv_timeout=1000) as rep:
+        trio.run(test_them_up, req.new_context(), rep.new_context())
+
+
+def test_multiple_contexts():
+    async def recv_and_send(ctx):
+        data = await ctx.arecv()
+        await trio.sleep(0.05)
+        await ctx.asend(data)
+
+    async def do_some_stuff(rep, req1, req2):
+        async with trio.open_nursery() as n:
+            ctx1, ctx2 = rep.new_contexts(2)
+            n.start_soon(recv_and_send, ctx1)
+            n.start_soon(recv_and_send, ctx2)
+
+            await req1.asend(b'oh hi')
+            await req2.asend(b'me toooo')
+            assert (await req1.arecv() == b'oh hi')
+            assert (await req2.arecv() == b'me toooo')
+
+    with pynng.Rep0(listen=addr, recv_timeout=500) as rep, \
+            pynng.Req0(dial=addr, recv_timeout=500) as req1, \
+            pynng.Req0(dial=addr, recv_timeout=500) as req2:
+        trio.run(do_some_stuff, rep, req1, req2)
+
 
