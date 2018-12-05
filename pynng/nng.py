@@ -578,12 +578,59 @@ class Context:
         assert lib.nng_ctx_id(self.context) != -1
 
     async def arecv(self):
+        """
+        Asynchronously receive data using this context.
+        """
         with _aio.AIOHelper(self, self._socket.async_backend) as aio:
             return await aio.arecv()
 
     async def asend(self, data):
+        """
+        Asynchronously send data using this context.
+        """
         with _aio.AIOHelper(self, self._socket.async_backend) as aio:
             return await aio.asend(data)
+
+    def recv(self):
+        """
+        Synchronously receive data on this context.
+        """
+        aio_p = ffi.new('nng_aio **')
+        check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
+        aio = aio_p[0]
+        try:
+            check_err(lib.nng_ctx_recv(self.context, aio))
+            check_err(lib.nng_aio_wait(aio))
+            check_err(lib.nng_aio_result(aio))
+            msg = lib.nng_aio_get_msg(aio)
+            try:
+                size = lib.nng_msg_len(msg)
+                data = ffi.cast('char *', lib.nng_msg_body(msg))
+                py_obj = bytes(ffi.buffer(data[0:size]))
+            finally:
+                lib.nng_msg_free(msg)
+        finally:
+            lib.nng_aio_free(aio)
+        return py_obj
+
+    def send(self, data):
+        """
+        Synchronously send data on the socket.
+        """
+        aio_p = ffi.new('nng_aio **')
+        check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
+        aio = aio_p[0]
+        try:
+            msg_p = ffi.new('nng_msg **')
+            check_err(lib.nng_msg_alloc(msg_p, 0))
+            msg = msg_p[0]
+            lib.nng_msg_append(msg, data, len(data))
+            check_err(lib.nng_aio_set_msg(aio, msg))
+            check_err(lib.nng_ctx_send(self.context, aio))
+            check_err(lib.nng_aio_wait(aio))
+            check_err(lib.nng_aio_result(aio))
+        finally:
+            lib.nng_aio_free(aio)
 
     def _free(self):
         ctx_err = 0

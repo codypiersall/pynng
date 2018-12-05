@@ -7,6 +7,7 @@ import pynng
 addr = 'tcp://127.0.0.1:13131'
 addr2 = 'tcp://127.0.0.1:13132'
 
+
 def test_dialers_get_added():
     with pynng.Pair0() as s:
         assert len(s.dialers) == 0
@@ -97,3 +98,10 @@ def test_multiple_contexts():
         trio.run(do_some_stuff, rep, req1, req2)
 
 
+def test_synchronous_recv_context():
+    with pynng.Rep0(listen=addr, recv_timeout=500) as rep, \
+            pynng.Req0(dial=addr, recv_timeout=500) as req:
+        req.send(b'oh hello there old pal')
+        assert rep.recv() == b'oh hello there old pal'
+        rep.send(b'it is so good to hear from you')
+        assert req.recv() == b'it is so good to hear from you'

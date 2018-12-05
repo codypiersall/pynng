@@ -129,8 +129,7 @@ class AIOHelper:
         # This should be at the top of __init__ so that __del__ doesn't raise
         # an unexpected AttributeError if something funky happens
         self.aio = None
-        self.msg = None
-        # this is not a public place, let's make some assertions
+        # this is not a public interface, let's make some assertions
         assert isinstance(obj, (pynng.Socket, pynng.Context))
         # we need to choose the correct nng lib functions based on the type of
         # object we've been passed; but really, all the logic is identical
@@ -160,10 +159,13 @@ class AIOHelper:
         await self.awaitable
         err = lib.nng_aio_result(self.aio)
         check_err(err)
-        self.msg = lib.nng_aio_get_msg(self.aio)
-        size = lib.nng_msg_len(self.msg)
-        data = ffi.cast('char *', lib.nng_msg_body(self.msg))
-        py_obj = bytes(ffi.buffer(data[0:size]))
+        msg = lib.nng_aio_get_msg(self.aio)
+        try:
+            size = lib.nng_msg_len(msg)
+            data = ffi.cast('char *', lib.nng_msg_body(msg))
+            py_obj = bytes(ffi.buffer(data[0:size]))
+        finally:
+            lib.nng_msg_free(msg)
         return py_obj
 
     async def asend(self, data):
@@ -183,9 +185,6 @@ class AIOHelper:
         if self.aio is not None:
             lib.nng_aio_free(self.aio)
             self.aio = None
-        if self.msg is not None:
-            lib.nng_msg_free(self.msg)
-            self.msg = None
 
     def __enter__(self):
         return self
