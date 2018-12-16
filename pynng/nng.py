@@ -4,6 +4,7 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 import logging
+import weakref
 
 from ._nng import ffi, lib
 from .exceptions import check_err, ConnectionRefused
@@ -13,6 +14,12 @@ from . import _aio
 
 logger = logging.getLogger(__name__)
 
+# a mapping of id(sock): sock for use in callbacks.  When a socket is
+# initialized, it adds itself to this dict.  When a socket is closed, it
+# removes itself from this dict.  In order to allow sockets to be garbage
+# collected, a weak reference to the socket is stored here instead of the
+# actual socket.
+_live_sockets = weakref.WeakValueDictionary()
 
 __all__ = '''
 ffi
@@ -206,10 +213,9 @@ class Socket:
             The following arguments are all optional.
 
         Args:
-            dial (str): The address to dial.  If not given, no address is
-                dialed.  Note well: while the nng library
-            listen (str): The address to listen at.  If not given, the socket
-                does not listen at any address.
+            dial: The address to dial.  If not given, no address is dialed.
+            listen: The address to listen at.  If not given, the socket does
+                not listen at any address.
             recv_timeout: The receive timeout, in milliseconds.  If not given,
                 there is no timeout.
             send_timeout: The send timeout, in milliseconds.  If not given,
@@ -224,11 +230,16 @@ class Socket:
                 sniffio to attempt to find the currently running event loop.
 
         """
-        # list of nng_dialers
-        self._dialers = []
-        self._listeners = []
+        # mapping of id: Python objects
+        self._dialers = {}
+        self._listeners = {}
+        self._pipes = {}
+        self._on_pre_pipe_add = []
+        self._on_post_pipe_add = []
+        self._on_post_pipe_removed = []
+
         self._socket = ffi.new('nng_socket *',)
-        self.async_backend = async_backend
+        self._async_backend = async_backend
         if opener is not None:
             self._opener = opener
         if opener is None and not hasattr(self, '_opener'):
@@ -252,6 +263,16 @@ class Socket:
             self.listen(listen)
         if dial is not None:
             self.dial(dial, block=block_on_dial)
+
+        _live_sockets[id(self)] = self
+        as_void = ffi.cast('void *', id(self))
+        # set up pipe callbacks
+        check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_PRE,
+                                      lib._nng_pipe_cb, as_void))
+        check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_POST,
+                                      lib._nng_pipe_cb, as_void))
+        check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_REM_POST,
+                                      lib._nng_pipe_cb, as_void))
 
     def dial(self, address, *, block=None):
         """Dial the specified address.
@@ -293,7 +314,8 @@ class Socket:
         ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
-        self._dialers.append(Dialer(dialer, self))
+        d_id = lib.nng_dialer_id(dialer[0])
+        self._dialers[d_id] = Dialer(dialer, self)
 
     def listen(self, address, flags=0):
         """Listen at specified address; similar to nanomsg.bind()
@@ -304,7 +326,8 @@ class Socket:
         ret = lib.nng_listen(self.socket, to_char(address), listener, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
-        self._listeners.append(Listener(listener, self))
+        l_id = lib.nng_listener_id(listener[0])
+        self._listeners[l_id] = Listener(listener, self)
 
     def close(self):
         """Close the socket, freeing all system resources."""
@@ -315,8 +338,8 @@ class Socket:
             # cleanup the list of listeners/dialers.  A program would be likely to
             # segfault if a user accessed the listeners or dialers after this
             # point.
-            self._listeners = []
-            self._dialers = []
+            self._listeners = {}
+            self._dialers = {}
 
     def __del__(self):
         self.close()
@@ -356,12 +379,12 @@ class Socket:
 
     async def arecv(self):
         """Asynchronously receive a message."""
-        with _aio.AIOHelper(self, self.async_backend) as aio:
+        with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.arecv()
 
     async def asend(self, data):
         """Asynchronously send a message."""
-        with _aio.AIOHelper(self, self.async_backend) as aio:
+        with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.asend(data)
 
     def __enter__(self):
@@ -373,18 +396,28 @@ class Socket:
     @property
     def dialers(self):
         """A list of the active dialers"""
-        # return a copy of the list, because we need to make sure we keep a
-        # reference alive for cffi.  If someone else removes an item from the
-        # list we return it doesn't matter.
-        return self._dialers.copy()
+        return list(self._dialers.values())
 
     @property
     def listeners(self):
         """A list of the active listeners"""
-        # return a copy of the list, because we need to make sure we keep a
-        # reference alive for cffi.  If someone else removes an item from the
-        # list we return it doesn't matter.
-        return self._listeners.copy()
+        return list(self._listeners.values())
+
+    @property
+    def pipes(self):
+        """A list of the active pipes"""
+        return list(self._pipes.values())
+
+    def _add_pipe(self, lib_pipe):
+        # this is only called inside the pipe callback.
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        pipe = Pipe(lib_pipe, self)
+        self._pipes[pipe_id] = pipe
+        return pipe
+
+    def _remove_pipe(self, lib_pipe):
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        del self._pipes[pipe_id]
 
     def new_context(self):
         """
@@ -495,7 +528,11 @@ class Dialer:
         Close the dialer.
         """
         lib.nng_dialer_close(self.dialer)
-        self.socket._dialers.remove(self)
+        del self.socket._dialers[self.id]
+
+    @property
+    def id(self):
+        return lib.nng_dialer_id(self.dialer)
 
 
 class Listener:
@@ -521,7 +558,11 @@ class Listener:
         Close the dialer.
         """
         lib.nng_listener_close(self.listener)
-        self.socket._listeners.remove(self)
+        del self.socket._listeners[self.id]
+
+    @property
+    def id(self):
+        return lib.nng_listener_id(self.listener)
 
     local_address = SockAddrOption('local-address')
     remote_address = SockAddrOption('peer-address')
@@ -575,20 +616,21 @@ class Context:
         self._socket = socket
         self._context = ffi.new('nng_ctx *')
         check_err(lib.nng_ctx_open(self._context, socket.socket))
+
         assert lib.nng_ctx_id(self.context) != -1
 
     async def arecv(self):
         """
         Asynchronously receive data using this context.
         """
-        with _aio.AIOHelper(self, self._socket.async_backend) as aio:
+        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.arecv()
 
     async def asend(self, data):
         """
         Asynchronously send data using this context.
         """
-        with _aio.AIOHelper(self, self._socket.async_backend) as aio:
+        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.asend(data)
 
     def recv(self):
@@ -638,8 +680,7 @@ class Context:
             if lib.nng_ctx_id(self.context) != -1:
                 ctx_err = lib.nng_ctx_close(self.context)
                 self._context = None
-
-        check_err(ctx_err)
+                check_err(ctx_err)
 
     def __enter__(self):
         return self
@@ -654,4 +695,74 @@ class Context:
 
     def __del__(self):
         self._free()
+
+
+@ffi.def_extern()
+def _nng_pipe_cb(lib_pipe, event, arg):
+    id = int(ffi.cast('size_t', arg))
+    sock = _live_sockets[id]
+    if event == lib.NNG_PIPE_EV_ADD_PRE:
+        # time to do our bookkeeping; actually create the pipe and attach it to
+        # the socket
+        pipe = sock._add_pipe(lib_pipe)
+        for cb in sock._on_pre_pipe_add:
+            cb(pipe)
+    elif event == lib.NNG_PIPE_EV_ADD_POST:
+        pipe = sock._pipes[lib.nng_pipe_id(lib_pipe)]
+        for cb in sock._on_post_pipe_add:
+            cb(pipe)
+    elif event == lib.NNG_PIPE_EV_REM_POST:
+        pipe = sock._pipes[lib.nng_pipe_id(lib_pipe)]
+        for cb in sock._on_post_pipe_removed:
+            cb(pipe)
+        sock._remove_pipe(lib_pipe)
+
+
+class Pipe:
+    """
+    A "pipe" is a single connection between two endpoints.
+    https://nanomsg.github.io/nng/man/v1.1.0/nng_pipe.5.
+
+    There is no public constructor for a Pipe; they are automatically added to
+    the underlying socket whenever the pipe is created.
+
+    """
+
+    def __init__(self, pipe, socket):
+        self.pipe = pipe
+        self.socket = socket
+
+    @property
+    def id(self):
+        return lib.nng_pipe_id(self.pipe)
+
+    @property
+    def dialer(self):
+        """
+        Return the dialer this pipe is associated with.  If the pipe is not
+        associated with a dialer, raise an exception
+
+        """
+        dialer = lib.nng_pipe_dialer(self.pipe)
+        d_id = lib.nng_dialer_id(dialer)
+        if d_id < 0:
+            # TODO: Different exception?
+            raise TypeError('This pipe has no associated dialers.')
+        return self.socket._dialers[d_id]
+
+    @property
+    def listener(self):
+        """
+        Return the listener this pipe is associated with.  If the pipe is not
+        associated with a listener, raise an exception
+
+        """
+        listener = lib.nng_pipe_listener(self.pipe)
+        l_id = lib.nng_listener_id(listener)
+        if l_id < 0:
+            # TODO: Different exception?
+            raise TypeError('This pipe has no associated listeners.')
+        return self.socket._listeners[l_id]
+
+
 
