@@ -72,7 +72,8 @@ def test_context():
 
     with pynng.Req0(listen=addr, recv_timeout=1000) as req, \
             pynng.Rep0(dial=addr, recv_timeout=1000) as rep:
-        trio.run(test_them_up, req.new_context(), rep.new_context())
+        with req.new_context() as req_ctx, rep.new_context() as rep_ctx:
+            trio.run(test_them_up, req_ctx, rep_ctx)
 
 
 def test_multiple_contexts():
