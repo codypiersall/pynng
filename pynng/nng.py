@@ -396,17 +396,17 @@ class Socket:
     @property
     def dialers(self):
         """A list of the active dialers"""
-        return list(self._dialers.values())
+        return tuple(self._dialers.values())
 
     @property
     def listeners(self):
         """A list of the active listeners"""
-        return list(self._listeners.values())
+        return tuple(self._listeners.values())
 
     @property
     def pipes(self):
         """A list of the active pipes"""
-        return list(self._pipes.values())
+        return tuple(self._pipes.values())
 
     def _add_pipe(self, lib_pipe):
         # this is only called inside the pipe callback.
