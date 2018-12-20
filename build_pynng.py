@@ -42,7 +42,7 @@ ffibuilder.set_source(
     libraries=libraries,
     # library_dirs=['nng/build/Debug',],
     # (more arguments like setup.py's Extension class:
-    include_dirs=['nng/src'],
+    include_dirs=['nng/include/nng'],
     extra_objects=objects,
 )
 
