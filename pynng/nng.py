@@ -699,8 +699,8 @@ class Context:
 
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
-    id = int(ffi.cast('size_t', arg))
-    sock = _live_sockets[id]
+    sock_id = int(ffi.cast('size_t', arg))
+    sock = _live_sockets[sock_id]
     if event == lib.NNG_PIPE_EV_ADD_PRE:
         # time to do our bookkeeping; actually create the pipe and attach it to
         # the socket
@@ -764,5 +764,16 @@ class Pipe:
             raise TypeError('This pipe has no associated listeners.')
         return self.socket._listeners[l_id]
 
+    def close(self):
+        """
+        Close the pipe.
 
+        """
+        # we're intentionally closing the pipe before removing the pipe from
+        # the _pipes dict so that callbacks will still be able to access the
+        # pipe. We have to grab the pipe id first because after it is closed
+        # the id can't be trusted.
+        pipe_id = self.id
+        check_err(lib.nng_pipe_close(self.pipe))
+        del self.socket._pipes[pipe_id]
 
