@@ -4,7 +4,6 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 import logging
-import weakref
 
 from ._nng import ffi, lib
 from .exceptions import check_err, ConnectionRefused
@@ -19,7 +18,6 @@ logger = logging.getLogger(__name__)
 # removes itself from this dict.  In order to allow sockets to be garbage
 # collected, a weak reference to the socket is stored here instead of the
 # actual socket.
-_live_sockets = weakref.WeakValueDictionary()
 
 __all__ = '''
 ffi
@@ -264,15 +262,15 @@ class Socket:
         if dial is not None:
             self.dial(dial, block=block_on_dial)
 
-        _live_sockets[id(self)] = self
-        as_void = ffi.cast('void *', id(self))
+        meta = ffi.new_handle(self)
+        self._meta = meta
         # set up pipe callbacks
         check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_PRE,
-                                      lib._nng_pipe_cb, as_void))
+                                      lib._nng_pipe_cb, meta))
         check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_POST,
-                                      lib._nng_pipe_cb, as_void))
+                                      lib._nng_pipe_cb, meta))
         check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_REM_POST,
-                                      lib._nng_pipe_cb, as_void))
+                                      lib._nng_pipe_cb, meta))
 
     def dial(self, address, *, block=None):
         """Dial the specified address.
@@ -699,8 +697,7 @@ class Context:
 
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
-    sock_id = int(ffi.cast('size_t', arg))
-    sock = _live_sockets[sock_id]
+    sock = ffi.from_handle(arg)
     pipe_id = lib.nng_pipe_id(lib_pipe)
     if event == lib.NNG_PIPE_EV_ADD_PRE:
         # time to do our bookkeeping; actually create the pipe and attach it to
