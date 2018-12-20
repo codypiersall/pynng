@@ -701,6 +701,7 @@ class Context:
 def _nng_pipe_cb(lib_pipe, event, arg):
     sock_id = int(ffi.cast('size_t', arg))
     sock = _live_sockets[sock_id]
+    pipe_id = lib.nng_pipe_id(lib_pipe)
     if event == lib.NNG_PIPE_EV_ADD_PRE:
         # time to do our bookkeeping; actually create the pipe and attach it to
         # the socket
@@ -708,11 +709,11 @@ def _nng_pipe_cb(lib_pipe, event, arg):
         for cb in sock._on_pre_pipe_add:
             cb(pipe)
     elif event == lib.NNG_PIPE_EV_ADD_POST:
-        pipe = sock._pipes[lib.nng_pipe_id(lib_pipe)]
+        pipe = sock._pipes[pipe_id]
         for cb in sock._on_post_pipe_add:
             cb(pipe)
     elif event == lib.NNG_PIPE_EV_REM_POST:
-        pipe = sock._pipes[lib.nng_pipe_id(lib_pipe)]
+        pipe = sock._pipes[pipe_id]
         for cb in sock._on_post_pipe_removed:
             cb(pipe)
         sock._remove_pipe(lib_pipe)
@@ -728,9 +729,33 @@ class Pipe:
 
     """
 
-    def __init__(self, pipe, socket):
-        self.pipe = pipe
+    def __init__(self, lib_pipe, socket):
+        # Ohhhhkay
+        # so
+        # this is weird, I know
+        # okay
+        # so
+        # For some reason, I'm not sure why, if we keep a reference to lib_pipe
+        # directly, we end up with memory corruption issues.  Maybe it's a
+        # weird interaction between getting called in a callback and refcount
+        # or something, I dunno.  Anyway, we need to make a copy of the
+        # lib_pipe object.
+        self._pipe = ffi.new('nng_pipe *')
+        self._pipe[0] = lib_pipe
+        self.pipe = self._pipe[0]
         self.socket = socket
+        self._closed = False
+
+    @property
+    def closed(self):
+        """
+        Return whether the pipe has been closed directly.
+
+        This will not be valid if the pipe was closed indirectly, e.g. by
+        closing the associated listener/dialer/socket.
+
+        """
+        return self._closed
 
     @property
     def id(self):
@@ -773,7 +798,5 @@ class Pipe:
         # the _pipes dict so that callbacks will still be able to access the
         # pipe. We have to grab the pipe id first because after it is closed
         # the id can't be trusted.
-        pipe_id = self.id
         check_err(lib.nng_pipe_close(self.pipe))
-        del self.socket._pipes[pipe_id]
 
