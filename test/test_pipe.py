@@ -11,7 +11,7 @@ import pynng
 addr = 'tcp://127.0.0.1:31414'
 
 
-def wait_pipe_len(sock, expected, timeout=1):
+def wait_pipe_len(sock, expected, timeout=5):
     """
     Wait up to ``timeout`` seconds for the length of sock.pipes to become
     ``expected`` value.  This prevents hardcodign sleep times
