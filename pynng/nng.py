@@ -182,13 +182,14 @@ class Socket:
     send_buffer_size = IntOption('send-buffer')
     recv_timeout = MsOption('recv-timeout')
     send_timeout = MsOption('send-timeout')
-    # TODO: does this belong here?
     ttl_max = IntOption('ttl-max')
     recv_max_size = SizeOption('recv-size-max')
     reconnect_time_min = MsOption('reconnect-time-min')
     reconnect_time_max = MsOption('reconnect-time-max')
     recv_fd = IntOption('recv-fd')
     send_fd = IntOption('send-fd')
+    tcp_nodelay = BooleanOption('tcp-nodelay')
+    tcp_keepalive = BooleanOption('tcp-keepalive')
 
     def __init__(self, *,
                  dial=None,
@@ -498,6 +499,18 @@ class Dialer:
 
     You probably don't need to instantiate this directly.
     """
+
+    local_address = SockAddrOption('local-address')
+    remote_address = SockAddrOption('peer-address')
+    reconnect_time_min = MsOption('reconnect-time-min')
+    reconnect_time_max = MsOption('reconnect-time-max')
+    recv_max_size = SizeOption('recv-size-max')
+    url = StringOption('url')
+    peer = IntOption('peer')
+    peer_name = StringOption('peer-name')
+    tcp_nodelay = BooleanOption('tcp-nodelay')
+    tcp_keepalive = BooleanOption('tcp-keepalive')
+
     def __init__(self, dialer, socket):
         """
         Args:
@@ -513,13 +526,6 @@ class Dialer:
     @property
     def dialer(self):
         return self._dialer[0]
-
-    local_address = SockAddrOption('local-address')
-    remote_address = SockAddrOption('peer-address')
-    reconnect_time_min = MsOption('reconnect-time-min')
-    reconnect_time_max = MsOption('reconnect-time-max')
-    recv_max_size = SizeOption('recv-size-max')
-    url = StringOption('url')
 
     def close(self):
         """
@@ -725,6 +731,16 @@ class Pipe:
     the underlying socket whenever the pipe is created.
 
     """
+
+    local_address = SockAddrOption('local-address')
+    remote_address = SockAddrOption('peer-address')
+    url = StringOption('url')
+    protocol = IntOption('protocol')
+    protocol_name = StringOption('protocol-name')
+    peer = IntOption('peer')
+    peer_name = StringOption('peer-name')
+    tcp_nodelay = BooleanOption('tcp-nodelay')
+    tcp_keepalive = BooleanOption('tcp-keepalive')
 
     def __init__(self, lib_pipe, socket):
         # Ohhhhkay
