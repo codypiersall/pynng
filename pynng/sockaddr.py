@@ -1,3 +1,6 @@
+import socket
+import struct
+
 import pynng
 
 
@@ -52,6 +55,9 @@ class InprocAddr(SockAddr):
     def name(self):
         return self.name_bytes.decode()
 
+    def __str__(self):
+        return self.name
+
 
 class IPCAddr(SockAddr):
     def __init__(self, ffi_sock_addr):
@@ -67,6 +73,9 @@ class IPCAddr(SockAddr):
     @property
     def path(self):
         return self.path_bytes.decode()
+
+    def __str__(self):
+        return self.path
 
 
 class InAddr(SockAddr):
@@ -85,6 +94,12 @@ class InAddr(SockAddr):
         """IP address as big-endian 32-bit number"""
         return self._mem.sa_addr
 
+    def __str__(self):
+        as_bytes = struct.pack('I', self.addr)
+        ip = socket.inet_ntop(socket.AF_INET, as_bytes)
+        port = socket.ntohs(self.port)
+        return '{}:{}'.format(ip, port)
+
 
 class In6Addr(SockAddr):
     def __init__(self, ffi_sock_addr):
@@ -101,6 +116,12 @@ class In6Addr(SockAddr):
     def addr(self):
         """IP address as big-endian bytes"""
         return bytes(self._mem.sa_addr)
+
+    def __str__(self):
+        # TODO: not a good string repr at all
+        ip = socket.inet_ntop(socket.AF_INET6, self.addr)
+        port = socket.ntohs(self.port)
+        return "[{}]:{}".format(ip, port)
 
 
 class ZTAddr(SockAddr):
