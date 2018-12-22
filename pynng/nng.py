@@ -501,7 +501,7 @@ class Dialer:
     """
 
     local_address = SockAddrOption('local-address')
-    remote_address = SockAddrOption('peer-address')
+    remote_address = SockAddrOption('remote-address')
     reconnect_time_min = MsOption('reconnect-time-min')
     reconnect_time_max = MsOption('reconnect-time-max')
     recv_max_size = SizeOption('recv-size-max')
@@ -541,6 +541,18 @@ class Dialer:
 
 class Listener:
     """Wrapper class for the nng_dialer struct."""
+
+    local_address = SockAddrOption('local-address')
+    remote_address = SockAddrOption('remote-address')
+    reconnect_time_min = MsOption('reconnect-time-min')
+    reconnect_time_max = MsOption('reconnect-time-max')
+    recv_max_size = SizeOption('recv-size-max')
+    url = StringOption('url')
+    peer = IntOption('peer')
+    peer_name = StringOption('peer-name')
+    tcp_nodelay = BooleanOption('tcp-nodelay')
+    tcp_keepalive = BooleanOption('tcp-keepalive')
+
     def __init__(self, listener, socket):
         """
         Args:
@@ -567,11 +579,6 @@ class Listener:
     @property
     def id(self):
         return lib.nng_listener_id(self.listener)
-
-    local_address = SockAddrOption('local-address')
-    remote_address = SockAddrOption('peer-address')
-    recv_max_size = SizeOption('recv-size-max')
-    url = StringOption('url')
 
 
 class Context:
@@ -733,7 +740,7 @@ class Pipe:
     """
 
     local_address = SockAddrOption('local-address')
-    remote_address = SockAddrOption('peer-address')
+    remote_address = SockAddrOption('remote-address')
     url = StringOption('url')
     protocol = IntOption('protocol')
     protocol_name = StringOption('protocol-name')

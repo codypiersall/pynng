@@ -61,8 +61,11 @@ def test_pipe_local_and_remote_addresses():
         assert wait_pipe_len(s1, 1)
         p0 = s0.pipes[0]
         p1 = s1.pipes[0]
-        local_address_0 = p0.local_address
-        local_address_1 = p1.local_address
-        assert str(local_address_0) == addr.replace('tcp://', '')
-        assert str(local_address_1) != str(local_address_0)
+        local_addr0 = p0.local_address
+        remote_addr0 = p0.remote_address
+        local_addr1 = p1.local_address
+        remote_addr1 = p1.remote_address
+        assert str(local_addr0) == addr.replace('tcp://', '')
+        assert str(local_addr0) == str(remote_addr1)
+        assert str(local_addr1) == str(remote_addr0)
 
