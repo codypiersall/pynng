@@ -12,7 +12,7 @@ import pynng
 addr = 'tcp://127.0.0.1:31414'
 
 
-def wait_pipe_len(sock, expected, timeout=5):
+def wait_pipe_len(sock, expected, timeout=10):
     """
     Wait up to ``timeout`` seconds for the length of sock.pipes to become
     ``expected`` value.  This prevents hardcoding sleep times, which should be
@@ -23,7 +23,7 @@ def wait_pipe_len(sock, expected, timeout=5):
     now = time.time()
     later = now + timeout
     while time.time() < later and len(sock.pipes) != expected:
-        time.sleep(0.001)
+        time.sleep(0.002)
     return len(sock.pipes) == expected
 
 
@@ -104,7 +104,7 @@ def test_closing_pipe_in_pre_connect_works():
         s0.add_pre_pipe_connect_cb(pre_connect_cb)
         s0.add_post_pipe_connect_cb(post_connect_cb)
         s1.dial(addr)
-        later = time.time() + 5
+        later = time.time() + 10
         while later > time.time():
             if pre_called:
                 break
@@ -126,7 +126,7 @@ def test_post_pipe_connect_cb_works():
         s0.add_post_pipe_connect_cb(post_connect_cb)
         s1.dial(addr)
 
-        later = time.time() + 5
+        later = time.time() + 10
         while later > time.time():
             if post_called:
                 break
@@ -147,7 +147,7 @@ def test_post_pipe_remove_cb_works():
         wait_pipe_len(s1, 1)
         assert not post_called
 
-    later = time.time() + 5
+    later = time.time() + 10
     while later > time.time():
         if post_called:
             break
