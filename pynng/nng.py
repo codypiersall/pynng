@@ -203,6 +203,7 @@ class Socket:
                  reconnect_time_max=None,
                  opener=None,
                  block_on_dial=None,
+                 name=None,
                  async_backend=None
                  ):
         """Initialize socket.  It takes no positional arguments.
@@ -235,7 +236,7 @@ class Socket:
         self._pipes = {}
         self._on_pre_pipe_add = []
         self._on_post_pipe_add = []
-        self._on_post_pipe_removed = []
+        self._on_post_pipe_remove = []
 
         self._socket = ffi.new('nng_socket *',)
         self._async_backend = async_backend
@@ -429,6 +430,63 @@ class Socket:
         Return ``n`` new contexts for this socket
         """
         return [self.new_context() for _ in range(n)]
+
+    def add_pre_pipe_connect_cb(self, callback):
+        """
+        Add a callback which will be called before a Pipe is connected to a
+        Socket.  You can add as many callbacks as you want, and they will be
+        called in the order they were added.
+
+        The callback provided must accept a single argument: a Pipe.  The
+        socket associated with the pipe can be accessed through the pipe's
+        ``socket`` attribute.  If the pipe is closed, the callbacks for
+        post_pipe_connect and post_pipe_remove will not be called.
+
+        """
+        self._on_pre_pipe_add.append(callback)
+
+    def add_post_pipe_connect_cb(self, callback):
+        """
+        Add a callback which will be called after a Pipe is connected to a
+        Socket.  You can add as many callbacks as you want, and they will be
+        called in the order they were added.
+
+        The callback provided must accept a single argument: a Pipe.
+
+        """
+        self._on_post_pipe_add.append(callback)
+
+    def add_post_pipe_remove_cb(self, callback):
+        """
+        Add a callback which will be called after a Pipe is removed from a
+        Socket.  You can add as many callbacks as you want, and they will be
+        called in the order they were added.
+
+        The callback provided must accept a single argument: a Pipe.
+
+        """
+        self._on_post_pipe_remove.append(callback)
+
+    def remove_pre_pipe_connect_cb(self, callback):
+        """
+        Remove ``callback`` from the list of callbacks for pre pipe connect
+        events
+        """
+        self._on_pre_pipe_add.remove(callback)
+
+    def remove_post_pipe_connect_cb(self, callback):
+        """
+        Remove ``callback`` from the list of callbacks for post pipe connect
+        events
+        """
+        self._on_post_pipe_add.remove(callback)
+
+    def remove_post_pipe_remove_cb(self, callback):
+        """
+        Remove ``callback`` from the list of callbacks for post pipe remove
+        events
+        """
+        self._on_post_pipe_remove.remove(callback)
 
 
 class Bus0(Socket):
@@ -724,7 +782,7 @@ def _nng_pipe_cb(lib_pipe, event, arg):
             cb(pipe)
     elif event == lib.NNG_PIPE_EV_REM_POST:
         pipe = sock._pipes[pipe_id]
-        for cb in sock._on_post_pipe_removed:
+        for cb in sock._on_post_pipe_remove:
             cb(pipe)
         sock._remove_pipe(lib_pipe)
 
