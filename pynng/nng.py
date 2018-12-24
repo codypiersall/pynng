@@ -778,15 +778,26 @@ def _nng_pipe_cb(lib_pipe, event, arg):
             pipe = sock._add_pipe(lib_pipe)
             for cb in sock._on_pre_pipe_add:
                 cb(pipe)
+            if pipe.closed:
+                # NB: we need to remove the pipe from socket now, before a remote
+                # tries connecting again and the same pipe ID may be reused.  This
+                # will result in a KeyError below.
+                sock._remove_pipe(lib_pipe)
         elif event == lib.NNG_PIPE_EV_ADD_POST:
             pipe = sock._pipes[pipe_id]
             for cb in sock._on_post_pipe_add:
                 cb(pipe)
         elif event == lib.NNG_PIPE_EV_REM_POST:
-            pipe = sock._pipes[pipe_id]
-            for cb in sock._on_post_pipe_remove:
-                cb(pipe)
-            sock._remove_pipe(lib_pipe)
+            try:
+                pipe = sock._pipes[pipe_id]
+            except KeyError:
+                # we get here if the pipe was closed in pre_connect earlier. This
+                # is not a big deal.
+                logger.debug('Could not find pipe for socket %s', sock.name)
+            else:
+                for cb in sock._on_post_pipe_remove:
+                    cb(pipe)
+                sock._remove_pipe(lib_pipe)
 
 
 class Pipe:
