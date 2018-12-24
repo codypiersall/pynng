@@ -41,17 +41,12 @@ def test_pipe_gets_added_and_removed():
 
 def test_close_pipe_works():
     # this is some racy business
-    with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
+    with pynng.Pair0(listen=addr) as s0, \
+            pynng.Pair0(reconnect_time_min=40000, dial=addr) as s1:
         assert wait_pipe_len(s0, 1)
         assert wait_pipe_len(s1, 1)
         pipe0 = s0.pipes[0]
         pipe0.close()
-        # this is some racy business
-        # s1 automatically re-dials whenever pipe0 closes. Hah!  So we better
-        # call wait_pipe_len QUICKLY here.
-        #
-        # Probably we should just set reconnect_min_time to a big number, but
-        # this is more exciting, and might even cause CI to fail.  Awesome!
         assert wait_pipe_len(s0, 0)
         assert wait_pipe_len(s1, 0)
 
