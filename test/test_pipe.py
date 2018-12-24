@@ -54,8 +54,6 @@ def test_close_pipe_works():
         # this is more exciting, and might even cause CI to fail.  Awesome!
         assert wait_pipe_len(s0, 0)
         assert wait_pipe_len(s1, 0)
-        assert wait_pipe_len(s0, 1)
-        assert wait_pipe_len(s1, 1)
 
 
 def test_pipe_local_and_remote_addresses():
@@ -93,6 +91,8 @@ def test_pre_pipe_connect_cb_totally_works():
 
 def test_closing_pipe_in_pre_connect_works():
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
+        s0.name = 's0'
+        s1.name = 's1'
         pre_called = False
         post_called = False
 
@@ -114,7 +114,7 @@ def test_closing_pipe_in_pre_connect_works():
             if pre_called:
                 break
         assert pre_called
-        time.sleep(0.05)
+        time.sleep(0.5)
         assert not post_called
         assert len(s0.pipes) == 0
         assert len(s1.pipes) == 0
