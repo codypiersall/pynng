@@ -415,8 +415,7 @@ class Socket:
         self._pipes[pipe_id] = pipe
         return pipe
 
-    def _remove_pipe(self, lib_pipe):
-        pipe_id = lib.nng_pipe_id(lib_pipe)
+    def _remove_pipe(self, pipe_id):
         del self._pipes[pipe_id]
 
     def new_context(self):
@@ -784,7 +783,7 @@ def _nng_pipe_cb(lib_pipe, event, arg):
         pipe = sock._pipes[pipe_id]
         for cb in sock._on_post_pipe_remove:
             cb(pipe)
-        sock._remove_pipe(lib_pipe)
+        sock._remove_pipe(pipe_id)
 
 
 class Pipe:
@@ -872,9 +871,6 @@ class Pipe:
         Close the pipe.
 
         """
-        # we're intentionally closing the pipe before removing the pipe from
-        # the _pipes dict so that callbacks will still be able to access the
-        # pipe. We have to grab the pipe id first because after it is closed
-        # the id can't be trusted.
         check_err(lib.nng_pipe_close(self.pipe))
+        self._closed = True
 

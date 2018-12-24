@@ -40,17 +40,22 @@ def test_pipe_gets_added_and_removed():
 
 
 def test_close_pipe_works():
-    # add sleeps to ensure the nng_pipe_cb gets called.
+    # this is some racy business
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
         assert wait_pipe_len(s0, 1)
         assert wait_pipe_len(s1, 1)
         pipe0 = s0.pipes[0]
-        pipe1 = s1.pipes[0]
-        assert pipe0.id != -1
-        assert pipe1.id != -1
         pipe0.close()
+        # this is some racy business
+        # s1 automatically re-dials whenever pipe0 closes. Hah!  So we better
+        # call wait_pipe_len QUICKLY here.
+        #
+        # Probably we should just set reconnect_min_time to a big number, but
+        # this is more exciting, and might even cause CI to fail.  Awesome!
         assert wait_pipe_len(s0, 0)
         assert wait_pipe_len(s1, 0)
+        assert wait_pipe_len(s0, 1)
+        assert wait_pipe_len(s1, 1)
 
 
 def test_pipe_local_and_remote_addresses():
@@ -104,7 +109,7 @@ def test_closing_pipe_in_pre_connect_works():
         s0.add_pre_pipe_connect_cb(pre_connect_cb)
         s0.add_post_pipe_connect_cb(post_connect_cb)
         s1.dial(addr)
-        later = time.time() + 10
+        later = time.time() + 5
         while later > time.time():
             if pre_called:
                 break
@@ -152,3 +157,4 @@ def test_post_pipe_remove_cb_works():
         if post_called:
             break
     assert post_called
+
