@@ -4,6 +4,7 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 import logging
+import weakref
 import threading
 
 from ._nng import ffi, lib
@@ -31,6 +32,8 @@ Req0 Rep0
 Socket
 Surveyor0 Respondent0
 '''.split()
+
+_live_sockets = weakref.WeakValueDictionary()
 
 
 def to_char(charlike):
@@ -265,15 +268,15 @@ class Socket:
         if dial is not None:
             self.dial(dial, block=block_on_dial)
 
-        meta = ffi.new_handle(self)
-        self._meta = meta
+        _live_sockets[id(self)] = self
+        as_void = ffi.cast('void *', id(self))
         # set up pipe callbacks
         check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_PRE,
-                                      lib._nng_pipe_cb, meta))
+                                      lib._nng_pipe_cb, as_void))
         check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_POST,
-                                      lib._nng_pipe_cb, meta))
+                                      lib._nng_pipe_cb, as_void))
         check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_REM_POST,
-                                      lib._nng_pipe_cb, meta))
+                                      lib._nng_pipe_cb, as_void))
 
     def dial(self, address, *, block=None):
         """Dial the specified address.
@@ -769,7 +772,8 @@ class Context:
 
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
-    sock = ffi.from_handle(arg)
+    sock_id = int(ffi.cast('size_t', arg))
+    sock = _live_sockets[sock_id]
     # exceptions don't propagate out of this function, so if any exception is
     # raised in any of the callbacks, we just log it (using logger.exception).
     with sock._pipe_notify_lock:
