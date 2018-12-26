@@ -770,6 +770,8 @@ class Context:
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
     sock = ffi.from_handle(arg)
+    # exceptions don't propagate out of this function, so if any exception is
+    # raised in any of the callbacks, we just log it (using logger.exception).
     with sock._pipe_notify_lock:
         pipe_id = lib.nng_pipe_id(lib_pipe)
         if event == lib.NNG_PIPE_EV_ADD_PRE:
@@ -777,7 +779,11 @@ def _nng_pipe_cb(lib_pipe, event, arg):
             # the socket
             pipe = sock._add_pipe(lib_pipe)
             for cb in sock._on_pre_pipe_add:
-                cb(pipe)
+                try:
+                    cb(pipe)
+                except:
+                    msg = 'Exception raised in pre pipe connect callback'
+                    logger.exception(msg)
             if pipe.closed:
                 # NB: we need to remove the pipe from socket now, before a remote
                 # tries connecting again and the same pipe ID may be reused.  This
@@ -786,17 +792,27 @@ def _nng_pipe_cb(lib_pipe, event, arg):
         elif event == lib.NNG_PIPE_EV_ADD_POST:
             pipe = sock._pipes[pipe_id]
             for cb in sock._on_post_pipe_add:
-                cb(pipe)
+                try:
+                    cb(pipe)
+                except:
+                    msg = 'Exception raised in post pipe connect callback'
+                    logger.exception(msg)
         elif event == lib.NNG_PIPE_EV_REM_POST:
             try:
                 pipe = sock._pipes[pipe_id]
             except KeyError:
                 # we get here if the pipe was closed in pre_connect earlier. This
                 # is not a big deal.
-                logger.debug('Could not find pipe for socket %s', sock.name)
-            else:
+                logger.debug('Could not find pipe for socket')
+                return
+            try:
                 for cb in sock._on_post_pipe_remove:
-                    cb(pipe)
+                    try:
+                        cb(pipe)
+                    except:
+                        msg = 'Exception raised in post pipe remove callback'
+                        logger.exception(msg)
+            finally:
                 sock._remove_pipe(lib_pipe)
 
 
