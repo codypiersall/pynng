@@ -23,7 +23,8 @@ def test_can_set_socket_name():
         assert p.name != 'this'
         p.name = 'this'
         assert p.name == 'this'
-        # make sure we're actually testing the right thing
+        # make sure we're actually testing the right thing, not just setting an
+        # attribute on the socket
         assert pynng.options._getopt_string(p, 'socket-name') == 'this'
 
 
@@ -78,22 +79,25 @@ def test_nng_sockaddr():
             ip_parts[3] << 24
         )
         assert expected_addr == sa.addr
+        assert str(sa) == addr.replace('tcp://', '')
 
     path = '/tmp/thisisipc'
     with pynng.Pair1(recv_timeout=50, listen='ipc://{}'.format(path)) as s0:
         sa = s0.listeners[0].local_address
         assert isinstance(sa, pynng.sockaddr.IPCAddr)
         assert sa.path == path
+        assert str(sa) == path
 
     name = 'thisisinproc'
     with pynng.Pair1(recv_timeout=50, listen='inproc://{}'.format(name)) as s0:
         with pytest.raises(pynng.NotSupported):
             sa = s0.listeners[0].local_address
+            assert str(sa) == name
 
     ipv6 = 'tcp://[::1]:13131'
     with pynng.Pair1(recv_timeout=50, listen=ipv6) as s0:
         sa = s0.listeners[0].local_address
         assert isinstance(sa, pynng.sockaddr.In6Addr)
         assert sa.addr == b'\x00' * 15 + b'\x01'
-
+        assert str(sa) == ipv6.replace('tcp://', '')
 

@@ -11,7 +11,9 @@ from .nng import (
 
     Context,
     Socket,
-    Listener, Dialer
+    Listener,
+    Dialer,
+    Pipe,
 )
 
 from .exceptions import (

@@ -2,13 +2,13 @@ import pynng
 import pynng.sockaddr
 
 
-def _get_inst_and_func(wrapper_object, option_type, get_or_set):
+def _get_inst_and_func(py_obj, option_type, get_or_set):
     """
     Given the Python wrapper for one of nng's object types, return a tuple of
-    (nng_object, nng_function).
+    (nng_object, nng_function).  This is only an _internal_ function.
 
     Args:
-        wrapper_object Union(pynng.Socket, pynng.Dialer, pynng.Listener): the Python wrapper of
+        py_obj Union(pynng.Socket, pynng.Dialer, pynng.Listener): the Python wrapper of
           the library type.
         option_type (str): The type of option.
 
@@ -17,13 +17,8 @@ def _get_inst_and_func(wrapper_object, option_type, get_or_set):
             setopt* functions
 
     """
-    # map Python wrapper class to nng attribute
-    nng_type_map = {
-        pynng.Socket: 'socket',
-        pynng.Dialer: 'dialer',
-        pynng.Listener: 'listener'
-    }
 
+    # map Python wrapper class to nng attribute
     option_to_func_map = {
         'int': 'nng_getopt_int',
         'size': 'nng_getopt_size',
@@ -33,30 +28,26 @@ def _get_inst_and_func(wrapper_object, option_type, get_or_set):
         'sockaddr': 'nng_getopt_sockaddr',
     }
 
-    t = type(wrapper_object)
-    type_ok = True
-    if issubclass(t, pynng.Socket):
-        base_type = pynng.Socket
-    elif issubclass(t, pynng.Dialer):
-        base_type = pynng.Dialer
-    elif issubclass(t, pynng.Listener):
-        base_type = pynng.Listener
-    option_ok = option_type in option_to_func_map
-    get_ok = get_or_set in ('get', 'set')
-    assert type_ok, 'The type {} is not supported'.format(t)
-    assert option_ok, 'The option "{}" is not supported'.format(option_type)
-    assert get_ok, 'get_or_set of "{}" is not supported'.format(get_or_set)
+    if option_type not in option_to_func_map:
+        raise ValueError('Bad option type "{}"'.format(option_type))
 
-    obj = getattr(wrapper_object, nng_type_map[base_type])
     basic_funcname = option_to_func_map[option_type]
-    if base_type is pynng.Socket:
+    if isinstance(py_obj, pynng.Socket):
         funcname = basic_funcname
-    elif base_type is pynng.Dialer:
+        obj = py_obj.socket
+    elif isinstance(py_obj, pynng.Dialer):
         funcname = basic_funcname.replace('nng_', 'nng_dialer_')
-    elif base_type is pynng.Listener:
+        obj = py_obj.dialer
+    elif isinstance(py_obj, pynng.Listener):
         funcname = basic_funcname.replace('nng_', 'nng_listener_')
+        obj = py_obj.listener
+    elif isinstance(py_obj, pynng.Pipe):
+        funcname = basic_funcname.replace('nng_', 'nng_pipe_')
+        obj = py_obj.pipe
     else:
-        assert False
+        msg = 'The type "{}" is not supported'
+        msg = msg.format(type(py_obj))
+        raise TypeError(msg)
 
     if get_or_set == 'set':
         funcname = funcname.replace('getopt', 'setopt')

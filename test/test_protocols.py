@@ -115,7 +115,7 @@ def test_surveyor_respondent():
             pynng.Respondent0(dial=addr, recv_timeout=2000) as resp2:
         query = b"hey how's it going buddy?"
         # wait for sockets to connect
-        time.sleep(0.01)
+        time.sleep(0.03)
         surveyor.send(query)
         assert resp1.recv() == query
         assert resp2.recv() == query

@@ -50,10 +50,15 @@ ffibuilder.set_source(
 with open('nng_api.h') as f:
     api = f.read()
 
-rest = """
+callbacks = """
+    // aio callback: https://nanomsg.github.io/nng/man/tip/nng_aio_alloc.3
     extern "Python" void _async_complete(void *);
+
+    // nng_pipe_notify callback:
+    // https://nanomsg.github.io/nng/man/tip/nng_pipe_notify.3
+    extern "Python" void _nng_pipe_cb(nng_pipe, int, void *);
 """
-ffibuilder.cdef(api + rest)
+ffibuilder.cdef(api + callbacks)
 
 if __name__ == "__main__":
     ffibuilder.compile(verbose=True)
