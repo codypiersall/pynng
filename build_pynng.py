@@ -26,23 +26,23 @@ ffibuilder.set_source(
     r""" // passed to the real C compiler,
          // contains implementation of things declared in cdef()
          #define NNG_DECL
-         #include <nng.h>
-         #include <protocol/bus0/bus.h>
-         #include <protocol/pair0/pair.h>
-         #include <protocol/pair1/pair.h>
-         #include <protocol/pipeline0/pull.h>
-         #include <protocol/pipeline0/push.h>
-         #include <protocol/pubsub0/pub.h>
-         #include <protocol/pubsub0/sub.h>
-         #include <protocol/reqrep0/req.h>
-         #include <protocol/reqrep0/rep.h>
-         #include <protocol/survey0/respond.h>
-         #include <protocol/survey0/survey.h>
+         #include <nng/nng.h>
+         #include <nng/protocol/bus0/bus.h>
+         #include <nng/protocol/pair0/pair.h>
+         #include <nng/protocol/pair1/pair.h>
+         #include <nng/protocol/pipeline0/pull.h>
+         #include <nng/protocol/pipeline0/push.h>
+         #include <nng/protocol/pubsub0/pub.h>
+         #include <nng/protocol/pubsub0/sub.h>
+         #include <nng/protocol/reqrep0/req.h>
+         #include <nng/protocol/reqrep0/rep.h>
+         #include <nng/protocol/survey0/respond.h>
+         #include <nng/protocol/survey0/survey.h>
     """,
     libraries=libraries,
     # library_dirs=['nng/build/Debug',],
     # (more arguments like setup.py's Extension class:
-    include_dirs=['nng/src'],
+    include_dirs=['nng/include'],
     extra_objects=objects,
 )
 

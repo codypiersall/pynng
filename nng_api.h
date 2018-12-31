@@ -362,5 +362,5 @@ int nng_surveyor0_open_raw(nng_socket *);
 int nng_respondent0_open(nng_socket *);
 int nng_respondent0_open_raw(nng_socket *);
 #define NNG_MAJOR_VERSION 1
-#define NNG_MINOR_VERSION 0
+#define NNG_MINOR_VERSION 1
 #define NNG_PATCH_VERSION 1
