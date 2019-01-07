@@ -167,7 +167,7 @@ class Socket:
             or select().
         recv_max_size (int): The largest size of a message to receive.
             Messages larger than this size will be silently dropped.  A size of
-            -1 indicates unlimited size.
+            0 indicates unlimited size.
 
     See also the nng man pages document for options:
 
