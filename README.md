@@ -104,9 +104,20 @@ Many other protocols are available as well:
 * `Push0`, `Pull0`: Aggregate messages from multiple sources and load balance
   among many destinations.
 
+Git Branch Policy
+-----------------
+
+The **only** stable branch is `master`.  There will *never* be a `git push -f`
+on master.  On the other hand, all other branches are not considered stable;
+they may be deleted, rebased, force-pushed, and any other manner of funky
+business.
+
 TODO
 ----
 
-* More docs
+* More docs.  Most of the public API has docstrings, but hosted documentation
+  at readthedocs will happen one day.  Features are just so much more fun to
+  add...
+* Examples.
 
 [nanomsg next generation]: https://nanomsg.github.io/nng/index.html
