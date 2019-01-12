@@ -177,6 +177,13 @@ class AIOHelper:
         check_err(self._lib_asend(self._lib_obj, self.aio))
         return await self.awaitable
 
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send a Message
+
+        """
+        raise NotImplementedError()
+
     def _free(self):
         """
         Free resources allocated with nng

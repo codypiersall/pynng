@@ -492,6 +492,28 @@ class Socket:
         """
         self._on_post_pipe_remove.remove(callback)
 
+    def recvmsg(self, block=True):
+        """
+        Return a Message object.
+
+        """
+        flags = 0
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
+        msg_p = ffi.new('nng_msg **')
+        check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
+        msg = msg_p[0]
+        lib_pipe = lib.nng_msg_get_pipe(msg)
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        if pipe_id < 0:
+            # TODO: Better exception
+            raise Exception('No such pipe')
+        pipe = self._pipes[pipe_id]
+        return Message(msg, pipe)
+
+    def sendmsg(self, msg, block=True):
+        msg._send(block=block)
+
 
 class Bus0(Socket):
     """A bus0 socket."""
@@ -739,7 +761,7 @@ class Context:
             msg_p = ffi.new('nng_msg **')
             check_err(lib.nng_msg_alloc(msg_p, 0))
             msg = msg_p[0]
-            lib.nng_msg_append(msg, data, len(data))
+            check_err(lib.nng_msg_append(msg, data, len(data)))
             check_err(lib.nng_aio_set_msg(aio, msg))
             check_err(lib.nng_ctx_send(self.context, aio))
             check_err(lib.nng_aio_wait(aio))
@@ -907,4 +929,86 @@ class Pipe:
         """
         check_err(lib.nng_pipe_close(self.pipe))
         self._closed = True
+
+    def new_msg(self, data):
+        """
+        Return a new ``Message`` initialized with ``data``.
+
+        """
+        msg_p = ffi.new('nng_msg **')
+        check_err(lib.nng_msg_alloc(msg_p, 0))
+        msg = msg_p[0]
+        check_err(lib.nng_msg_append(msg, data, len(data)))
+        check_err(lib.nng_msg_set_pipe(msg, self.pipe))
+        return Message(msg, self)
+
+
+class Message:
+    """
+    Python interface for nng_msg.  See
+    https://nanomsg.github.io/nng/man/tip/nng_msg.5.html
+
+    There is no public constructor for this object; to get a message, you can
+    either use ``Socket.recvmsg()`` for receiving or ``Pipe.new_msg()`` to get
+    a message for sending.
+
+    Messages are immutable.
+
+    """
+
+    def __init__(self, nng_msg, pipe):
+        self._msg = nng_msg
+        self.pipe = pipe
+        # NB! There are two ways that a user can free resources that an nng_msg
+        # is using: either sending with nng_sendmsg (or the async equivalent)
+        # or with nng_msg_free.  We don't know how this msg will be used, but
+        # we need to **ensure** that we don't try to double free.  So the only
+        # way to send a message is with the _send() and _asend() methods on the
+        # object.  Those shouldn't be called directly, though; users should
+        # only use socket.sendmsg();
+        self.__sent = False
+
+    @property
+    def buffer(self):
+        """
+        Returns a cffi.buffer to the underlying nng_msg buffer.
+
+        """
+        size = lib.nng_msg_len(self._msg)
+        data = ffi.cast('char *', lib.nng_msg_body(self._msg))
+        return ffi.buffer(data[0:size])
+
+    @property
+    def bytes(self):
+        """
+        Return the bytes from the underlying buffer.
+
+        """
+        return bytes(self.buffer)
+
+    async def _asend(self):
+        """
+        Asynchronously send the message to the remote peer.
+
+        """
+        raise NotImplementedError('aosdfji')
+
+    def __del__(self):
+        if self.__sent:
+            return
+        lib.nng_msg_free(self._msg)
+
+    def _send(self, block=True):
+        """
+        Send the ``msg`` to the remote peer.
+        msg must either have been returned from Socket.recvmsg() or
+        Pipe.new_msg().
+
+        """
+        flags = 0
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
+        lib_sock = self.pipe.socket.socket
+        check_err(lib.nng_sendmsg(lib_sock, self._msg, flags))
+        self.__sent = True
 

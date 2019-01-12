@@ -14,6 +14,7 @@ from .nng import (
     Listener,
     Dialer,
     Pipe,
+    Message,
 )
 
 from .exceptions import (
