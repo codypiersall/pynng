@@ -657,7 +657,7 @@ class Dialer:
 
 
 class Listener:
-    """Wrapper class for the nng_dialer struct."""
+    """Wrapper class for the nng_listener struct."""
 
     local_address = SockAddrOption('local-address')
     remote_address = SockAddrOption('remote-address')
@@ -866,7 +866,7 @@ def _nng_pipe_cb(lib_pipe, event, arg):
             for cb in sock._on_pre_pipe_add:
                 try:
                     cb(pipe)
-                except:
+                except Exception:
                     msg = 'Exception raised in pre pipe connect callback'
                     logger.exception(msg)
             if pipe.closed:
@@ -879,7 +879,7 @@ def _nng_pipe_cb(lib_pipe, event, arg):
             for cb in sock._on_post_pipe_add:
                 try:
                     cb(pipe)
-                except:
+                except Exception:
                     msg = 'Exception raised in post pipe connect callback'
                     logger.exception(msg)
         elif event == lib.NNG_PIPE_EV_REM_POST:
@@ -894,7 +894,7 @@ def _nng_pipe_cb(lib_pipe, event, arg):
                 for cb in sock._on_post_pipe_remove:
                     try:
                         cb(pipe)
-                    except:
+                    except Exception:
                         msg = 'Exception raised in post pipe remove callback'
                         logger.exception(msg)
             finally:
@@ -1087,4 +1087,3 @@ class Message:
         if self._mem_freed:
             msg = 'Attempted to send the same message more than once.'
             raise pynng.MessageStateError(msg)
-
