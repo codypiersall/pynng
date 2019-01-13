@@ -95,7 +95,13 @@ def test_asend_trio():
 
 @trio_test
 async def test_pub_sub_trio():
+    """Demonstrate pub-sub protocol use with ``trio``.
 
+    Start a publisher which publishes 1000 integers and marks each value
+    as *even* or *odd* (its parity). Spawn 4 subscribers (2 for consuming
+    the evens and 2 for consuming the odds) in separate tasks and have each
+    one retreive values and verify the parity.
+    """
     def is_even(i):
         return i % 2 == 0
 
@@ -134,5 +140,5 @@ async def test_pub_sub_trio():
         for _, lot in itertools.product(range(1), ('even', 'odd')):
             n.start_soon(subs, lot)
 
-        # head over to the
+        # head over to the pub
         await pub()
