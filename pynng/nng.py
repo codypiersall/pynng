@@ -15,6 +15,15 @@ from . import _aio
 
 logger = logging.getLogger(__name__)
 
+
+def _new_msg(data):
+    msg_p = ffi.new('nng_msg **')
+    check_err(lib.nng_msg_alloc(msg_p, 0))
+    msg = msg_p[0]
+    check_err(lib.nng_msg_append(msg, data, len(data)))
+    return Message(msg)
+
+
 # a mapping of id(sock): sock for use in callbacks.  When a socket is
 # initialized, it adds itself to this dict.  When a socket is closed, it
 # removes itself from this dict.  In order to allow sockets to be garbage
@@ -492,6 +501,15 @@ class Socket:
         """
         self._on_post_pipe_remove.remove(callback)
 
+    def _get_pipe_from_msg(self, msg):
+        lib_pipe = lib.nng_msg_get_pipe(msg._lib_obj)
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        if pipe_id < 0:
+            # TODO: Better exception
+            raise Exception('No such pipe')
+        pipe = self._pipes[pipe_id]
+        return pipe
+
     def recv_msg(self, block=True):
         """
         Return a Message object.
@@ -503,13 +521,45 @@ class Socket:
         msg_p = ffi.new('nng_msg **')
         check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
         msg = msg_p[0]
-        lib_pipe = lib.nng_msg_get_pipe(msg)
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        if pipe_id < 0:
-            # TODO: Better exception
-            raise Exception('No such pipe')
-        pipe = self._pipes[pipe_id]
-        return Message(msg, pipe)
+        msg = Message(msg)
+        msg.pipe = self._get_pipe_from_msg(msg)
+        return msg
+
+    def send_msg(self, msg, block=True):
+        """
+        Send the Message ``msg`` on the socket.
+        """
+        flags = 0
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
+        if msg._sent:
+            raise Exception("TODO THIS IS NOT A GOOD EXCEPTION")
+        check_err(lib.nng_sendmsg(self.socket, msg._lib_obj, flags))
+        msg._sent = True
+
+    def new_msg(self, data):
+        return _new_msg(data)
+
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send the Message ``msg`` on the socket.
+        """
+        if msg._sent:
+            # TODO
+            raise Exception("TODO THIS IS NOT A GOOD EXCEPTION")
+        with _aio.AIOHelper(self, self._async_backend) as aio:
+            val = await aio.asend_msg(msg)
+            msg._sent = True
+            return val
+
+    async def arecv_msg(self):
+        """
+        Asynchronously receive the Message ``msg`` on the socket.
+        """
+        with _aio.AIOHelper(self, self._async_backend) as aio:
+            msg = await aio.arecv_msg()
+            msg.pipe = self._get_pipe_from_msg(msg)
+            return msg
 
 
 class Bus0(Socket):
@@ -788,6 +838,9 @@ class Context:
     def __del__(self):
         self._free()
 
+    def new_msg(self, data):
+        return _new_msg(data)
+
 
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
@@ -932,12 +985,9 @@ class Pipe:
         Return a new ``Message`` initialized with ``data``.
 
         """
-        msg_p = ffi.new('nng_msg **')
-        check_err(lib.nng_msg_alloc(msg_p, 0))
-        msg = msg_p[0]
-        check_err(lib.nng_msg_append(msg, data, len(data)))
-        check_err(lib.nng_msg_set_pipe(msg, self.pipe))
-        return Message(msg, self)
+        msg = _new_msg(data)
+        msg.pipe = self
+        return msg
 
 
 class Message:
@@ -953,16 +1003,34 @@ class Message:
 
     """
 
-    def __init__(self, nng_msg, pipe):
-        self._msg = nng_msg
-        self.pipe = pipe
+    def __init__(self, nng_msg):
+        self._lib_obj = nng_msg
+        self._pipe = None
+
         # NB! There are two ways that a user can free resources that an nng_msg
         # is using: either sending with nng_sendmsg (or the async equivalent)
         # or with nng_msg_free.  We don't know how this msg will be used, but
         # we need to **ensure** that we don't try to double free.  So the only
         # way to send a message is with the send() and asend() methods on the
         # object.
-        self.__sent = False
+        self._sent = False
+
+    @property
+    def pipe(self):
+        return self._pipe
+
+    @pipe.setter
+    def pipe(self, pipe):
+        if pipe is None:
+            check_err(lib.nng_msg_set_pipe(self._lib_obj, ffi.NULL))
+            self._pipe = None
+            return
+        if not isinstance(pipe, Pipe):
+            msg = 'pipe must be type Pipe, not {}'
+            msg = msg.format(type(pipe))
+            raise ValueError(msg)
+        check_err(lib.nng_msg_set_pipe(self._lib_obj, pipe.pipe))
+        self._pipe = pipe
 
     @property
     def buffer(self):
@@ -970,8 +1038,8 @@ class Message:
         Returns a cffi.buffer to the underlying nng_msg buffer.
 
         """
-        size = lib.nng_msg_len(self._msg)
-        data = ffi.cast('char *', lib.nng_msg_body(self._msg))
+        size = lib.nng_msg_len(self._lib_obj)
+        data = ffi.cast('char *', lib.nng_msg_body(self._lib_obj))
         return ffi.buffer(data[0:size])
 
     @property
@@ -990,21 +1058,10 @@ class Message:
         raise NotImplementedError('aosdfji')
 
     def __del__(self):
-        if self.__sent:
-            return
-        lib.nng_msg_free(self._msg)
+        pass
+        # if self._sent:
+        #     return
+        # else:
+        #     lib.nng_msg_free(self._lib_obj)
 
-    def send(self, block=True):
-        """
-        Send the ``msg`` to the remote peer.
-        msg must either have been returned from Socket.recv_msg() or
-        Pipe.new_msg().
-
-        """
-        flags = 0
-        if not block:
-            flags |= lib.NNG_FLAG_NONBLOCK
-        lib_sock = self.pipe.socket.socket
-        check_err(lib.nng_sendmsg(lib_sock, self._msg, flags))
-        self.__sent = True
 

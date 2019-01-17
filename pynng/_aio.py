@@ -155,25 +155,22 @@ class AIOHelper:
         self.aio = aio_p[0]
 
     async def arecv(self):
+        msg = await self.arecv_msg()
+        return msg.bytes
+
+    async def arecv_msg(self):
         check_err(self._lib_arecv(self._lib_obj, self.aio))
         await self.awaitable
-        err = lib.nng_aio_result(self.aio)
-        check_err(err)
+        check_err(lib.nng_aio_result(self.aio))
         msg = lib.nng_aio_get_msg(self.aio)
-        try:
-            size = lib.nng_msg_len(msg)
-            data = ffi.cast('char *', lib.nng_msg_body(msg))
-            py_obj = bytes(ffi.buffer(data[0:size]))
-        finally:
-            lib.nng_msg_free(msg)
-        return py_obj
+        return pynng.Message(msg)
 
     async def asend(self, data):
         msg_p = ffi.new('nng_msg **')
         check_err(lib.nng_msg_alloc(msg_p, 0))
         msg = msg_p[0]
-        lib.nng_msg_append(msg, data, len(data))
-        lib.nng_aio_set_msg(self.aio, msg)
+        check_err(lib.nng_msg_append(msg, data, len(data)))
+        check_err(lib.nng_aio_set_msg(self.aio, msg))
         check_err(self._lib_asend(self._lib_obj, self.aio))
         return await self.awaitable
 
@@ -182,7 +179,9 @@ class AIOHelper:
         Asynchronously send a Message
 
         """
-        raise NotImplementedError()
+        lib.nng_aio_set_msg(self.aio, msg._lib_obj)
+        check_err(self._lib_asend(self._lib_obj, self.aio))
+        return await self.awaitable
 
     def _free(self):
         """

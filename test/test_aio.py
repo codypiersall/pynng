@@ -70,7 +70,6 @@ def test_arecv_trio_cancel():
 def test_asend_asyncio():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
     with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, \
             pynng.Pair0(dial=addr, send_timeout=2000) as dialer:
         arecv = listener.arecv()
@@ -82,7 +81,6 @@ def test_asend_asyncio():
 
 
 def test_asend_trio():
-
     async def asend_and_arecv(sender, receiver, msg):
         await sender.asend(msg)
         return await receiver.arecv()
