@@ -15,8 +15,8 @@ def test_socket_send_recv_msg():
         msg = pipe.new_msg(b'oh hello friend')
         assert isinstance(msg, pynng.Message)
         assert msg.bytes == b'oh hello friend'
-        s1.sendmsg(msg)
-        msg2 = s2.recvmsg()
+        msg.send()
+        msg2 = s2.recv_msg()
         assert isinstance(msg2, pynng.Message)
         assert msg2.bytes == b'oh hello friend'
 
@@ -28,8 +28,6 @@ def test_recv_msg_has_correct_pipe():
         pipe = s1.pipes[0]
         msg = pipe.new_msg(b'oh hello friend')
         assert msg.pipe is pipe
-        s1.sendmsg(msg)
-        msg2 = s2.recvmsg()
+        msg.send()
+        msg2 = s2.recv_msg()
         assert msg2.pipe is s2.pipes[0]
-
-

@@ -492,7 +492,7 @@ class Socket:
         """
         self._on_post_pipe_remove.remove(callback)
 
-    def recvmsg(self, block=True):
+    def recv_msg(self, block=True):
         """
         Return a Message object.
 
@@ -510,9 +510,6 @@ class Socket:
             raise Exception('No such pipe')
         pipe = self._pipes[pipe_id]
         return Message(msg, pipe)
-
-    def sendmsg(self, msg, block=True):
-        msg._send(block=block)
 
 
 class Bus0(Socket):
@@ -949,7 +946,7 @@ class Message:
     https://nanomsg.github.io/nng/man/tip/nng_msg.5.html
 
     There is no public constructor for this object; to get a message, you can
-    either use ``Socket.recvmsg()`` for receiving or ``Pipe.new_msg()`` to get
+    either use ``Socket.recv_msg()`` for receiving or ``Pipe.new_msg()`` to get
     a message for sending.
 
     Messages are immutable.
@@ -963,9 +960,8 @@ class Message:
         # is using: either sending with nng_sendmsg (or the async equivalent)
         # or with nng_msg_free.  We don't know how this msg will be used, but
         # we need to **ensure** that we don't try to double free.  So the only
-        # way to send a message is with the _send() and _asend() methods on the
-        # object.  Those shouldn't be called directly, though; users should
-        # only use socket.sendmsg();
+        # way to send a message is with the send() and asend() methods on the
+        # object.
         self.__sent = False
 
     @property
@@ -998,10 +994,10 @@ class Message:
             return
         lib.nng_msg_free(self._msg)
 
-    def _send(self, block=True):
+    def send(self, block=True):
         """
         Send the ``msg`` to the remote peer.
-        msg must either have been returned from Socket.recvmsg() or
+        msg must either have been returned from Socket.recv_msg() or
         Pipe.new_msg().
 
         """
