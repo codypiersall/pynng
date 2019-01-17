@@ -36,7 +36,7 @@ def test_socket_send_recv_msg():
 
 
 @trio_test
-async def test_arecv_asend_msg():
+async def test_socket_arecv_asend_msg():
     with pynng.Pair0(listen=addr, recv_timeout=to) as s1, \
             pynng.Pair0(dial=addr, recv_timeout=to) as s2:
         wait_pipe_len(s1, 1)
@@ -46,3 +46,19 @@ async def test_arecv_asend_msg():
         msg2 = await s2.arecv_msg()
         assert msg2.bytes == b'you truly are a pal'
         assert msg2.pipe is s2.pipes[0]
+
+
+@trio_test
+async def test_context_arecv_asend_msg():
+    with pynng.Req0(listen=addr, recv_timeout=to) as s1, \
+            pynng.Rep0(dial=addr, recv_timeout=to) as s2:
+        with s1.new_context() as ctx1, s2.new_context() as ctx2:
+            wait_pipe_len(s1, 1)
+            msg = ctx1.new_msg(b'do i even know you')
+            await ctx1.asend_msg(msg)
+            msg2 = await ctx2.arecv_msg()
+            assert msg2.bytes == b'do i even know you'
+            msg3 = ctx2.new_msg(b'yes of course i am your favorite platypus')
+            await ctx2.asend_msg(msg3)
+            msg4 = await ctx1.arecv_msg()
+            assert msg4.bytes == b'yes of course i am your favorite platypus'

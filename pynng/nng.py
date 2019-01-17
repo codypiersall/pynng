@@ -841,6 +841,27 @@ class Context:
     def new_msg(self, data):
         return _new_msg(data)
 
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send the Message ``msg`` on the socket.
+        """
+        if msg._sent:
+            # TODO
+            raise Exception("TODO THIS IS NOT A GOOD EXCEPTION")
+        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
+            val = await aio.asend_msg(msg)
+            msg._sent = True
+            return val
+
+    async def arecv_msg(self):
+        """
+        Asynchronously receive the Message ``msg`` on the socket.
+        """
+        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
+            msg = await aio.arecv_msg()
+            msg.pipe = self._socket._get_pipe_from_msg(msg)
+            return msg
+
 
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
@@ -1058,10 +1079,9 @@ class Message:
         raise NotImplementedError('aosdfji')
 
     def __del__(self):
-        pass
-        # if self._sent:
-        #     return
-        # else:
-        #     lib.nng_msg_free(self._lib_obj)
+        if self._sent:
+            return
+        else:
+            lib.nng_msg_free(self._lib_obj)
 
 
