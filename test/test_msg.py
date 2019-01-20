@@ -14,7 +14,7 @@ def test_socket_send_recv_msg_from_pipe():
             pynng.Pair0(dial=addr, recv_timeout=to) as s2:
         wait_pipe_len(s1, 1)
         pipe = s1.pipes[0]
-        msg = pipe.new_msg(b'oh hello friend')
+        msg = pynng.Message(b'oh hello friend', pipe)
         assert isinstance(msg, pynng.Message)
         assert msg.bytes == b'oh hello friend'
         s1.send_msg(msg)
@@ -29,7 +29,7 @@ def test_socket_send_recv_msg():
     with pynng.Pair0(listen=addr, recv_timeout=to) as s1, \
             pynng.Pair0(dial=addr, recv_timeout=to) as s2:
         wait_pipe_len(s1, 1)
-        msg = s1.new_msg(b'we are friends, old buddy')
+        msg = pynng.Message(b'we are friends, old buddy')
         s1.send_msg(msg)
         msg2 = s2.recv_msg()
         assert msg2.bytes == b'we are friends, old buddy'
@@ -40,8 +40,7 @@ async def test_socket_arecv_asend_msg():
     with pynng.Pair0(listen=addr, recv_timeout=to) as s1, \
             pynng.Pair0(dial=addr, recv_timeout=to) as s2:
         wait_pipe_len(s1, 1)
-        pipe = s1.pipes[0]
-        msg = pipe.new_msg(b'you truly are a pal')
+        msg = pynng.Message(b'you truly are a pal')
         await s1.asend_msg(msg)
         msg2 = await s2.arecv_msg()
         assert msg2.bytes == b'you truly are a pal'
@@ -54,11 +53,11 @@ async def test_context_arecv_asend_msg():
             pynng.Rep0(dial=addr, recv_timeout=to) as s2:
         with s1.new_context() as ctx1, s2.new_context() as ctx2:
             wait_pipe_len(s1, 1)
-            msg = ctx1.new_msg(b'do i even know you')
+            msg = pynng.Message(b'do i even know you')
             await ctx1.asend_msg(msg)
             msg2 = await ctx2.arecv_msg()
             assert msg2.bytes == b'do i even know you'
-            msg3 = ctx2.new_msg(b'yes of course i am your favorite platypus')
+            msg3 = pynng.Message(b'yes of course i am your favorite platypus')
             await ctx2.asend_msg(msg3)
             msg4 = await ctx1.arecv_msg()
             assert msg4.bytes == b'yes of course i am your favorite platypus'
