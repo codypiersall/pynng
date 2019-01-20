@@ -56,8 +56,10 @@ async def test_context_arecv_asend_msg():
             msg = pynng.Message(b'do i even know you')
             await ctx1.asend_msg(msg)
             msg2 = await ctx2.arecv_msg()
+            assert msg2.pipe is s2.pipes[0]
             assert msg2.bytes == b'do i even know you'
             msg3 = pynng.Message(b'yes of course i am your favorite platypus')
             await ctx2.asend_msg(msg3)
             msg4 = await ctx1.arecv_msg()
+            assert msg4.pipe is s1.pipes[0]
             assert msg4.bytes == b'yes of course i am your favorite platypus'
