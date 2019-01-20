@@ -134,11 +134,11 @@ class AIOHelper:
         # we need to choose the correct nng lib functions based on the type of
         # object we've been passed; but really, all the logic is identical
         if isinstance(obj, pynng.Socket):
-            self._lib_obj = obj.socket
+            self._nng_obj = obj.socket
             self._lib_arecv = lib.nng_recv_aio
             self._lib_asend = lib.nng_send_aio
         else:
-            self._lib_obj = obj.context
+            self._nng_obj = obj.context
             self._lib_arecv = lib.nng_ctx_recv
             self._lib_asend = lib.nng_ctx_send
         self.obj = obj
@@ -159,7 +159,7 @@ class AIOHelper:
         return msg.bytes
 
     async def arecv_msg(self):
-        check_err(self._lib_arecv(self._lib_obj, self.aio))
+        check_err(self._lib_arecv(self._nng_obj, self.aio))
         await self.awaitable
         check_err(lib.nng_aio_result(self.aio))
         msg = lib.nng_aio_get_msg(self.aio)
@@ -171,7 +171,7 @@ class AIOHelper:
         msg = msg_p[0]
         check_err(lib.nng_msg_append(msg, data, len(data)))
         check_err(lib.nng_aio_set_msg(self.aio, msg))
-        check_err(self._lib_asend(self._lib_obj, self.aio))
+        check_err(self._lib_asend(self._nng_obj, self.aio))
         return await self.awaitable
 
     async def asend_msg(self, msg):
@@ -179,8 +179,9 @@ class AIOHelper:
         Asynchronously send a Message
 
         """
-        lib.nng_aio_set_msg(self.aio, msg._lib_obj)
-        check_err(self._lib_asend(self._lib_obj, self.aio))
+        lib.nng_aio_set_msg(self.aio, msg._nng_msg)
+        check_err(self._lib_asend(self._nng_obj, self.aio))
+        msg._mem_freed = True
         return await self.awaitable
 
     def _free(self):

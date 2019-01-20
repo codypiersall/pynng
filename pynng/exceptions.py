@@ -177,6 +177,12 @@ EXCEPTION_MAP = {
 }
 
 
+class MessageStateError(Exception):
+    """
+    Indicates that a Message was trying to be used in an invalid way.
+    """
+
+
 def check_err(err):
     """
     Raises an exception if the return value of an nng_function is nonzero.

@@ -1,5 +1,6 @@
 from trio.testing import trio_test
 
+import pytest
 import pynng
 from test._test_util import wait_pipe_len
 
@@ -63,3 +64,42 @@ async def test_context_arecv_asend_msg():
             msg4 = await ctx1.arecv_msg()
             assert msg4.pipe is s1.pipes[0]
             assert msg4.bytes == b'yes of course i am your favorite platypus'
+
+
+def test_cannot_double_send():
+    # double send would cause a SEGFAULT!!! That's no good
+    with pynng.Req0(listen=addr, recv_timeout=to) as s1, \
+            pynng.Rep0(dial=addr, recv_timeout=to) as s2:
+        msg = pynng.Message(b'this is great')
+        s1.send_msg(msg)
+        with pytest.raises(pynng.MessageStateError):
+            s1.send_msg(msg)
+
+        with s1.new_context() as ctx:
+            msg = pynng.Message(b'this also is great')
+            ctx.send_msg(msg)
+            with pytest.raises(pynng.MessageStateError):
+                ctx.send_msg(msg)
+
+        # don't really need to receive, but linters hate not using s2
+        s2.recv_msg()
+
+
+@trio_test
+async def test_cannot_double_asend():
+    # double send would cause a SEGFAULT!!! That's no good
+    with pynng.Req0(listen=addr, recv_timeout=to) as s1, \
+            pynng.Rep0(dial=addr, recv_timeout=to) as s2:
+        msg = pynng.Message(b'this is great')
+        await s1.asend_msg(msg)
+        with pytest.raises(pynng.MessageStateError):
+            await s1.asend_msg(msg)
+
+        with s1.new_context() as ctx:
+            msg = pynng.Message(b'this also is great')
+            await ctx.asend_msg(msg)
+            with pytest.raises(pynng.MessageStateError):
+                await ctx.asend_msg(msg)
+
+        # don't really need to receive, but linters hate not using s2
+        await s2.arecv_msg()

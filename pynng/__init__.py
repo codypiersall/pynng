@@ -51,5 +51,6 @@ from .exceptions import (
     BadType,
     Internal,
     check_err,
+    MessageStateError
 )
 
