@@ -498,8 +498,7 @@ class Socket:
         pipe_id = lib.nng_pipe_id(lib_pipe)
         if pipe_id < 0:
             raise pynng.NoEntry('No such pipe')
-        pipe = self._pipes[pipe_id]
-        return pipe
+        return self._pipes[pipe_id]
 
     def recv_msg(self, block=True):
         """
@@ -535,8 +534,8 @@ class Socket:
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             with _aio.AIOHelper(self, self._async_backend) as aio:
-                val = await aio.asend_msg(msg)
-                return val
+                # Note: the aio helper sets the _mem_freed flag on the msg
+                return await aio.asend_msg(msg)
 
     async def arecv_msg(self):
         """
@@ -838,8 +837,8 @@ class Context:
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-                val = await aio.asend_msg(msg)
-                return val
+                # Note: the aio helper sets the _mem_freed flag on the msg
+                return await aio.asend_msg(msg)
 
     async def arecv_msg(self):
         """
@@ -1006,13 +1005,13 @@ class Message:
     """
 
     def __init__(self, data, pipe=None):
-        self._pipe = pipe
         # NB! There are two ways that a user can free resources that an nng_msg
         # is using: either sending with nng_sendmsg (or the async equivalent)
         # or with nng_msg_free.  We don't know how this msg will be used, but
-        # we need to **ensure** that we don't try to double free.  So the only
-        # way to send a message is with the send() and asend() methods on the
-        # object.
+        # we need to **ensure** that we don't try to double free.  The flag
+        # _mem_freed is used to indicate that we cannot send the message again.
+        # The methods send_msg() and asend_msg() must ensure that the flag
+        # `_mem_freed` is set to True.
         self._mem_freed = False
         self._mem_freed_lock = threading.Lock()
 
@@ -1026,19 +1025,20 @@ class Message:
             check_err(lib.nng_msg_append(msg, data, len(data)))
             self._nng_msg = msg
 
+        # We may not have been given a pipe, in which case the pipe is None.
+        if pipe is None:
+            self._pipe = None
+        else:
+            self.pipe = pipe
+
     @property
     def pipe(self):
         return self._pipe
 
     @pipe.setter
     def pipe(self, pipe):
-        if pipe is None:
-            check_err(lib.nng_msg_set_pipe(self._nng_msg, ffi.NULL))
-            self._pipe = None
-            return
         if not isinstance(pipe, Pipe):
-            msg = 'pipe must be type Pipe, not {}'
-            msg = msg.format(type(pipe))
+            msg = 'pipe must be type Pipe, not {}'.format(type(pipe))
             raise ValueError(msg)
         check_err(lib.nng_msg_set_pipe(self._nng_msg, pipe.pipe))
         self._pipe = pipe
