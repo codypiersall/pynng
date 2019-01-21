@@ -102,6 +102,8 @@ async def test_pub_sub_trio():
     the evens and 2 for consuming the odds) in separate tasks and have each
     one retreive values and verify the parity.
     """
+    sentinel_received = {}
+
     def is_even(i):
         return i % 2 == 0
 
@@ -112,9 +114,10 @@ async def test_pub_sub_trio():
                 msg = '{}:{}'.format(prefix, i)
                 await pubber.asend(msg.encode('ascii'))
 
-            # signal completion
-            await pubber.asend(b'odd:None')
-            await pubber.asend(b'even:None')
+            while not all(sentinel_received.values()):
+                # signal completion
+                await pubber.asend(b'odd:None')
+                await pubber.asend(b'even:None')
 
     async def subs(which):
         if which == 'even':
@@ -122,11 +125,12 @@ async def test_pub_sub_trio():
         else:
             pred = lambda i: not is_even(i)
 
-        with pynng.Sub0(dial=addr) as subber:
+        with pynng.Sub0(dial=addr, recv_timeout=100) as subber:
             subber.subscribe(which + ':')
 
             while True:
                 val = await subber.arecv()
+                print(val)
 
                 lot, _, i = val.partition(b':')
 
@@ -135,9 +139,13 @@ async def test_pub_sub_trio():
 
                 assert pred(int(i))
 
+            # mark subscriber as having received None sentinel
+            sentinel_received[which] = True
+
     async with trio.open_nursery() as n:
         # whip up the subs
         for _, lot in itertools.product(range(1), ('even', 'odd')):
+            sentinel_received[lot] = False
             n.start_soon(subs, lot)
 
         # head over to the pub
