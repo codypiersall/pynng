@@ -61,7 +61,7 @@ class BadState(NNGException):  # NNG_ESTATE
     pass
 
 
-class NoSuchFile(NNGException):  # NNG_ENOENT
+class NoEntry(NNGException):  # NNG_ENOENT
     pass
 
 
@@ -154,7 +154,7 @@ EXCEPTION_MAP = {
     nng.NNG_ENOTSUP: NotSupported,
     nng.NNG_EADDRINUSE: AddressInUse,
     nng.NNG_ESTATE: BadState,
-    nng.NNG_ENOENT: NoSuchFile,
+    nng.NNG_ENOENT: NoEntry,
     nng.NNG_EPROTO: ProtocolError,
     nng.NNG_EUNREACHABLE: DestinationUnreachable,
     nng.NNG_EADDRINVAL: AddressInvalid,
@@ -175,6 +175,12 @@ EXCEPTION_MAP = {
     nng.NNG_EBADTYPE: BadType,
     nng.NNG_EINTERNAL: Internal,
 }
+
+
+class MessageStateError(Exception):
+    """
+    Indicates that a Message was trying to be used in an invalid way.
+    """
 
 
 def check_err(err):

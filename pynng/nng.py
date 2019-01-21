@@ -7,8 +7,9 @@ import logging
 import weakref
 import threading
 
+import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, ConnectionRefused
+from .exceptions import check_err
 from . import options
 from . import _aio
 
@@ -302,7 +303,7 @@ class Socket:
         elif block is None:
             try:
                 self.dial(address, block=False)
-            except ConnectionRefused:
+            except pynng.ConnectionRefused:
                 msg = 'Synchronous dial failed; attempting asynchronous now'
                 logger.exception(msg)
                 self.dial(address, block=False)
@@ -491,6 +492,60 @@ class Socket:
         events
         """
         self._on_post_pipe_remove.remove(callback)
+
+    def _get_pipe_from_msg(self, msg):
+        lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        if pipe_id < 0:
+            raise pynng.NoEntry('No such pipe')
+        pipe = self._pipes[pipe_id]
+        return pipe
+
+    def recv_msg(self, block=True):
+        """
+        Return a Message object.
+
+        """
+        flags = 0
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
+        msg_p = ffi.new('nng_msg **')
+        check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
+        msg = msg_p[0]
+        msg = Message(msg)
+        msg.pipe = self._get_pipe_from_msg(msg)
+        return msg
+
+    def send_msg(self, msg, block=True):
+        """
+        Send the Message ``msg`` on the socket.
+        """
+        flags = 0
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
+            check_err(lib.nng_sendmsg(self.socket, msg._nng_msg, flags))
+            msg._mem_freed = True
+
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send the Message ``msg`` on the socket.
+        """
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
+            with _aio.AIOHelper(self, self._async_backend) as aio:
+                val = await aio.asend_msg(msg)
+                return val
+
+    async def arecv_msg(self):
+        """
+        Asynchronously receive the Message ``msg`` on the socket.
+        """
+        with _aio.AIOHelper(self, self._async_backend) as aio:
+            msg = await aio.arecv_msg()
+            msg.pipe = self._get_pipe_from_msg(msg)
+            return msg
 
 
 class Bus0(Socket):
@@ -728,24 +783,31 @@ class Context:
             lib.nng_aio_free(aio)
         return py_obj
 
+    def send_msg(self, msg):
+        """
+        Synchronously send the Message ``msg`` on the context.
+
+        """
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
+            aio_p = ffi.new('nng_aio **')
+            check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
+            aio = aio_p[0]
+            try:
+                check_err(lib.nng_aio_set_msg(aio, msg._nng_msg))
+                check_err(lib.nng_ctx_send(self.context, aio))
+                msg._mem_freed = True
+                check_err(lib.nng_aio_wait(aio))
+                check_err(lib.nng_aio_result(aio))
+            finally:
+                lib.nng_aio_free(aio)
+
     def send(self, data):
         """
-        Synchronously send data on the socket.
+        Synchronously send data on the context.
         """
-        aio_p = ffi.new('nng_aio **')
-        check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
-        aio = aio_p[0]
-        try:
-            msg_p = ffi.new('nng_msg **')
-            check_err(lib.nng_msg_alloc(msg_p, 0))
-            msg = msg_p[0]
-            lib.nng_msg_append(msg, data, len(data))
-            check_err(lib.nng_aio_set_msg(aio, msg))
-            check_err(lib.nng_ctx_send(self.context, aio))
-            check_err(lib.nng_aio_wait(aio))
-            check_err(lib.nng_aio_result(aio))
-        finally:
-            lib.nng_aio_free(aio)
+        msg = Message(data)
+        return self.send_msg(msg)
 
     def _free(self):
         ctx_err = 0
@@ -768,6 +830,25 @@ class Context:
 
     def __del__(self):
         self._free()
+
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send the Message ``msg`` on the socket.
+        """
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
+            with _aio.AIOHelper(self, self._socket._async_backend) as aio:
+                val = await aio.asend_msg(msg)
+                return val
+
+    async def arecv_msg(self):
+        """
+        Asynchronously receive the Message ``msg`` on the socket.
+        """
+        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
+            msg = await aio.arecv_msg()
+            msg.pipe = self._socket._get_pipe_from_msg(msg)
+            return msg
 
 
 @ffi.def_extern()
@@ -882,7 +963,6 @@ class Pipe:
         dialer = lib.nng_pipe_dialer(self.pipe)
         d_id = lib.nng_dialer_id(dialer)
         if d_id < 0:
-            # TODO: Different exception?
             raise TypeError('This pipe has no associated dialers.')
         return self.socket._dialers[d_id]
 
@@ -896,7 +976,6 @@ class Pipe:
         listener = lib.nng_pipe_listener(self.pipe)
         l_id = lib.nng_listener_id(listener)
         if l_id < 0:
-            # TODO: Different exception?
             raise TypeError('This pipe has no associated listeners.')
         return self.socket._listeners[l_id]
 
@@ -907,4 +986,105 @@ class Pipe:
         """
         check_err(lib.nng_pipe_close(self.pipe))
         self._closed = True
+
+
+class Message:
+    """
+    Python interface for nng_msg.  See
+    https://nanomsg.github.io/nng/man/tip/nng_msg.5.html
+
+    Messages are immutable.
+
+    Warning:
+
+        Access to the message's underlying data buffer can be accessed with the
+        ``_buffer`` attribute.  However, care must be taken not to send a message
+        while a reference to the buffer is still alive; if the buffer is used after
+        a message is sent, a segfault or data corruption may (read: almost
+        certainly will) result.
+
+    """
+
+    def __init__(self, data, pipe=None):
+        self._pipe = pipe
+        # NB! There are two ways that a user can free resources that an nng_msg
+        # is using: either sending with nng_sendmsg (or the async equivalent)
+        # or with nng_msg_free.  We don't know how this msg will be used, but
+        # we need to **ensure** that we don't try to double free.  So the only
+        # way to send a message is with the send() and asend() methods on the
+        # object.
+        self._mem_freed = False
+        self._mem_freed_lock = threading.Lock()
+
+        if isinstance(data, ffi.CData) and \
+                ffi.typeof(data).cname == 'struct nng_msg *':
+            self._nng_msg = data
+        else:
+            msg_p = ffi.new('nng_msg **')
+            check_err(lib.nng_msg_alloc(msg_p, 0))
+            msg = msg_p[0]
+            check_err(lib.nng_msg_append(msg, data, len(data)))
+            self._nng_msg = msg
+
+    @property
+    def pipe(self):
+        return self._pipe
+
+    @pipe.setter
+    def pipe(self, pipe):
+        if pipe is None:
+            check_err(lib.nng_msg_set_pipe(self._nng_msg, ffi.NULL))
+            self._pipe = None
+            return
+        if not isinstance(pipe, Pipe):
+            msg = 'pipe must be type Pipe, not {}'
+            msg = msg.format(type(pipe))
+            raise ValueError(msg)
+        check_err(lib.nng_msg_set_pipe(self._nng_msg, pipe.pipe))
+        self._pipe = pipe
+
+    @property
+    def _buffer(self):
+        """
+        Returns a cffi.buffer to the underlying nng_msg buffer.
+
+        If you access the message's buffer using this property, you must ensure
+        that you do not send the message until you are not using the buffer
+        anymore.
+
+        """
+        with self._mem_freed_lock:
+            if not self._mem_freed:
+                size = lib.nng_msg_len(self._nng_msg)
+                data = ffi.cast('char *', lib.nng_msg_body(self._nng_msg))
+                return ffi.buffer(data[0:size])
+
+    @property
+    def bytes(self):
+        """
+        Return the bytes from the underlying buffer.
+
+        """
+        return bytes(self._buffer)
+
+    def __del__(self):
+        with self._mem_freed_lock:
+            if self._mem_freed:
+                return
+            else:
+                lib.nng_msg_free(self._nng_msg)
+                # pretty sure it's not necessary to set this, but that's okay.
+                self._mem_freed = True
+
+    def _ensure_can_send(self):
+        """
+        Raises an exception if the message's state is such that it cannot be
+        sent.  The _mem_freed_lock() must be acquired when this method is
+        called.
+
+        """
+        assert self._mem_freed_lock.locked()
+        if self._mem_freed:
+            msg = 'Attempted to send the same message more than once.'
+            raise pynng.MessageStateError(msg)
 

@@ -14,6 +14,7 @@ from .nng import (
     Listener,
     Dialer,
     Pipe,
+    Message,
 )
 
 from .exceptions import (
@@ -29,7 +30,7 @@ from .exceptions import (
     NotSupported,
     AddressInUse,
     BadState,
-    NoSuchFile,
+    NoEntry,
     ProtocolError,
     DestinationUnreachable,
     AddressInvalid,
@@ -50,5 +51,6 @@ from .exceptions import (
     BadType,
     Internal,
     check_err,
+    MessageStateError
 )
 

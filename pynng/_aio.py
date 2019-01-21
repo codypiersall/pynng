@@ -134,11 +134,11 @@ class AIOHelper:
         # we need to choose the correct nng lib functions based on the type of
         # object we've been passed; but really, all the logic is identical
         if isinstance(obj, pynng.Socket):
-            self._lib_obj = obj.socket
+            self._nng_obj = obj.socket
             self._lib_arecv = lib.nng_recv_aio
             self._lib_asend = lib.nng_send_aio
         else:
-            self._lib_obj = obj.context
+            self._nng_obj = obj.context
             self._lib_arecv = lib.nng_ctx_recv
             self._lib_asend = lib.nng_ctx_send
         self.obj = obj
@@ -155,26 +155,33 @@ class AIOHelper:
         self.aio = aio_p[0]
 
     async def arecv(self):
-        check_err(self._lib_arecv(self._lib_obj, self.aio))
+        msg = await self.arecv_msg()
+        return msg.bytes
+
+    async def arecv_msg(self):
+        check_err(self._lib_arecv(self._nng_obj, self.aio))
         await self.awaitable
-        err = lib.nng_aio_result(self.aio)
-        check_err(err)
+        check_err(lib.nng_aio_result(self.aio))
         msg = lib.nng_aio_get_msg(self.aio)
-        try:
-            size = lib.nng_msg_len(msg)
-            data = ffi.cast('char *', lib.nng_msg_body(msg))
-            py_obj = bytes(ffi.buffer(data[0:size]))
-        finally:
-            lib.nng_msg_free(msg)
-        return py_obj
+        return pynng.Message(msg)
 
     async def asend(self, data):
         msg_p = ffi.new('nng_msg **')
         check_err(lib.nng_msg_alloc(msg_p, 0))
         msg = msg_p[0]
-        lib.nng_msg_append(msg, data, len(data))
-        lib.nng_aio_set_msg(self.aio, msg)
-        check_err(self._lib_asend(self._lib_obj, self.aio))
+        check_err(lib.nng_msg_append(msg, data, len(data)))
+        check_err(lib.nng_aio_set_msg(self.aio, msg))
+        check_err(self._lib_asend(self._nng_obj, self.aio))
+        return await self.awaitable
+
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send a Message
+
+        """
+        lib.nng_aio_set_msg(self.aio, msg._nng_msg)
+        check_err(self._lib_asend(self._nng_obj, self.aio))
+        msg._mem_freed = True
         return await self.awaitable
 
     def _free(self):
