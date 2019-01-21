@@ -9,7 +9,8 @@ This is pynng.
 Ergonomic bindings for [nanomsg next generation] \(nng), in Python.
 pynng provides a nice interface on top of the full power of nng.  nng, and
 therefore pynng, make it easy to communicate between processes on a single
-computer or computers across a network.
+computer or computers across a network.  This library is compatible with Python
+≥ 3.5.
 
 Goals
 -----
@@ -23,7 +24,7 @@ Installation
 
 On Windows, MacOS, and Linux, the usual
 
-    pip install pynng
+    pip3 install pynng
 
 should suffice.  Note that on 32-bit Linux and on macOS no binary distributions
 are available, so [CMake](https://cmake.org/) is also required.
@@ -32,9 +33,9 @@ Building from the GitHub repo works as well, natch:
 
     git clone https://github.com/codypiersall/pynng
     cd pynng
-    pip install -e .
+    pip3 install -e .
 
-(If you want to run tests, you also need to `pip install pytest` and `pip
+(If you want to run tests, you also need to `pip3 install pytest` and `pip3
 install trio`, then just run `pytest`.)
 
 pynng might work on the BSDs as well.  Who knows!
