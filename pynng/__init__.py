@@ -30,7 +30,7 @@ from .exceptions import (
     NotSupported,
     AddressInUse,
     BadState,
-    NoSuchFile,
+    NoEntry,
     ProtocolError,
     DestinationUnreachable,
     AddressInvalid,

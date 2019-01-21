@@ -7,8 +7,9 @@ import logging
 import weakref
 import threading
 
+import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, ConnectionRefused, MessageStateError
+from .exceptions import check_err
 from . import options
 from . import _aio
 
@@ -302,7 +303,7 @@ class Socket:
         elif block is None:
             try:
                 self.dial(address, block=False)
-            except ConnectionRefused:
+            except pynng.ConnectionRefused:
                 msg = 'Synchronous dial failed; attempting asynchronous now'
                 logger.exception(msg)
                 self.dial(address, block=False)
@@ -496,8 +497,7 @@ class Socket:
         lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
         pipe_id = lib.nng_pipe_id(lib_pipe)
         if pipe_id < 0:
-            # TODO: Better exception
-            raise Exception('No such pipe')
+            raise pynng.NoEntry('No such pipe')
         pipe = self._pipes[pipe_id]
         return pipe
 
@@ -963,7 +963,6 @@ class Pipe:
         dialer = lib.nng_pipe_dialer(self.pipe)
         d_id = lib.nng_dialer_id(dialer)
         if d_id < 0:
-            # TODO: Different exception?
             raise TypeError('This pipe has no associated dialers.')
         return self.socket._dialers[d_id]
 
@@ -977,7 +976,6 @@ class Pipe:
         listener = lib.nng_pipe_listener(self.pipe)
         l_id = lib.nng_listener_id(listener)
         if l_id < 0:
-            # TODO: Different exception?
             raise TypeError('This pipe has no associated listeners.')
         return self.socket._listeners[l_id]
 
@@ -1000,9 +998,10 @@ class Message:
     Warning:
 
         Access to the message's underlying data buffer can be accessed with the
-        ``buffer`` attribute.  However, care must be taken not to send a message
+        ``_buffer`` attribute.  However, care must be taken not to send a message
         while a reference to the buffer is still alive; if the buffer is used after
-        a message is sent, a segfault or data corruption will result.
+        a message is sent, a segfault or data corruption may (read: almost
+        certainly will) result.
 
     """
 
@@ -1045,7 +1044,7 @@ class Message:
         self._pipe = pipe
 
     @property
-    def buffer(self):
+    def _buffer(self):
         """
         Returns a cffi.buffer to the underlying nng_msg buffer.
 
@@ -1066,7 +1065,7 @@ class Message:
         Return the bytes from the underlying buffer.
 
         """
-        return bytes(self.buffer)
+        return bytes(self._buffer)
 
     def __del__(self):
         with self._mem_freed_lock:
@@ -1087,5 +1086,5 @@ class Message:
         assert self._mem_freed_lock.locked()
         if self._mem_freed:
             msg = 'Attempted to send the same message more than once.'
-            raise MessageStateError(msg)
+            raise pynng.MessageStateError(msg)
 
