@@ -27,7 +27,7 @@ build_script:
   - "%PYTHON%\\python.exe setup.py build_ext --inplace"
 
 test_script:
-  - "%PYTHON%\\python.exe -m pytest test"
+  - "%PYTHON%\\python.exe -m pytest -s -v test"
 
 after_test:
   # build the wheel.

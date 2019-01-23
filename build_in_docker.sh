@@ -9,7 +9,7 @@ for v in 35 36 37; do
     # if pytest fails we've got a problem.  This will allow us to check in
     # Docker that everything is okay.
     $python -m pip install pytest
-    $python -m pytest . && touch /mnt/artifacts/v${v}_success
+    $python -m pytest -s -v . && touch /mnt/artifacts/v${v}_success
     rm pynng/*.so
 done
 $python setup.py sdist
