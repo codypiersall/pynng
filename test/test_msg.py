@@ -66,6 +66,23 @@ async def test_context_arecv_asend_msg():
             assert msg4.bytes == b'yes of course i am your favorite platypus'
 
 
+def test_context_recv_send_msg():
+    with pynng.Req0(listen=addr, recv_timeout=to) as s1, \
+            pynng.Rep0(dial=addr, recv_timeout=to) as s2:
+        with s1.new_context() as ctx1, s2.new_context() as ctx2:
+            wait_pipe_len(s1, 1)
+            msg = pynng.Message(b'do i even know you')
+            ctx1.send_msg(msg)
+            msg2 = ctx2.recv_msg()
+            assert msg2.pipe is s2.pipes[0]
+            assert msg2.bytes == b'do i even know you'
+            msg3 = pynng.Message(b'yes of course i am your favorite platypus')
+            ctx2.send_msg(msg3)
+            msg4 = ctx1.recv_msg()
+            assert msg4.pipe is s1.pipes[0]
+            assert msg4.bytes == b'yes of course i am your favorite platypus'
+
+
 def test_cannot_double_send():
     # double send would cause a SEGFAULT!!! That's no good
     with pynng.Req0(listen=addr, recv_timeout=to) as s1, \

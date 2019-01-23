@@ -760,9 +760,9 @@ class Context:
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.asend(data)
 
-    def recv(self):
+    def recv_msg(self):
         """
-        Synchronously receive data on this context.
+        Synchronously receive a Message on this context.
         """
         aio_p = ffi.new('nng_aio **')
         check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
@@ -771,16 +771,21 @@ class Context:
             check_err(lib.nng_ctx_recv(self.context, aio))
             check_err(lib.nng_aio_wait(aio))
             check_err(lib.nng_aio_result(aio))
-            msg = lib.nng_aio_get_msg(aio)
-            try:
-                size = lib.nng_msg_len(msg)
-                data = ffi.cast('char *', lib.nng_msg_body(msg))
-                py_obj = bytes(ffi.buffer(data[0:size]))
-            finally:
-                lib.nng_msg_free(msg)
+            nng_msg = lib.nng_aio_get_msg(aio)
+            msg = Message(nng_msg)
+            pipe = self._socket._get_pipe_from_msg(msg)
+            msg.pipe = pipe
         finally:
             lib.nng_aio_free(aio)
-        return py_obj
+        return msg
+
+    def recv(self):
+        """
+        Synchronously receive data on this context.
+        """
+
+        msg = self.recv_msg()
+        return msg.bytes
 
     def send_msg(self, msg):
         """
