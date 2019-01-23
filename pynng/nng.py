@@ -493,12 +493,21 @@ class Socket:
         """
         self._on_post_pipe_remove.remove(callback)
 
-    def _get_pipe_from_msg(self, msg):
+    def _try_associate_msg_with_pipe(self, msg):
+        """
+        Looks up the nng_msg associated with the ``msg`` and attempts to set
+        it on the Message ``msg``
+        """
         lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
         pipe_id = lib.nng_pipe_id(lib_pipe)
-        if pipe_id < 0:
-            raise pynng.NoEntry('No such pipe')
-        return self._pipes[pipe_id]
+        try:
+            msg.pipe = self._pipes[pipe_id]
+        except KeyError:
+            # if pipe_id < 0, that *probably* means we hit a race where the
+            # associated pipe was closed.  So only warn when pipe_id is valid
+            if pipe_id >= 0:
+                logger.warning("Could not associate msg with pipe (pipe_id == %d)",
+                               pipe_id)
 
     def recv_msg(self, block=True):
         """
@@ -512,7 +521,7 @@ class Socket:
         check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
         msg = msg_p[0]
         msg = Message(msg)
-        msg.pipe = self._get_pipe_from_msg(msg)
+        self._try_associate_msg_with_pipe(msg)
         return msg
 
     def send_msg(self, msg, block=True):
@@ -543,7 +552,7 @@ class Socket:
         """
         with _aio.AIOHelper(self, self._async_backend) as aio:
             msg = await aio.arecv_msg()
-            msg.pipe = self._get_pipe_from_msg(msg)
+            self._try_associate_msg_with_pipe(msg)
             return msg
 
 
@@ -773,8 +782,7 @@ class Context:
             check_err(lib.nng_aio_result(aio))
             nng_msg = lib.nng_aio_get_msg(aio)
             msg = Message(nng_msg)
-            pipe = self._socket._get_pipe_from_msg(msg)
-            msg.pipe = pipe
+            self._socket._try_associate_msg_with_pipe(msg)
         finally:
             lib.nng_aio_free(aio)
         return msg
@@ -851,7 +859,7 @@ class Context:
         """
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             msg = await aio.arecv_msg()
-            msg.pipe = self._socket._get_pipe_from_msg(msg)
+            self._socket._try_associate_msg_with_pipe(msg)
             return msg
 
 
