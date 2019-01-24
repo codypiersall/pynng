@@ -145,7 +145,10 @@ class AIOHelper:
         if async_backend is None:
             async_backend = sniffio.current_async_library()
         if async_backend not in self._aio_helper_map:
-            raise ValueError('The async backend {} is not currently supported.'.format(async_backend))
+            raise ValueError(
+                'The async backend {} is not currently supported.'
+                .format(async_backend)
+            )
         self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
         aio_p = ffi.new('nng_aio **')
         _aio_map[id(self.cb_arg)] = self.cb_arg
@@ -201,5 +204,3 @@ class AIOHelper:
 
     def __del__(self):
         self._free()
-
-
