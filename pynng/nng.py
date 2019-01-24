@@ -16,12 +16,6 @@ from . import _aio
 
 logger = logging.getLogger(__name__)
 
-# a mapping of id(sock): sock for use in callbacks.  When a socket is
-# initialized, it adds itself to this dict.  When a socket is closed, it
-# removes itself from this dict.  In order to allow sockets to be garbage
-# collected, a weak reference to the socket is stored here instead of the
-# actual socket.
-
 __all__ = '''
 ffi
 Bus0
@@ -33,6 +27,12 @@ Req0 Rep0
 Socket
 Surveyor0 Respondent0
 '''.split()
+
+# a mapping of id(sock): sock for use in callbacks.  When a socket is
+# initialized, it adds itself to this dict.  When a socket is closed, it
+# removes itself from this dict.  In order to allow sockets to be garbage
+# collected, a weak reference to the socket is stored here instead of the
+# actual socket.
 
 _live_sockets = weakref.WeakValueDictionary()
 
@@ -264,20 +264,21 @@ class Socket:
             self.recv_buffer_size = recv_buffer_size
         if send_buffer_size is not None:
             self.send_buffer_size = send_buffer_size
+
+        # set up pipe callbacks. This **must** be called before listen/dial to
+        # avoid race conditions.
+        as_void = ffi.cast('void *', id(self))
+        for event in (lib.NNG_PIPE_EV_ADD_PRE, lib.NNG_PIPE_EV_ADD_POST,
+                      lib.NNG_PIPE_EV_REM_POST):
+            check_err(lib.nng_pipe_notify(
+                self.socket, event, lib._nng_pipe_cb, as_void))
+
         if listen is not None:
             self.listen(listen)
         if dial is not None:
             self.dial(dial, block=block_on_dial)
 
         _live_sockets[id(self)] = self
-        as_void = ffi.cast('void *', id(self))
-        # set up pipe callbacks
-        check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_PRE,
-                                      lib._nng_pipe_cb, as_void))
-        check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_ADD_POST,
-                                      lib._nng_pipe_cb, as_void))
-        check_err(lib.nng_pipe_notify(self.socket, lib.NNG_PIPE_EV_REM_POST,
-                                      lib._nng_pipe_cb, as_void))
 
     def dial(self, address, *, block=None):
         """Dial the specified address.
