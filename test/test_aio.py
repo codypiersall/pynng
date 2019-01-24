@@ -125,7 +125,7 @@ async def test_pub_sub_trio():
         else:
             pred = lambda i: not is_even(i)
 
-        with pynng.Sub0(dial=addr, recv_timeout=100) as subber:
+        with pynng.Sub0(dial=addr, recv_timeout=5000) as subber:
             subber.subscribe(which + ':')
 
             while True:
