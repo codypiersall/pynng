@@ -105,6 +105,13 @@ Many other protocols are available as well:
 * `Push0`, `Pull0`: Aggregate messages from multiple sources and load balance
   among many destinations.
 
+Examples
+--------
+
+Some examples (okay, just one example right now) are available in the
+[examples](https://github.com/codypiersall/pynng/tree/master/examples)
+directory.
+
 Git Branch Policy
 -----------------
 
