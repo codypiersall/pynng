@@ -18,16 +18,15 @@ cache:
 install:
   # We need wheel installed to build wheels
   - "%PYTHON%\\python.exe -m pip install wheel"
-  - "%PYTHON%\\python.exe -m pip install pytest"
+  - "%PYTHON%\\python.exe -m pip install --upgrade setuptools"
   - ps: choco install ninja
 
 build_script:
-  - "%PYTHON%\\python.exe -m pip install cffi sniffio trio"
   - "%PYTHON%\\python.exe setup.py build"
   - "%PYTHON%\\python.exe setup.py build_ext --inplace"
 
 test_script:
-  - "%PYTHON%\\python.exe -m pytest -s -v test"
+  - "%PYTHON%\\python.exe setup.py pytest"
 
 after_test:
   # build the wheel.

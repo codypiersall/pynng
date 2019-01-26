@@ -96,6 +96,11 @@ class BuildExtCommand(setuptools.command.build_ext.build_ext):
 with open('README.md', 'r', encoding='utf-8') as f:
     long_description = f.read()
 
+tests_require = [
+    'pytest',
+    'pytest-trio',
+    'trio',
+]
 
 setuptools.setup(
     cmdclass={
@@ -127,8 +132,11 @@ setuptools.setup(
         'Topic :: Software Development :: Libraries',
         'Topic :: System :: Networking',
     ]),
-    setup_requires=['cffi'],
+    setup_requires=['cffi', 'pytest-runner'],
     install_requires=['cffi', 'sniffio'],
     cffi_modules=['build_pynng.py:ffibuilder'],
+    tests_require=tests_require,
+    test_suite='tests',
+
 )
 
