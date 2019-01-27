@@ -585,7 +585,14 @@ class Pair0(Socket):
 
 class Pair1(Socket):
     """A pair1 socket."""
+    def __init__(self, *args, polyamorous=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # TODO: it would be better to set polyamorous before listen()/dial()
+        if polyamorous is not None:
+            self.polyamorous = polyamorous
+
     _opener = lib.nng_pair1_open
+    polyamorous = BooleanOption('pair1:polyamorous')
 
 
 class Pull0(Socket):

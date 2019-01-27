@@ -3,6 +3,8 @@ import trio
 
 import pynng
 
+from test._test_util import wait_pipe_len
+
 
 addr = 'tcp://127.0.0.1:13131'
 addr2 = 'tcp://127.0.0.1:13132'
@@ -106,3 +108,25 @@ def test_synchronous_recv_context():
         assert rep.recv() == b'oh hello there old pal'
         rep.send(b'it is so good to hear from you')
         assert req.recv() == b'it is so good to hear from you'
+
+
+def test_pair1_polyamorousness():
+    with pynng.Pair1(listen=addr, polyamorous=True, recv_timeout=500) as s0, \
+            pynng.Pair1(dial=addr, polyamorous=True, recv_timeout=500) as s1:
+            wait_pipe_len(s0, 1)
+            # pipe for s1 .
+            p1 = s0.pipes[0]
+            with pynng.Pair1(dial=addr, polyamorous=True, recv_timeout=500) as s2:
+                wait_pipe_len(s0, 2)
+                # pipes is backed by a dict, so we can't rely on order in
+                # Python 3.5.
+                pipes = s0.pipes
+                p2 = pipes[1]
+                if p2 is p1:
+                    p2 = pipes[0]
+                s0.pipes[0].send(b'hello s1')
+                assert s1.recv() == b'hello s1'
+
+                s0.pipes[1].send(b'hello there s2')
+                assert s2.recv() == b'hello there s2'
+
