@@ -1000,6 +1000,38 @@ class Pipe:
         check_err(lib.nng_pipe_close(self.pipe))
         self._closed = True
 
+    def send(self, data):
+        """
+        Synchronously send bytes from this Pipe.
+
+        """
+        msg = Message(data, self)
+        self.socket.send_msg(msg)
+
+    def send_msg(self, msg):
+        """
+        Synchronously send a Message from this Pipe.
+
+        """
+        msg.pipe = self
+        self.socket.send_msg(msg)
+
+    async def asend(self, data):
+        """
+        Asynchronously send bytes from this Pipe.
+
+        """
+        msg = Message(data, self)
+        return await self.socket.asend_msg(msg)
+
+    async def asend_msg(self, msg):
+        """
+        Asynchronously send a Message from this Pipe.
+
+        """
+        msg.pipe = self
+        return await self.socket.asend_msg(msg)
+
 
 class Message:
     """
