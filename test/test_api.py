@@ -124,9 +124,9 @@ def test_pair1_polyamorousness():
                 p2 = pipes[1]
                 if p2 is p1:
                     p2 = pipes[0]
-                s0.pipes[0].send(b'hello s1')
+                p1.send(b'hello s1')
                 assert s1.recv() == b'hello s1'
 
-                s0.pipes[1].send(b'hello there s2')
+                p2.send(b'hello there s2')
                 assert s2.recv() == b'hello there s2'
 
