@@ -3,7 +3,11 @@ Examples
 
 This directory contains examples on using pynng for different tasks.
 
-* pair0.py: Demonstrates the basic bi-directional connection, pair0.
+* [`pair0.py`](./pair0.py): Demonstrates the basic bi-directional connection,
+  pair0.  Adapted from [nng pair
+  example](https://nanomsg.org/gettingstarted/nng/pair.html).
+* [`pair1_async.py`](./pair1_async.py): Demonstrates a polyamorous pair1
+  connection.
 
 Adding an Example
 -----------------

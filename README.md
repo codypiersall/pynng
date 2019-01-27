@@ -10,7 +10,8 @@ Ergonomic bindings for [nanomsg next generation] \(nng), in Python.
 pynng provides a nice interface on top of the full power of nng.  nng, and
 therefore pynng, make it easy to communicate between processes on a single
 computer or computers across a network.  This library is compatible with Python
-≥ 3.5.
+≥ 3.5.  nng is the [rewriting](https://nanomsg.github.io/nng/RATIONALE.html) of
+[Nanomsg](https://nanomsg.org/), which is the spiritual successor to [ZeroMQ](http://zeromq.org/).
 
 Goals
 -----
@@ -108,7 +109,7 @@ Many other protocols are available as well:
 Examples
 --------
 
-Some examples (okay, just one example right now) are available in the
+Some examples (okay, just two examples) are available in the
 [examples](https://github.com/codypiersall/pynng/tree/master/examples)
 directory.
 
@@ -124,8 +125,6 @@ TODO
 ----
 
 * More docs.  Most of the public API has docstrings, but hosted documentation
-  at readthedocs will happen one day.  Features are just so much more fun to
-  add...
-* Examples.
+  at readthedocs will happen one day.
 
 [nanomsg next generation]: https://nanomsg.github.io/nng/index.html
