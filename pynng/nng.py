@@ -37,6 +37,20 @@ Surveyor0 Respondent0
 _live_sockets = weakref.WeakValueDictionary()
 
 
+def _ensure_can_send(thing):
+    """
+    It's easy to accidentally pass in a str instead of bytes when send()ing.
+    This gives a more informative message if a ``str`` was accidentally passed
+    to a send method.
+
+    """
+    # at some point it might be nice to check for the specific types we **can**
+    # send...
+    if isinstance(thing, str):
+        raise ValueError('Cannot send type str. '
+                         'Maybe you left out a ".encode()" somewhere?')
+
+
 def to_char(charlike):
     """Convert str or bytes to char*."""
     # fast path for stuff that doesn't need to be changed.
@@ -380,6 +394,7 @@ class Socket:
 
     def send(self, data):
         """Sends ``data`` on socket."""
+        _ensure_can_send(data)
         err = lib.nng_send(self.socket, data, len(data), 0)
         check_err(err)
 
@@ -390,6 +405,7 @@ class Socket:
 
     async def asend(self, data):
         """Asynchronously send a message."""
+        _ensure_can_send(data)
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.asend(data)
 
@@ -767,6 +783,7 @@ class Context:
         """
         Asynchronously send data using this context.
         """
+        _ensure_can_send(data)
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.asend(data)
 
@@ -819,6 +836,7 @@ class Context:
         """
         Synchronously send data on the context.
         """
+        _ensure_can_send(data)
         msg = Message(data)
         return self.send_msg(msg)
 
@@ -1005,6 +1023,7 @@ class Pipe:
         Synchronously send bytes from this Pipe.
 
         """
+        _ensure_can_send(data)
         msg = Message(data, self)
         self.socket.send_msg(msg)
 
@@ -1021,6 +1040,7 @@ class Pipe:
         Asynchronously send bytes from this Pipe.
 
         """
+        _ensure_can_send(data)
         msg = Message(data, self)
         return await self.socket.asend_msg(msg)
 
