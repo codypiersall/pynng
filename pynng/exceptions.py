@@ -137,7 +137,7 @@ class BadType(NNGException):  # NNG_EBADTYPE
     pass
 
 
-class Internal(NNGException):  # NNG_EWRITEONLY
+class Internal(NNGException):  # NNG_EINTERNAL
     pass
 
 

@@ -7,7 +7,8 @@ Welcome to pynng's documentation!
 =================================
 
 This is Python bindings to `Nanomsg Next Generation`_, which makes various
-communications patterns easy: request/reply, publish/subscribe, and others.
+communications patterns easy: request/reply, publish/subscribe, one-to-one, and
+more.
 
 .. toctree::
    :maxdepth: 2

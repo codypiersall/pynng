@@ -42,3 +42,7 @@ deploy:
     secure: LyR+itm0spHXN3pWHy97JHW98uf4t5SywvW18YLyX3OyMYuFmJkGv4/2zqoqXAGP
   on:
     appveyor_repo_tag: true
+
+branches:
+  except:
+    - docs

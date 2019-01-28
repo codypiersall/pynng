@@ -29,3 +29,7 @@ deploy:
   on:
     repo: codypiersall/pynng
     tags: true
+
+branches:
+  except:
+    - docs
