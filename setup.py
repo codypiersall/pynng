@@ -6,6 +6,9 @@ import sys
 import setuptools.command.build_py
 import setuptools.command.build_ext
 
+# have to exec; can't import the package before it's built.
+exec(open("pynng/_version.py", encoding="utf-8").read())
+
 
 THIS_DIR = os.path.dirname(__file__)
 
@@ -114,7 +117,7 @@ setuptools.setup(
     description='Networking made simply using nng',
     long_description=long_description,
     license='MIT',
-    keywords='networking nng nanomsg zmq messaging message',
+    keywords='networking nng nanomsg zmq messaging message trio asyncio',
     long_description_content_type='text/markdown',
     url='https://github.com/codypiersall/pynng',
     packages=setuptools.find_packages(),

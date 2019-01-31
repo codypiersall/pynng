@@ -1,4 +1,5 @@
 # provide the API
+from ._version import __version__
 from ._nng import lib, ffi
 from .nng import (
     Bus0,
