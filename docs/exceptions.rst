@@ -1,5 +1,5 @@
-pynng Exceptions
-================
+Exceptions in pynng
+===================
 
 pynng translates all of NNG error codes into Python Exceptions.  The root
 exception of the hierarchy is the ``NNGException``; ``NNGException`` inherits
@@ -10,7 +10,6 @@ The following table describes all the exceptions defined by pynng.  The first
 column is the name of the exception in pynng (defined in ``pynng.exceptions``),
 the second is the nng error code (defined in ``nng.h``), and the third is a
 description of the exception.
-
 
 +----------------------------+----------------------+--------------------------------------------------+
 | pynng Exception            | nng error code       | Description                                      |
