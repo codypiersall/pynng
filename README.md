@@ -3,8 +3,9 @@ This is pynng.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/codypiersall/pynng/blob/master/LICENSE.txt)
 [![PyPI Version](https://img.shields.io/pypi/v/pynng.svg)](https://pypi.org/project/pynng)
-[![Linux Status](https://img.shields.io/travis/codypiersall/pynng/master.svg?label=Linux)](https://travis-ci.org/codypiersall/pynng)
+[![Linux Status](https://img.shields.io/travis/codypiersall/pynng/master.svg?label=linux)](https://travis-ci.org/codypiersall/pynng)
 [![Windows Status](https://img.shields.io/appveyor/ci/codypiersall/pynng.svg?label=windows)](https://ci.appveyor.com/project/codypiersall/pynng)
+[![docs](https://img.shields.io/readthedocs/pynng.svg)](https://pynng.readthedocs.io)
 
 Ergonomic bindings for [nanomsg next generation] \(nng), in Python.
 pynng provides a nice interface on top of the full power of nng.  nng, and
@@ -105,6 +106,9 @@ Many other protocols are available as well:
 * `Req0`, `Rep0`: request/response pattern.
 * `Push0`, `Pull0`: Aggregate messages from multiple sources and load balance
   among many destinations.
+
+Feel free to check out the [documentation](https://pynng.readthedocs.io), which
+is currently a work in progress.
 
 Examples
 --------
