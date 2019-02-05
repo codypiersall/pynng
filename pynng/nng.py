@@ -137,57 +137,90 @@ class NotImplementedOption(_NNGOption):
 
 class Socket:
     """
-    The base socket.  It should generally not be instantiated directly.
-    See the documentation for __init__ for initialization options.
+    Open a socket with one of the scalability protocols.  This should not be
+    instantiated directly; instead, one of its subclasses should be used.
+    There is one subclass per protocol.  The available protocols are:
 
-    Sockets have the following attributes:
+        * :class:`Pair0 <pynng.Pair0>`
+        * :class:`Pair1 <pynng.Pair1>`
+        * :class:`Req0 <pynng.Req0>` / :class:`Rep0 <pynng.Rep0>`
+        * :class:`Pub0 <pynng.Pub0>` / :class:`Sub0 <pynng.Sub0>`
+        * :class:`Push0 <pynng.Push0>` / :class:`Pull0 <pynng.Pull0>`
+        * :class:`Surveyor0 <pynng.Surveyor0>` / :class:`Respondent0
+          <pynng.Respondent0>`
 
-    Attributes:
-        name (str): The socket name.  Corresponds to ``NNG_OPT_SOCKNAME``.
-            This is for debugging purposes.
-        raw (bool): A boolean, indicating whether the socket is raw or cooked.
-            Returns True if the socket is raw, else False.  This property is
-            read-only.  Corresponds to library option ``NNG_OPT_RAW``.  For
-            more information see
-            https://nanomsg.github.io/nng/man/v1.0.1/nng.7.html#raw_mode.
-        protocol (int): Read-only option which returns the 16-bit number of the
-            socket's protocol.
-        protocol_name (str): Read-only option which returns the name of the
-            socket's protocol.
-        peer (int): Returns the peer protocol id for the socket.
-        recv_timeout (int): Receive timeout, in ms.  If a socket takes longer
-            than the specified time, raises a pynng.exceptions.Timeout.
-            Corresponds to library option``NNG_OPT_RECVTIMEO``
-        send_timeout (int): Send timeout, in ms.  If the message cannot be
-            queued in the specified time, raises a pynng.exceptions.Timeout.
-            Corresponds to library option ``NNG_OPT_SENDTIMEO``.
-        local_address: Not implemented!!!  A read-only property representing
-            the local address used for communication.  The Python wrapper for
-            [nng_sockaddr](https://nanomsg.github.io/nng/man/v1.0.1/nng_sockaddr.5.html)
-            needs to be completed first.  Corresponds to ``NNG_OPT_LOCADDR``.
-        reconnect_time_min (int): The minimum time to wait before attempting
-            reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMINT``.  This
-            can also be overridden on the dialers.
-        reconnect_time_max (int): The maximum time to wait before attempting
-            reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMAXT``.  If this
-            is non-zero, then the time between successive connection attempts
-            will start at the value of reconnect_time_min, and grow
-            exponentially, until it reaches this value.  This option can be set
-            on the socket, or on the dialers associated with the socket.
-        recv_fd (int): The receive file descriptor associated with the socket.
-            This is suitable to be passed into poll functions like poll(),
-            or select().
-        send_fd (int): The sending file descriptor associated with the socket.
-            This is suitable to be passed into poll functions like poll(),
-            or select().
-        recv_max_size (int): The largest size of a message to receive.
-            Messages larger than this size will be silently dropped.  A size of
-            0 indicates unlimited size.
+    The socket initializer receives no positional arguments.  It accepts the
+    following keyword arguments, with the same meaning as the attributes
+    described below: ``recv_timeout``, ``send_timeout``, ``recv_buffer_size``,
+    ``send_buffer_size``, ``reconnect_time_min``, ``reconnect_time_max``, and
+    ``name``
 
-    See also the nng man pages document for options:
+    To talk to another socket, you have to either :meth:`dial
+    <pynng.Socket.dial>` its address, or :meth:`listen <pynng.Socket.listen>`
+    for connections.  Then you can :meth:`send <pynng.Socket.send>` to send
+    data to the remote sockets or :meth:`pynng.Socket.recv` to receive data
+    from the remote sockets.  Asynchronous versions are available as well, as
+    :meth:`asend <pynng.Socket.asend>` and :meth:`arecv <pynng.Socket.arecv>`.
+    The supported event loops are `asyncio
+    <https://docs.python.org/3/library/asyncio.html#module-asyncio>`_ and `trio
+    <https://trio.readthedocs.io>`_.  You must ensure that you :meth:`close
+    <pynng.Socket.close>` the socket when you are finished with it.  Sockets
+    can also be used as a context manager; this is the preferred way to use
+    them when possible.
 
-    https://nanomsg.github.io/nng/man/v1.0.1/nng_options.5.html
+    Sockets have the following attributes.  Generally, you should set these
+    attributes before :meth:`listening <pynng.Socket.listen>` or ``dial`` ing:
+
+        * **recv_timeout** (int): Receive timeout, in ms.  If a socket takes longer
+          than the specified time, raises a ``pynng.exceptions.Timeout``.
+          Corresponds to library option ``NNG_OPT_RECVTIMEO``
+        * **send_timeout** (int): Send timeout, in ms.  If the message cannot
+          be queued in the specified time, raises a pynng.exceptions.Timeout.
+          Corresponds to library option ``NNG_OPT_SENDTIMEO``.
+        * **recv_max_size** (int): The largest size of a message to receive.
+          Messages larger than this size will be silently dropped.  A size of 0
+          indicates unlimited size.  The default size is 1 MB.
+        * **recv_buffer_size** (int): The number of messages that the socket
+          will buffer on receive.  Corresponds to ``NNG_OPT_RECVBUF``.
+        * **send_buffer_size** (int): The number of messages that the socket
+          will buffer on send.  Corresponds to ``NNG_OPT_SENDBUF``.
+        * **name** (str): The socket name.  Corresponds to
+          ``NNG_OPT_SOCKNAME``.  This is useful for debugging purposes.
+        * **raw** (bool): A boolean, indicating whether the socket is raw or cooked.
+          Returns ``True`` if the socket is raw, else ``False``.  This property
+          is read-only.  Corresponds to library option ``NNG_OPT_RAW``.  For
+          more information see `nng's documentation.
+          <https://nanomsg.github.io/nng/man/v1.0.1/nng.7.html#raw_mode>`_
+        * **protocol** (int): Read-only option which returns the 16-bit number
+          of the socket's protocol.
+        * **protocol_name** (str): Read-only option which returns the name of the
+          socket's protocol.
+        * **peer** (int): Returns the peer protocol id for the socket.
+        * **local_address**: The :class:`pynng.sockaddr.SockAddr` representing
+          the local address.  Corresponds to ``NNG_OPT_LOCADDR``.
+        * **reconnect_time_min** (int): The minimum time to wait before
+          attempting reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMINT``.
+          This can also be overridden on the dialers.
+        * **reconnect_time_max** (int): The maximum time to wait before
+          attempting reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMAXT``.
+          If this is non-zero, then the time between successive connection
+          attempts will start at the value of ``reconnect_time_min``, and grow
+          exponentially, until it reaches this value.  This option can be set
+          on the socket, or on the dialers associated with the socket.
+        * **recv_fd** (int): The receive file descriptor associated with the
+          socket.  This is suitable to be passed into poll functions like
+          :func:`select.poll` or :func:`select.select`.  That is the only thing
+          this file descriptor is good for; do not attempt to read from or
+          write to it.
+        * **send_fd** (int): The sending file descriptor associated with the
+          socket.  This is suitable to be passed into poll functions like
+          :func:`select.poll` or :func:`select.select`.  That is the only thing
+          this file descriptor is good for; do not attempt to read from or
+          write to it.
+
     """
+    # TODO: Do we need to document ttl_max?  We're not supporting nng_device
+    # yet, so I guess not?
 
     # the following options correspond to nng options documented at
     # https://nanomsg.github.io/nng/man/v1.0.1/nng_options.5.html
@@ -225,30 +258,7 @@ class Socket:
                  name=None,
                  async_backend=None
                  ):
-        """Initialize socket.  It takes no positional arguments.
-        Most socket options can be set through the initializer for convenience.
 
-        Note:
-            The following arguments are all optional.
-
-        Args:
-            dial: The address to dial.  If not given, no address is dialed.
-            listen: The address to listen at.  If not given, the socket does
-                not listen at any address.
-            recv_timeout: The receive timeout, in milliseconds.  If not given,
-                there is no timeout.
-            send_timeout: The send timeout, in milliseconds.  If not given,
-                there is no timeout.
-            recv_buffer_size: Set receive message buffer size.
-            send_buffer_size: Sets send message buffer size.
-            recv_max_size: Maximum size of message to receive.  Messages larger
-                than this size are silently dropped.
-            async_backend: The event loop backend for asyncronous socket
-                operations.  the currently supported backends are "asyncio" and
-                "trio".  If ``async_backend`` is not provided, pynng will use
-                sniffio to attempt to find the currently running event loop.
-
-        """
         # mapping of id: Python objects
         self._dialers = {}
         self._listeners = {}
@@ -298,19 +308,19 @@ class Socket:
         """Dial the specified address.
 
         Args:
-            addres:  The address to dial.
+            address:  The address to dial.
             block:  Whether to block or not.  There are three possible values
-                this can take:
+              this can take:
 
-                1. If truthy, a blocking dial is attempted.  If it fails for
-                   any reason, an exception is raised.
-                2. If Falsy, a non-blocking dial is started.  The dial is
+                1. If ``True``, a blocking dial is attempted.  If it fails for
+                   any reason, the dial fails and an exception is raised.
+                2. If ``False``, a non-blocking dial is started.  The dial is
                    retried periodically in the background until it is
                    successful.
-                3. (**Default behavior**): If ``None``, which a blocking dial
-                   is first attempted. If it fails an exception is logged
-                   (using the Python logging module), then a non-blocking dial
-                   is done.
+                3. (**Default behavior**): If ``None``, a blocking dial is
+                   first attempted. If it fails an exception is logged (using
+                   the Python logging module), then a non-blocking dial is
+                   done.
 
         """
         if block:
@@ -326,9 +336,9 @@ class Socket:
             self._dial(address, flags=lib.NNG_FLAG_NONBLOCK)
 
     def _dial(self, address, flags=0):
-        """Dial specified address
+        """Dial specified ``address``
 
-        ``dialer`` and ``flags`` usually do not need to be given.
+        ``flags`` usually do not need to be given.
         """
         dialer = ffi.new('nng_dialer *')
         ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
@@ -369,7 +379,11 @@ class Socket:
         return self._socket[0]
 
     def recv(self, block=True):
-        """Receive data on the socket.
+        """Receive data on the socket.  If the request times out the exception
+        :class:`pynng.Timeout` is raised.  If the socket cannot
+        perform that operation (e.g., a :class:`Pub0 <pynng.Pub0>`, which can
+        only :meth:`send <pynng.Socket.send>`), the exception
+        :class:`pynng.NotSupported` is raised.
 
         Args:
 
@@ -393,13 +407,13 @@ class Socket:
         return recvd
 
     def send(self, data):
-        """Sends ``data`` on socket."""
+        """Sends ``data`` (either ``bytes`` or ``bytearray``) on socket."""
         _ensure_can_send(data)
         err = lib.nng_send(self.socket, data, len(data), 0)
         check_err(err)
 
     async def arecv(self):
-        """Asynchronously receive a message."""
+        """The asynchronous version of `:meth:recv <pynng.Socket.recv>` """
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.arecv()
 

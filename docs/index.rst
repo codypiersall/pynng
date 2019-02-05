@@ -54,7 +54,7 @@ Getting Started
 .. toctree::
    :maxdepth: 2
 
-   socket
+   core
    exceptions
    modules
 
