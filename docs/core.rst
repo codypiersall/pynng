@@ -5,6 +5,10 @@ Pynng's core functionality
 At the heart of pynng is the :class:`pynng.Socket`.  It takes no positional
 arguments, and all keyword arguments are optional.
 
+----------
+The Socket
+----------
+
 .. Note::
 
     You should never instantiate a :class:`pynng.Socket` directly.  Rather, you
@@ -22,7 +26,7 @@ Available Protocols
 -------------------
 
 .. autoclass:: pynng.Pair0(**kwargs)
-.. autoclass:: pynng.Pair1(**kwargs)
+.. autoclass:: pynng.Pair1
 .. autoclass:: pynng.Req0(**kwargs)
 .. autoclass:: pynng.Rep0(**kwargs)
 .. autoclass:: pynng.Pub0(**kwargs)

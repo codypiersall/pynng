@@ -42,6 +42,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.intersphinx',
+    'sphinxcontrib_trio',
 ]
 
 intersphinx_mapping = {
@@ -73,8 +74,10 @@ language = None
 exclude_patterns = []
 
 # The name of the Pygments (syntax highlighting) style to use.
-pygments_style = 'sphinx'
+pygments_style = 'default'
 
+# highlight async correctly
+highlight_language = 'python3'
 
 # -- Options for HTML output -------------------------------------------------
 

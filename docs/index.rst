@@ -56,7 +56,6 @@ Getting Started
 
    core
    exceptions
-   modules
 
 
 Indices and tables

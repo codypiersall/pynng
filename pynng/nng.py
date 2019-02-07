@@ -150,26 +150,29 @@ class Socket:
           <pynng.Respondent0>`
 
     The socket initializer receives no positional arguments.  It accepts the
-    following keyword arguments, with the same meaning as the attributes
-    described below: ``recv_timeout``, ``send_timeout``, ``recv_buffer_size``,
-    ``send_buffer_size``, ``reconnect_time_min``, ``reconnect_time_max``, and
-    ``name``
+    following keyword arguments, with the same meaning as the :ref:`attributes
+    <socket-attributes>` described below: ``recv_timeout``, ``send_timeout``,
+    ``recv_buffer_size``, ``send_buffer_size``, ``reconnect_time_min``,
+    ``reconnect_time_max``, and ``name``
 
-    To talk to another socket, you have to either :meth:`dial
-    <pynng.Socket.dial>` its address, or :meth:`listen <pynng.Socket.listen>`
-    for connections.  Then you can :meth:`send <pynng.Socket.send>` to send
-    data to the remote sockets or :meth:`pynng.Socket.recv` to receive data
-    from the remote sockets.  Asynchronous versions are available as well, as
-    :meth:`asend <pynng.Socket.asend>` and :meth:`arecv <pynng.Socket.arecv>`.
-    The supported event loops are `asyncio
+    To talk to another socket, you have to either :meth:`~pynng.Socket.dial`
+    its address, or :meth:`~pynng.Socket.listen` for connections.  Then you can
+    :meth:`~pynng.Socket.send` to send data to the remote sockets or
+    :meth:`~pynng.Socket.recv` to receive data from the remote sockets.
+    Asynchronous versions are available as well, as :meth:`~pynng.Socket.asend`
+    and :meth:`~pynng.Socket.arecv`.  The supported event loops are `asyncio
     <https://docs.python.org/3/library/asyncio.html#module-asyncio>`_ and `trio
-    <https://trio.readthedocs.io>`_.  You must ensure that you :meth:`close
-    <pynng.Socket.close>` the socket when you are finished with it.  Sockets
-    can also be used as a context manager; this is the preferred way to use
-    them when possible.
+    <https://trio.readthedocs.io>`_.  You must ensure that you
+    :meth:`~pynng.Socket.close` the socket when you are finished with it.
+    Sockets can also be used as a context manager; this is the preferred way to
+    use them when possible.
+
+    .. _socket-attributes:
 
     Sockets have the following attributes.  Generally, you should set these
-    attributes before :meth:`listening <pynng.Socket.listen>` or ``dial`` ing:
+    attributes before :meth:`~pynng.Socket.listen`-ing or
+    :meth:`~pynng.Socket.dial`-ing, or by passing them in as keyword arguments
+    when creating the :class:~`pynng.Socket`:
 
         * **recv_timeout** (int): Receive timeout, in ms.  If a socket takes longer
           than the specified time, raises a ``pynng.exceptions.Timeout``.
@@ -348,7 +351,7 @@ class Socket:
         self._dialers[d_id] = Dialer(dialer, self)
 
     def listen(self, address, flags=0):
-        """Listen at specified address; similar to nanomsg.bind()
+        """Listen at specified address.
 
         ``listener`` and ``flags`` usually do not need to be given.
         """
@@ -413,12 +416,12 @@ class Socket:
         check_err(err)
 
     async def arecv(self):
-        """The asynchronous version of `:meth:recv <pynng.Socket.recv>` """
+        """The asynchronous version of :meth:`~pynng.Socket.recv` """
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.arecv()
 
     async def asend(self, data):
-        """Asynchronously send a message."""
+        """Asynchronous version of :meth:`~pynng.Socket.send`."""
         _ensure_can_send(data)
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.asend(data)
@@ -593,14 +596,39 @@ class Bus0(Socket):
 
 
 class Pair0(Socket):
-    """A pair0 socket."""
+    """A socket for bidrectional, one-to-one communication, with a single
+    partner.
+
+    This is the most basic type of socket.  It accepts the same keyword
+    arguments as :class:`~pynng.Socket`.
+
+    This demonstrates the synchronous API:
+
+    .. literalinclude:: snippets/pair0_sync.py
+        :language: python3
+
+    This demonstrates the asynchronous API using `trio
+    <https://trio.readthedocs.io>`_.  Remember that asyncio is also supported.
+
+    .. literalinclude:: snippets/pair0_async.py
+        :language: python3
+
+
+    """
     _opener = lib.nng_pair0_open
 
 
 class Pair1(Socket):
-    """A pair1 socket."""
-    def __init__(self, *args, polyamorous=None, **kwargs):
-        super().__init__(*args, **kwargs)
+    """A socket for bidrectional communication with potentially many partners.
+
+    .. Note::
+
+        If you want to connect to multiple partners, you **must** pass
+        ``polyamorous=True`` when you create your socket.
+
+    """
+    def __init__(self, polyamorous=None, **kwargs):
+        super().__init__(**kwargs)
         # TODO: it would be better to set polyamorous before listen()/dial()
         if polyamorous is not None:
             self.polyamorous = polyamorous
@@ -1041,7 +1069,7 @@ class Pipe:
 
     def send(self, data):
         """
-        Synchronously send bytes from this Pipe.
+        Synchronously send bytes from this :class:`~pynng.Pipe`.
 
         """
         _ensure_can_send(data)
@@ -1050,7 +1078,7 @@ class Pipe:
 
     def send_msg(self, msg):
         """
-        Synchronously send a Message from this Pipe.
+        Synchronously send a Message from this :class:`~pynng.Pipe`.
 
         """
         msg.pipe = self
@@ -1058,7 +1086,7 @@ class Pipe:
 
     async def asend(self, data):
         """
-        Asynchronously send bytes from this Pipe.
+        Asynchronously send bytes from this :class:`~pynng.Pipe`.
 
         """
         _ensure_can_send(data)
@@ -1067,7 +1095,7 @@ class Pipe:
 
     async def asend_msg(self, msg):
         """
-        Asynchronously send a Message from this Pipe.
+        Asynchronously send a Message from this :class:`~pynng.Pipe`.
 
         """
         msg.pipe = self
@@ -1076,18 +1104,24 @@ class Pipe:
 
 class Message:
     """
-    Python interface for nng_msg.  See
-    https://nanomsg.github.io/nng/man/tip/nng_msg.5.html
+    Python interface for nng_msg.  Using the :class:`~pynng.Message` interface
+    gives more control over aspects of sending the message.  In particular, you
+    can tell which :class:`~pynng.Pipe` a message came from on receive, and you
+    can direct which :class:`~pynng.Pipe` a message will be sent from on send.
 
-    Messages are immutable.
+    See
+    nng's `docs <https://nanomsg.github.io/nng/man/tip/nng_msg.5.html>`_ for
+    more details.
+
+    Messages in pynng are immutable; this is to prevent data corruption.
 
     Warning:
 
         Access to the message's underlying data buffer can be accessed with the
         ``_buffer`` attribute.  However, care must be taken not to send a message
         while a reference to the buffer is still alive; if the buffer is used after
-        a message is sent, a segfault or data corruption may (read: almost
-        certainly will) result.
+        a message is sent, a segfault or data corruption may (read: will)
+        result.
 
     """
 
