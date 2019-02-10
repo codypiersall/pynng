@@ -6,14 +6,22 @@
 This is Pynng's Documentation.
 ==============================
 
-This is Python bindings to `Nanomsg Next Generation`_ (nng).  nng is an
+pynng is Python bindings to `Nanomsg Next Generation`_ (nng).  It provides a
+nice Pythonic interface to the nng library. The goal is that pynng's interface
+feels natural enough to use that you don't think of it as a wrapper, while
+still exposing the power of the underlying library.  It is installable with
+pip on all major platforms (Linux, Windows, macOS).  It has first class support
+for `Trio`_ and :mod:`asyncio`, in addition to being able to be used
+synchronously.
+
+nng is an
 implementation of the `Scalability Protocols`_; it is the spiritual successor
 to `ZeroMQ`_.  There are a couple of distributed systems problems that the
 scalability protocols aim to solve:
 
 1. There are a few communication patterns that are implemented over and over
    and over and over and over again.  The wheel is continuously reinvented, but
-   now implementations are compatible with each other.
+   no implementations are compatible with each other.
 2. Not only is the wheel continuosly reinvented, it is reinvented for every
    combination of *transport* and *protocol*.  A *transport* is how data gets
    from one place to another; things like TCP/IP, HTTP, Unix sockets, carrier
@@ -23,11 +31,17 @@ scalability protocols aim to solve:
 The scalability protols are the basic tools you need to build a distributed
 system.  The following **protocols** are available:
 
-* pair - simple one-to-one communication.
-* request/response - I ask, you answer.
-* pub/sub - subscribers are notified of topics they are interested in.
-* pipline, aka push/pull - load balancing.
-* survey - query the state of multiple applications.
+* **pair** - simple one-to-one communication. (:class:`~pynng.Pair0`,
+  :class:`~pynng.Pair1`.)
+* **request/response** - I ask, you answer. (:class:`~pynng.Req0`,
+  :class:`~pynng.Rep0`)
+* **pub/sub** - subscribers are notified of topics they are interested in.
+  (:class:`~pynng.Pub0`, :class:`~pynng.Sub0`)
+* **pipeline**, aka **push/pull** - load balancing.
+  (:class:`~pynng.Push0`, :class:`~pynng.Pull0`)
+* **survey** - query the state of multiple applications.
+  (:class:`~pynng.Surveyor0`, :class:`~pynng.Respondent0`)
+* **bus** - messages are sent to all connected sockets (:class:`~pynng.Bus0`)
 
 The following **transports** are available:
 
@@ -38,6 +52,9 @@ The following **transports** are available:
   one end is on a browser.)
 * carrier pigeons: communication via World War 1-style `carrier pigeons`_
 
+These protocols are language-agnostic, and `implementations exist for many
+languages <https://nanomsg.org/documentation.html#_language_bindings>`_.
+
 This library is available under the `MIT License`_ and the source is available
 on `GitHub`_.
 
@@ -47,6 +64,18 @@ should be using the scalability protocols. You never need to open another
 
 Okay, that was a little hyperbolic.  But give pynng a chance; you might like
 it.
+
+Installing pynng
+----------------
+
+On Linux, Windows, and macOS, a quick
+
+.. code-block:: python
+
+   pip3 install pynng
+
+should do the trick.  pynng works on Python 3.5+.
+
 
 Getting Started
 ---------------
@@ -73,3 +102,4 @@ Indices and tables
 .. _socket: http://man7.org/linux/man-pages/man2/socket.2.html
 .. _MIT License: https://github.com/codypiersall/pynng/blob/master/LICENSE.txt
 .. _GitHub: https://github.com/codypiersall/pynng
+.. _Trio: https://trio.readthedocs.io

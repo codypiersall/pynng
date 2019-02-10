@@ -141,13 +141,13 @@ class Socket:
     instantiated directly; instead, one of its subclasses should be used.
     There is one subclass per protocol.  The available protocols are:
 
-        * :class:`Pair0 <pynng.Pair0>`
-        * :class:`Pair1 <pynng.Pair1>`
-        * :class:`Req0 <pynng.Req0>` / :class:`Rep0 <pynng.Rep0>`
-        * :class:`Pub0 <pynng.Pub0>` / :class:`Sub0 <pynng.Sub0>`
-        * :class:`Push0 <pynng.Push0>` / :class:`Pull0 <pynng.Pull0>`
-        * :class:`Surveyor0 <pynng.Surveyor0>` / :class:`Respondent0
-          <pynng.Respondent0>`
+        * :class:`Pair0`
+        * :class:`Pair1`
+        * :class:`Req0` / :class:`Rep0`
+        * :class:`Pub0` / :class:`Sub0`
+        * :class:`Push0` / :class:`Pull0`
+        * :class:`Surveyor0` / :class:`Respondent0`
+        * :class:`Bus0`
 
     The socket initializer receives no positional arguments.  It accepts the
     following keyword arguments, with the same meaning as the :ref:`attributes
@@ -155,24 +155,22 @@ class Socket:
     ``recv_buffer_size``, ``send_buffer_size``, ``reconnect_time_min``,
     ``reconnect_time_max``, and ``name``
 
-    To talk to another socket, you have to either :meth:`~pynng.Socket.dial`
-    its address, or :meth:`~pynng.Socket.listen` for connections.  Then you can
-    :meth:`~pynng.Socket.send` to send data to the remote sockets or
-    :meth:`~pynng.Socket.recv` to receive data from the remote sockets.
-    Asynchronous versions are available as well, as :meth:`~pynng.Socket.asend`
-    and :meth:`~pynng.Socket.arecv`.  The supported event loops are `asyncio
-    <https://docs.python.org/3/library/asyncio.html#module-asyncio>`_ and `trio
-    <https://trio.readthedocs.io>`_.  You must ensure that you
-    :meth:`~pynng.Socket.close` the socket when you are finished with it.
-    Sockets can also be used as a context manager; this is the preferred way to
-    use them when possible.
+    To talk to another socket, you have to either :meth:`~Socket.dial`
+    its address, or :meth:`~Socket.listen` for connections.  Then you can
+    :meth:`~Socket.send` to send data to the remote sockets or
+    :meth:`~Socket.recv` to receive data from the remote sockets.
+    Asynchronous versions are available as well, as :meth:`~Socket.asend`
+    and :meth:`~Socket.arecv`.  The supported event loops are :mod:`asyncio`
+    and `Trio`_.  You must ensure that you :meth:`~Socket.close` the socket
+    when you are finished with it.  Sockets can also be used as a context
+    manager; this is the preferred way to use them when possible.
 
     .. _socket-attributes:
 
     Sockets have the following attributes.  Generally, you should set these
-    attributes before :meth:`~pynng.Socket.listen`-ing or
-    :meth:`~pynng.Socket.dial`-ing, or by passing them in as keyword arguments
-    when creating the :class:~`pynng.Socket`:
+    attributes before :meth:`~Socket.listen`-ing or
+    :meth:`~Socket.dial`-ing, or by passing them in as keyword arguments
+    when creating the :class:`Socket`:
 
         * **recv_timeout** (int): Receive timeout, in ms.  If a socket takes longer
           than the specified time, raises a ``pynng.exceptions.Timeout``.
@@ -199,7 +197,7 @@ class Socket:
         * **protocol_name** (str): Read-only option which returns the name of the
           socket's protocol.
         * **peer** (int): Returns the peer protocol id for the socket.
-        * **local_address**: The :class:`pynng.sockaddr.SockAddr` representing
+        * **local_address**: The :class:`~pynng.sockaddr.SockAddr` representing
           the local address.  Corresponds to ``NNG_OPT_LOCADDR``.
         * **reconnect_time_min** (int): The minimum time to wait before
           attempting reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMINT``.
@@ -220,6 +218,8 @@ class Socket:
           :func:`select.poll` or :func:`select.select`.  That is the only thing
           this file descriptor is good for; do not attempt to read from or
           write to it.
+
+    .. _Trio: https://trio.readthedocs.io
 
     """
     # TODO: Do we need to document ttl_max?  We're not supporting nng_device
@@ -327,40 +327,46 @@ class Socket:
 
         """
         if block:
-            self._dial(address, flags=0)
+            return self._dial(address, flags=0)
         elif block is None:
             try:
-                self.dial(address, block=False)
+                return self.dial(address, block=False)
             except pynng.ConnectionRefused:
                 msg = 'Synchronous dial failed; attempting asynchronous now'
                 logger.exception(msg)
-                self.dial(address, block=False)
+                return self.dial(address, block=False)
         else:
-            self._dial(address, flags=lib.NNG_FLAG_NONBLOCK)
+            return self._dial(address, flags=lib.NNG_FLAG_NONBLOCK)
 
     def _dial(self, address, flags=0):
         """Dial specified ``address``
 
         ``flags`` usually do not need to be given.
+
         """
         dialer = ffi.new('nng_dialer *')
         ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
         d_id = lib.nng_dialer_id(dialer[0])
-        self._dialers[d_id] = Dialer(dialer, self)
+        py_dialer = Dialer(dialer, self)
+        self._dialers[d_id] = py_dialer
+        return py_dialer
 
     def listen(self, address, flags=0):
         """Listen at specified address.
 
         ``listener`` and ``flags`` usually do not need to be given.
+
         """
         listener = ffi.new('nng_listener *')
         ret = lib.nng_listen(self.socket, to_char(address), listener, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
         l_id = lib.nng_listener_id(listener[0])
-        self._listeners[l_id] = Listener(listener, self)
+        py_listener = Listener(listener, self)
+        self._listeners[l_id] = py_listener
+        return py_listener
 
     def close(self):
         """Close the socket, freeing all system resources."""
@@ -383,10 +389,10 @@ class Socket:
 
     def recv(self, block=True):
         """Receive data on the socket.  If the request times out the exception
-        :class:`pynng.Timeout` is raised.  If the socket cannot
-        perform that operation (e.g., a :class:`Pub0 <pynng.Pub0>`, which can
-        only :meth:`send <pynng.Socket.send>`), the exception
-        :class:`pynng.NotSupported` is raised.
+        :class:`pynng.Timeout` is raised.  If the socket cannot perform that
+        operation (e.g., a :class:`Pub0`, which can only
+        :meth:`~Socket.send`), the exception :class:`pynng.NotSupported`
+        is raised.
 
         Args:
 
@@ -416,12 +422,12 @@ class Socket:
         check_err(err)
 
     async def arecv(self):
-        """The asynchronous version of :meth:`~pynng.Socket.recv` """
+        """The asynchronous version of :meth:`~Socket.recv`"""
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.arecv()
 
     async def asend(self, data):
-        """Asynchronous version of :meth:`~pynng.Socket.send`."""
+        """Asynchronous version of :meth:`~Socket.send`."""
         _ensure_can_send(data)
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.asend(data)
@@ -459,16 +465,8 @@ class Socket:
         del self._pipes[pipe_id]
 
     def new_context(self):
-        """
-        Return a new Context for this socket.
-        """
+        """Return a new :class:`Context` for this socket."""
         return Context(self)
-
-    def new_contexts(self, n):
-        """
-        Return ``n`` new contexts for this socket
-        """
-        return [self.new_context() for _ in range(n)]
 
     def add_pre_pipe_connect_cb(self, callback):
         """
@@ -490,7 +488,7 @@ class Socket:
         Socket.  You can add as many callbacks as you want, and they will be
         called in the order they were added.
 
-        The callback provided must accept a single argument: a Pipe.
+        The callback provided must accept a single argument: a :class:`Pipe`.
 
         """
         self._on_post_pipe_add.append(callback)
@@ -501,36 +499,36 @@ class Socket:
         Socket.  You can add as many callbacks as you want, and they will be
         called in the order they were added.
 
-        The callback provided must accept a single argument: a Pipe.
+        The callback provided must accept a single argument: a :class:`Pipe`.
 
         """
         self._on_post_pipe_remove.append(callback)
 
     def remove_pre_pipe_connect_cb(self, callback):
-        """
-        Remove ``callback`` from the list of callbacks for pre pipe connect
+        """Remove ``callback`` from the list of callbacks for pre pipe connect
         events
+
         """
         self._on_pre_pipe_add.remove(callback)
 
     def remove_post_pipe_connect_cb(self, callback):
-        """
-        Remove ``callback`` from the list of callbacks for post pipe connect
+        """Remove ``callback`` from the list of callbacks for post pipe connect
         events
+
         """
         self._on_post_pipe_add.remove(callback)
 
     def remove_post_pipe_remove_cb(self, callback):
-        """
-        Remove ``callback`` from the list of callbacks for post pipe remove
+        """Remove ``callback`` from the list of callbacks for post pipe remove
         events
+
         """
         self._on_post_pipe_remove.remove(callback)
 
     def _try_associate_msg_with_pipe(self, msg):
-        """
-        Looks up the nng_msg associated with the ``msg`` and attempts to set
-        it on the Message ``msg``
+        """ Looks up the nng_msg associated with the ``msg`` and attempts to
+        set it on the Message ``msg``
+
         """
         lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
         pipe_id = lib.nng_pipe_id(lib_pipe)
@@ -544,10 +542,7 @@ class Socket:
                                pipe_id)
 
     def recv_msg(self, block=True):
-        """
-        Return a Message object.
-
-        """
+        """Receive a :class:`Message` on the socket."""
         flags = 0
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
@@ -559,8 +554,13 @@ class Socket:
         return msg
 
     def send_msg(self, msg, block=True):
-        """
-        Send the Message ``msg`` on the socket.
+        """Send the :class:`Message` ``msg`` on the socket.
+
+        .. Note::
+
+            It's may be more convenient to call :meth:`Pipe.send` than this
+            method.
+
         """
         flags = 0
         if not block:
@@ -572,7 +572,8 @@ class Socket:
 
     async def asend_msg(self, msg):
         """
-        Asynchronously send the Message ``msg`` on the socket.
+        Asynchronously send the :class:`Message` ``msg`` on the socket.
+
         """
         with msg._mem_freed_lock:
             msg._ensure_can_send()
@@ -582,7 +583,7 @@ class Socket:
 
     async def arecv_msg(self):
         """
-        Asynchronously receive the Message ``msg`` on the socket.
+        Asynchronously receive the :class:`Message` ``msg`` on the socket.
         """
         with _aio.AIOHelper(self, self._async_backend) as aio:
             msg = await aio.arecv_msg()
@@ -591,24 +592,28 @@ class Socket:
 
 
 class Bus0(Socket):
-    """A bus0 socket."""
+    """A bus0 socket.  The Python version of `nng_bus
+    <https://nanomsg.github.io/nng/man/tip/nng_bus.7>`_.
+    """
     _opener = lib.nng_bus0_open
 
 
 class Pair0(Socket):
     """A socket for bidrectional, one-to-one communication, with a single
-    partner.
+    partner.  The Python version of `nng_pair0
+    <https://nanomsg.github.io/nng/man/tip/nng_pair.7>`_.
 
-    This is the most basic type of socket.  It accepts the same keyword
-    arguments as :class:`~pynng.Socket`.
+    This is the most basic type of socket.
+    It accepts the same keyword arguments as :class:`Socket` and also has the
+    same :ref:`attributes <socket-attributes>`.
 
     This demonstrates the synchronous API:
 
     .. literalinclude:: snippets/pair0_sync.py
         :language: python3
 
-    This demonstrates the asynchronous API using `trio
-    <https://trio.readthedocs.io>`_.  Remember that asyncio is also supported.
+    This demonstrates the asynchronous API using `Trio`_.  Remember that
+    :mod:`asyncio` is also supported.
 
     .. literalinclude:: snippets/pair0_async.py
         :language: python3
@@ -620,40 +625,115 @@ class Pair0(Socket):
 
 class Pair1(Socket):
     """A socket for bidrectional communication with potentially many partners.
+    The Python version of `nng_pair1
+    <https://nanomsg.github.io/nng/man/tip/nng_pair.7>`_.
+
+    It accepts the same keyword arguments as :class:`Socket` and also has the
+    same :ref:`attributes <socket-attributes>`.  It also has one extra
+    keyword-only argument, ``polyamorous``, which must be set to ``True`` to
+    connect with more than one peer.
 
     .. Note::
 
-        If you want to connect to multiple partners, you **must** pass
+        If you want to connect to multiple peers you **must** pass
         ``polyamorous=True`` when you create your socket.
 
+    To get the benefits of polyamory, you need to use the methods that work
+    with :class:`Message` objects: :meth:`Socket.recv_msg` and
+    :meth:`Socket.arecv_msg` for receiving, and :meth:`Pipe.send`
+    and :meth:`Pipe.asend` for sending.
+
+    Here is an example of the synchronous API, where a single listener connects
+    to multiple peers.  This is more complex than the :class:`Pair0` case,
+    because it requires to use the :class:`Pipe` and :class:`Message`
+    interfaces.
+
+    .. literalinclude:: snippets/pair1_sync.py
+
+    And here is an example using the async API, using `Trio`_.
+
+    .. literalinclude:: snippets/pair1_async.py
+
     """
-    def __init__(self, polyamorous=None, **kwargs):
+    def __init__(self, *, polyamorous=None, **kwargs):
+        # make sure we don't listen/dial before setting polyamorous, so we pop
+        # them out of kwargs, then do the dial/listen below.
+        # It's not beautiful, but it will work.
+        dial_addr = kwargs.pop('dial', None)
+        listen_addr = kwargs.pop('dial', None)
         super().__init__(**kwargs)
-        # TODO: it would be better to set polyamorous before listen()/dial()
         if polyamorous is not None:
             self.polyamorous = polyamorous
+        # now we can do the listen/dial
+        if dial_addr is not None:
+            self.dial(dial_addr, block=kwargs.get('block_on_dial'))
+        if listen_addr is not None:
+            self.listen(listen_addr)
 
     _opener = lib.nng_pair1_open
     polyamorous = BooleanOption('pair1:polyamorous')
 
 
-class Pull0(Socket):
-    """A pull0 socket."""
-    _opener = lib.nng_pull0_open
-
-
 class Push0(Socket):
-    """A push0 socket."""
+    """A push0 socket.
+
+    The Python version of `nng_push
+    <https://nanomsg.github.io/nng/man/tip/nng_push.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+
+    A :class:`Push0` socket is the pushing end of a data pipeline.  Data sent
+    from a push socket will be sent to a *single* connected :class:`Pull0`
+    socket.  This can be useful for distributing work to multiple nodes, for
+    example.  Attempting to call :meth:`~Socket.recv()` on a Push0 socket
+    will raise a :class:`pynng.NotSupported` exception.
+
+    Here is an example of two :class:`Pull0` sockets connected to a
+    :class:`Push0` socket.
+
+    .. literalinclude:: snippets/pushpull_sync.py
+
+    """
     _opener = lib.nng_push0_open
 
 
+class Pull0(Socket):
+    """A pull0 socket.
+
+    The Python version of `nng_pull
+    <https://nanomsg.github.io/nng/man/tip/nng_pull.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+
+    A :class:`Pull0` is the receiving end of a data pipeline.  It needs to be
+    paired with a :class:`Push0` socket.  Attempting to :meth:`~Socket.send()`
+    with a Pull0 socket will raise a :class:`pynng.NotSupported` exception.
+
+    See :class:`Push0` for an example of push/pull in action.
+
+    """
+    _opener = lib.nng_pull0_open
+
+
 class Pub0(Socket):
-    """A pub0 socket."""
+    """A pub0 socket.
+
+    The Python version of `nng_pub
+    <https://nanomsg.github.io/nng/man/tip/nng_pub.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+    """
     _opener = lib.nng_pub0_open
 
 
 class Sub0(Socket):
-    """A sub0 socket."""
+    """A sub0 socket.
+
+    The Python version of `nng_sub
+    <https://nanomsg.github.io/nng/man/tip/nng_sub.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+    """
     _opener = lib.nng_sub0_open
 
     def subscribe(self, topic):
@@ -666,29 +746,59 @@ class Sub0(Socket):
 
 
 class Req0(Socket):
-    """A req0 socket."""
+    """A req0 socket.
+
+    The Python version of `nng_req
+    <https://nanomsg.github.io/nng/man/tip/nng_req.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+    """
     _opener = lib.nng_req0_open
 
 
 class Rep0(Socket):
-    """A rep0 socket."""
+    """A rep0 socket.
+
+    The Python version of `nng_rep
+    <https://nanomsg.github.io/nng/man/tip/nng_rep.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+    """
     _opener = lib.nng_rep0_open
 
 
 class Surveyor0(Socket):
-    """A surveyor0 socket."""
+    """A surveyor0 socket.
+
+    The Python version of `nng_surveyor
+    <https://nanomsg.github.io/nng/man/tip/nng_surveyor.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+    """
     _opener = lib.nng_surveyor0_open
 
 
 class Respondent0(Socket):
-    """A respondent0 socket."""
+    """A respondent0 socket.
+
+    The Python version of `nng_respondent
+    <https://nanomsg.github.io/nng/man/tip/nng_respondent.7>`_.
+    It accepts the same keyword arguments as :class:`Socket` and also
+    has the same :ref:`attributes <socket-attributes>`.
+    """
     _opener = lib.nng_respondent0_open
 
 
 class Dialer:
-    """Wrapper class for the nng_dialer struct.
+    """The Python version of `nng_dialer
+    <https://nanomsg.github.io/nng/man/tip/nng_dialer.5>`_.  A
+    :class:`Dialer` is returned whenever :meth:`Socket.dial` is called.  A list
+    of active dialers can be accessed via ``Socket.dialers``.
 
-    You probably don't need to instantiate this directly.
+    A :class:`Dialer` is associated with a single :class:`Socket`.  The
+    associated socket can be accessed via the ``socket`` attribute.  There is
+    no public constructor for creating a :class:`Dialer`
+
     """
 
     local_address = SockAddrOption('local-address')
@@ -731,7 +841,16 @@ class Dialer:
 
 
 class Listener:
-    """Wrapper class for the nng_listener struct."""
+    """The Python version of `nng_listener
+    <https://nanomsg.github.io/nng/man/tip/nng_listener.5>`_.  A
+    :class:`Listener` is returned whenever :meth:`Socket.listen` is called.  A
+    list of active listeners can be accessed via ``Socket.listeners``.
+
+    A :class:`Listener` is associated with a single :class:`Socket`.  The
+    associated socket can be accessed via the ``socket`` attribute.  There is
+    no public constructor for creating a :class:`Listener`.
+
+    """
 
     local_address = SockAddrOption('local-address')
     remote_address = SockAddrOption('remote-address')
@@ -762,7 +881,7 @@ class Listener:
 
     def close(self):
         """
-        Close the dialer.
+        Close the listener.
         """
         lib.nng_listener_close(self.listener)
         del self.socket._listeners[self.id]
@@ -774,27 +893,35 @@ class Listener:
 
 class Context:
     """
+    This is the Python version of `nng_context
+    <https://nanomsg.github.io/nng/man/tip/nng_ctx.5.html>`_.  The way to
+    create a :class:`Context` is by calling :meth:`Socket.new_context()`.
+    Contexts are valid for :class:`Req0` and :class:`Rep0` sockets; other
+    protocols do not support contexts.
+
     A "context" keeps track of a protocol's state for stateful protocols (like
-    REQ/REP).  A context allows the same socket to be used for multiple
-    operations at the same time.  For example, the following code, **which does
-    not use contexts**, does terrible things:
+    REQ/REP).  A context allows the same :class:`Socket` to be used for
+    multiple operations at the same time.  For an example of the problem that
+    contexts are solving, see this snippet, **which does not use contexts**,
+    and does terrible things:
 
     .. code-block:: python
 
         # start a socket to service requests.
         # HEY THIS IS EXAMPLE BAD CODE, SO DON'T TRY TO USE IT
+        # in fact it's so bad it causes a panic in nng right now (2019/02/09):
+        # see https://github.com/nanomsg/nng/issues/871
         import pynng
         import threading
 
         def service_reqs(s):
             while True:
                 data = s.recv()
-                # do something with data, e.g.
-                s.send(b"here's your answer, pal!")
+                s.send(b"I've got your response right here, pal!")
 
 
         threads = []
-        with pynng.Rep0(listen='tcp:127.0.0.1:12345') as s:
+        with pynng.Rep0(listen='tcp://127.0.0.1:12345') as s:
             for _ in range(10):
                 t = threading.Thread(target=service_reqs, args=[s], daemon=True)
                 t.start()
@@ -806,8 +933,9 @@ class Context:
     Contexts allow multiplexing a socket in a way that is safe.  It removes one
     of the biggest use cases for needing to use raw sockets.
 
-    Contexts should not be instantiated directly; instead, create a socket, and
-    call the new_context() method.
+    Contexts cannot be instantiated directly; instead, create a
+    :class:`Socket`, and call the :meth:`~Socket.new_context` method.
+
     """
 
     def __init__(self, socket):
@@ -822,24 +950,18 @@ class Context:
         assert lib.nng_ctx_id(self.context) != -1
 
     async def arecv(self):
-        """
-        Asynchronously receive data using this context.
-        """
+        """Asynchronously receive data using this context."""
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.arecv()
 
     async def asend(self, data):
-        """
-        Asynchronously send data using this context.
-        """
+        """Asynchronously send data using this context."""
         _ensure_can_send(data)
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.asend(data)
 
     def recv_msg(self):
-        """
-        Synchronously receive a Message on this context.
-        """
+        """Synchronously receive a :class:`Message` using this context."""
         aio_p = ffi.new('nng_aio **')
         check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
         aio = aio_p[0]
@@ -855,18 +977,13 @@ class Context:
         return msg
 
     def recv(self):
-        """
-        Synchronously receive data on this context.
-        """
+        """Synchronously receive data on this context."""
 
         msg = self.recv_msg()
         return msg.bytes
 
     def send_msg(self, msg):
-        """
-        Synchronously send the Message ``msg`` on the context.
-
-        """
+        """Synchronously send the :class:`Message` ``msg`` on the context."""
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             aio_p = ffi.new('nng_aio **')
@@ -884,6 +1001,7 @@ class Context:
     def send(self, data):
         """
         Synchronously send data on the context.
+
         """
         _ensure_can_send(data)
         msg = Message(data)
@@ -913,7 +1031,7 @@ class Context:
 
     async def asend_msg(self, msg):
         """
-        Asynchronously send the Message ``msg`` on the socket.
+        Asynchronously send the :class:`Message` ``msg`` on the context.
         """
         with msg._mem_freed_lock:
             msg._ensure_can_send()
@@ -923,7 +1041,7 @@ class Context:
 
     async def arecv_msg(self):
         """
-        Asynchronously receive the Message ``msg`` on the socket.
+        Asynchronously receive a :class:`Message` on the context.
         """
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             msg = await aio.arecv_msg()
@@ -983,8 +1101,9 @@ def _nng_pipe_cb(lib_pipe, event, arg):
 
 class Pipe:
     """
-    A "pipe" is a single connection between two endpoints.
-    https://nanomsg.github.io/nng/man/v1.1.0/nng_pipe.5.
+    A "pipe" is a single connection between two endpoints.  This is the Python
+    version of `nng_pipe
+    <https://nanomsg.github.io/nng/man/v1.1.0/nng_pipe.5>`_.
 
     There is no public constructor for a Pipe; they are automatically added to
     the underlying socket whenever the pipe is created.
@@ -1069,7 +1188,9 @@ class Pipe:
 
     def send(self, data):
         """
-        Synchronously send bytes from this :class:`~pynng.Pipe`.
+        Synchronously send bytes from this :class:`Pipe`.  This method
+        automatically creates a :class:`Message`, associates with this pipe,
+        and sends it with this pipe's associated :class:`Socket`.
 
         """
         _ensure_can_send(data)
@@ -1078,7 +1199,7 @@ class Pipe:
 
     def send_msg(self, msg):
         """
-        Synchronously send a Message from this :class:`~pynng.Pipe`.
+        Synchronously send a Message from this :class:`Pipe`.
 
         """
         msg.pipe = self
@@ -1086,7 +1207,7 @@ class Pipe:
 
     async def asend(self, data):
         """
-        Asynchronously send bytes from this :class:`~pynng.Pipe`.
+        Asynchronously send bytes from this :class:`Pipe`.
 
         """
         _ensure_can_send(data)
@@ -1095,7 +1216,7 @@ class Pipe:
 
     async def asend_msg(self, msg):
         """
-        Asynchronously send a Message from this :class:`~pynng.Pipe`.
+        Asynchronously send a Message from this :class:`Pipe`.
 
         """
         msg.pipe = self
@@ -1104,14 +1225,20 @@ class Pipe:
 
 class Message:
     """
-    Python interface for nng_msg.  Using the :class:`~pynng.Message` interface
-    gives more control over aspects of sending the message.  In particular, you
-    can tell which :class:`~pynng.Pipe` a message came from on receive, and you
-    can direct which :class:`~pynng.Pipe` a message will be sent from on send.
+    Python interface for `nng_msg
+    <https://nanomsg.github.io/nng/man/tip/nng_msg.5.html>`_.  Using the
+    :class:`Message` interface gives more control over aspects of
+    sending the message.  In particular, you can tell which
+    :class:`Pipe` a message came from on receive, and you can direct
+    which :class:`Pipe` a message will be sent from on send.
 
-    See
-    nng's `docs <https://nanomsg.github.io/nng/man/tip/nng_msg.5.html>`_ for
-    more details.
+    In normal usage, you would not create a :class:`Message` directly.  Instead
+    you would receive a message using :meth:`Socket.recv_msg`, and send a
+    message (implicitly) by using :meth:`Pipe.send`.
+
+    Since the main purpose of creating a :class:`Message` is to send it using a
+    specific :class:`Pipe`, it is usually more convenient to just use the
+    :meth:`Pipe.send` or :meth:`Pipe.asend` method directly.
 
     Messages in pynng are immutable; this is to prevent data corruption.
 

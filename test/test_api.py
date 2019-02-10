@@ -86,7 +86,7 @@ def test_multiple_contexts():
 
     async def do_some_stuff(rep, req1, req2):
         async with trio.open_nursery() as n:
-            ctx1, ctx2 = rep.new_contexts(2)
+            ctx1, ctx2 = [rep.new_context() for _ in range(2)]
             n.start_soon(recv_and_send, ctx1)
             n.start_soon(recv_and_send, ctx2)
 
