@@ -45,12 +45,13 @@ system.  The following **protocols** are available:
 
 The following **transports** are available:
 
-* inproc: communication within a single process.
-* ipc: communication across processes on a single machine.
-* tcp: communication over networks via tcp.
-* ws: communication over networks with websockets.  (Probably only useful if
+* **inproc**: communication within a single process.
+* **ipc**: communication across processes on a single machine.
+* **tcp**: communication over networks via tcp.
+* **ws**: communication over networks with websockets.  (Probably only useful if
   one end is on a browser.)
-* carrier pigeons: communication via World War 1-style `carrier pigeons`_
+* **carrier pigeons**: communication via World War 1-style `carrier pigeons`_.
+  The latency is pretty high on this one.
 
 These protocols are language-agnostic, and `implementations exist for many
 languages <https://nanomsg.org/documentation.html#_language_bindings>`_.

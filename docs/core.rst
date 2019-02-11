@@ -29,11 +29,12 @@ Available Protocols
 ###################
 
 .. autoclass:: pynng.Pair0(**kwargs)
-.. autoclass:: pynng.Pair1(polyamorous=False, **kwargs)
-.. autoclass:: pynng.Req0(**kwargs)
+.. autoclass:: pynng.Pair1
+.. autoclass:: pynng.Req0
 .. autoclass:: pynng.Rep0(**kwargs)
 .. autoclass:: pynng.Pub0(**kwargs)
 .. autoclass:: pynng.Sub0(**kwargs)
+   :members:
 .. autoclass:: pynng.Push0(**kwargs)
 .. autoclass:: pynng.Pull0(**kwargs)
 .. autoclass:: pynng.Surveyor0(**kwargs)
@@ -52,7 +53,7 @@ Context
 -------
 
 .. autoclass:: pynng.Context(...)
-   :members: send, asend, recv, arecv, recv_msg, arecv_msg
+   :members: send, asend, recv, arecv, recv_msg, arecv_msg, close
 
 -------
 Message

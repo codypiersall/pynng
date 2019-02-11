@@ -1,8 +1,6 @@
 import pynng.options
 import pytest
 
-# TODO: all sockets need timeouts
-
 
 PORT = 13131
 IP = '127.0.0.1'
@@ -101,3 +99,14 @@ def test_nng_sockaddr():
         assert sa.addr == b'\x00' * 15 + b'\x01'
         assert str(sa) == ipv6.replace('tcp://', '')
 
+
+def test_resend_time():
+    # test req/rep resend time
+    with pynng.Rep0(listen=addr, recv_timeout=3000) as rep, \
+            pynng.Req0(dial=addr, recv_timeout=3000, resend_time=100) as req:
+        req.send(b'hey i have a question for you')
+        rep.recv()
+        # if it doesn't resend we'll never receive the second time
+        rep.recv()
+        rep.send(b'well i have an answer')
+        req.recv()

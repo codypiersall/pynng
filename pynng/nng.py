@@ -706,7 +706,8 @@ class Pull0(Socket):
     has the same :ref:`attributes <socket-attributes>`.
 
     A :class:`Pull0` is the receiving end of a data pipeline.  It needs to be
-    paired with a :class:`Push0` socket.  Attempting to :meth:`~Socket.send()`
+    paired with a :class:`Push0` socket.
+    Attempting to :meth:`~Socket.send()`
     with a Pull0 socket will raise a :class:`pynng.NotSupported` exception.
 
     See :class:`Push0` for an example of push/pull in action.
@@ -720,8 +721,16 @@ class Pub0(Socket):
 
     The Python version of `nng_pub
     <https://nanomsg.github.io/nng/man/tip/nng_pub.7>`_.
-    It accepts the same keyword arguments as :class:`Socket` and also
-    has the same :ref:`attributes <socket-attributes>`.
+    It accepts the same keyword arguments as :class:`Socket` and also has the
+    same :ref:`attributes <socket-attributes>`.  A :class:`Pub0` socket calls
+    :meth:`~Socket.send`, the data is published to all connected
+    :class:`subscribers <Sub0>`.
+
+    Attempting to :meth:`~Socket.recv` with a Pub0 socket will raise a
+    :class:`pynng.NotSupported` exception.
+
+    See docs for :class:`Sub0` for an example.
+
     """
     _opener = lib.nng_pub0_open
 
@@ -732,28 +741,97 @@ class Sub0(Socket):
     The Python version of `nng_sub
     <https://nanomsg.github.io/nng/man/tip/nng_sub.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
-    has the same :ref:`attributes <socket-attributes>`.
+    has the same :ref:`attributes <socket-attributes>`.  A subscriber must
+    :meth:`~Sub0.subscribe` to specific topics, and only messages that match
+    the topic will be received.  A subscriber can subscribe to as many topics
+    as you want it to.
+
+    A match is determined if the message starts with one of the subscribed
+    topics.  So if the subscribing socket is subscribed to the topic
+    ``b'hel'``, then the messages ``b'hel'``, ``b'help him`` and ``b'hello'``
+    would match, but the message ``b'hexagon'`` would not.  Subscribing to an
+    empty string (``b''``) means that all messages will match.  If a sub socket
+    is not subscribed to any topics, no messages will be receieved.
+
+    .. Note ::
+
+        pub/sub is a "best effort" transport; if you have a very high volume of
+        messages be prepared for some messages to be silently dropped.
+
+    Attempting to :meth:`~Socket.send` with a Sub0 socket will raise a
+    :class:`pynng.NotSupported` exception.
+
+    The following example demonstrates a basic usage of pub/sub:
+
+    .. literalinclude:: snippets/pubsub_sync.py
+
     """
     _opener = lib.nng_sub0_open
 
     def subscribe(self, topic):
-        """Subscribe to the specified topic."""
+        """Subscribe to the specified topic.
+
+        Topics are matched by looking at the first bytes of any received
+        message.
+
+        .. Note::
+
+            If you pass a :class:`str` as the ``topic``, it will be
+            automatically encoded with :meth:`str.encode`.  If this is not the
+            desired behavior, just pass :class:`bytes` in as the topic.
+
+        """
         options._setopt_string(self, b'sub:subscribe', topic)
 
     def unsubscribe(self, topic):
-        """Unsubscribe to the specified topic."""
+        """Unsubscribe to the specified topic.
+
+        .. Note::
+
+            If you pass a :class:`str` as the ``topic``, it will be
+            automatically encoded with :meth:`str.encode`.  If this is not the
+            desired behavior, just pass :class:`bytes` in as the topic.
+
+        """
         options._setopt_string(self, b'sub:unsubscribe', topic)
 
 
 class Req0(Socket):
+    resend_time = MsOption('req:resend-time')
+
     """A req0 socket.
 
     The Python version of `nng_req
     <https://nanomsg.github.io/nng/man/tip/nng_req.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
-    has the same :ref:`attributes <socket-attributes>`.
+    has the same :ref:`attributes <socket-attributes>`.  It also has one extra
+    keyword-argument: ``resend_time``.  ``resend_time`` corresponds to
+    ``NNG_OPT_REQ_RESENDTIME``
+
+    A :class:`Req0` socket is paired with a :class:`Rep0` socket and together
+    they implement normal request/response behavior.  the req socket
+    :meth:`send()s <Socket.send>` a request, the rep socket :meth:`recv()s
+    <Socket.recv>` it, the rep socket :meth:`send()s <Socket.Send>` a response,
+    and the req socket :meth:`recv()s <Socket.recv>` it.
+
+    If a req socket attempts to do a :meth:`~Socket.recv` without first doing a
+    :meth:`~Socket.send`, a :class:`pynng.BadState` exception is raised.
+
+    A :class:`Req0` socket supports opening multiple :class:`Contexts
+    <Context>` by calling :meth:`~Socket.new_context`.  In this way a req
+    socket can have multiple outstanding requests to a single rep socket.
+    Without opening a :class:`Context`, the socket can only have a single
+    outstanding request at a time.
+
+    .. literalinclude:: docs/snippets/reqrep_sync.py
+
     """
     _opener = lib.nng_req0_open
+
+    def __init__(self, *, resend_time=None, **kwargs):
+        super().__init__(**kwargs)
+        if resend_time is not None:
+            self.resend_time = resend_time
 
 
 class Rep0(Socket):
@@ -763,6 +841,22 @@ class Rep0(Socket):
     <https://nanomsg.github.io/nng/man/tip/nng_rep.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
     has the same :ref:`attributes <socket-attributes>`.
+
+    A :class:`Rep0` socket along with a :class:`Req0` socket implement the
+    request/response pattern:
+    the req socket :meth:`send()s <Socket.send>` a
+    request, the rep socket :meth:`recv()s <Socket.recv>` it, the rep socket
+    :meth:`send()s <Socket.Send>` a response, and the req socket :meth:`recv()s
+    <Socket.recv>` it.
+
+    A :class:`Rep0` socket supports opening multiple :class:`Contexts
+    <Context>` by calling :meth:`~Socket.new_context`.  In this way a rep
+    socket can service multiple requests at the same time.  Without opening a
+    :class:`Context`, the rep socket can only service a single request at a
+    time.
+
+    See the documentation for :class:`Req0` for an example.
+
     """
     _opener = lib.nng_rep0_open
 
@@ -774,6 +868,7 @@ class Surveyor0(Socket):
     <https://nanomsg.github.io/nng/man/tip/nng_surveyor.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
     has the same :ref:`attributes <socket-attributes>`.
+
     """
     _opener = lib.nng_surveyor0_open
 
@@ -785,6 +880,7 @@ class Respondent0(Socket):
     <https://nanomsg.github.io/nng/man/tip/nng_respondent.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
     has the same :ref:`attributes <socket-attributes>`.
+
     """
     _opener = lib.nng_respondent0_open
 
@@ -899,6 +995,9 @@ class Context:
     Contexts are valid for :class:`Req0` and :class:`Rep0` sockets; other
     protocols do not support contexts.
 
+    Once you have a context, you just call :meth:`~Context.send` and
+    :meth:`~Context.recv` or the async equivalents as you would on a socket.
+
     A "context" keeps track of a protocol's state for stateful protocols (like
     REQ/REP).  A context allows the same :class:`Socket` to be used for
     multiple operations at the same time.  For an example of the problem that
@@ -1007,9 +1106,11 @@ class Context:
         msg = Message(data)
         return self.send_msg(msg)
 
-    def _free(self):
+    def close(self):
+        """Close this context."""
         ctx_err = 0
         if self._context is not None:
+            # check that nng still has a reference
             if lib.nng_ctx_id(self.context) != -1:
                 ctx_err = lib.nng_ctx_close(self.context)
                 self._context = None
@@ -1019,7 +1120,7 @@ class Context:
         return self
 
     def __exit__(self, *exc_info):
-        self._free()
+        self.close()
 
     @property
     def context(self):
@@ -1027,7 +1128,7 @@ class Context:
         return self._context[0]
 
     def __del__(self):
-        self._free()
+        self.close()
 
     async def asend_msg(self, msg):
         """
