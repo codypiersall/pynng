@@ -741,10 +741,13 @@ class Sub0(Socket):
     The Python version of `nng_sub
     <https://nanomsg.github.io/nng/man/tip/nng_sub.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
-    has the same :ref:`attributes <socket-attributes>`.  A subscriber must
-    :meth:`~Sub0.subscribe` to specific topics, and only messages that match
-    the topic will be received.  A subscriber can subscribe to as many topics
-    as you want it to.
+    has the same :ref:`attributes <socket-attributes>`.  It also has one
+    additional keyword argument: ``topics``.  If ``topics`` is given, it must
+    be either a :class:`str`, :class:`bytes`, or an iterable of str and bytes.
+
+    A subscriber must :meth:`~Sub0.subscribe` to specific topics, and only
+    messages that match the topic will be received.  A subscriber can subscribe
+    to as many topics as you want it to.
 
     A match is determined if the message starts with one of the subscribed
     topics.  So if the subscribing socket is subscribed to the topic
@@ -767,6 +770,16 @@ class Sub0(Socket):
 
     """
     _opener = lib.nng_sub0_open
+
+    def __init__(self, *, topics=None, **kwargs):
+        super().__init__(**kwargs)
+        if topics is None:
+            return
+        # special-case str/bytes
+        if isinstance(topics, (str, bytes)):
+            topics = [topics]
+        for topic in topics:
+            self.subscribe(topic)
 
     def subscribe(self, topic):
         """Subscribe to the specified topic.

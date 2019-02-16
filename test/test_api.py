@@ -130,3 +130,18 @@ def test_pair1_polyamorousness():
                 p2.send(b'hello there s2')
                 assert s2.recv() == b'hello there s2'
 
+
+def test_sub_sock_options():
+    with pynng.Pub0(listen=addr) as pub:
+        # test single option topic
+        with pynng.Sub0(dial=addr, topics='beep') as sub:
+            wait_pipe_len(sub, 1)
+            pub.send(b'beep hi')
+            assert sub.recv() == b'beep hi'
+        with pynng.Sub0(dial=addr, topics=['beep', 'hello']) as sub:
+            wait_pipe_len(sub, 1)
+            pub.send(b'beep hi')
+            pub.send(b'hello there')
+            assert sub.recv() == b'beep hi'
+            assert sub.recv() == b'hello there'
+
