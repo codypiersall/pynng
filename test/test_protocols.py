@@ -1,12 +1,34 @@
-import pynng
-import pytest
 import time
 import threading
+
+import pytest
+
+import pynng
+
+from test._test_util import wait_pipe_len
 
 # TODO: all sockets need timeouts
 
 
 addr = 'tcp://127.0.0.1:13131'
+
+
+def test_bus():
+    with pynng.Bus0(recv_timeout=100) as s0, \
+            pynng.Bus0(recv_timeout=100) as s1, \
+            pynng.Bus0(recv_timeout=100) as s2:
+        s0.listen(addr)
+        s1.dial(addr)
+        s2.dial(addr)
+        wait_pipe_len(s0, 2)
+        s0.send(b's1 and s2 get this')
+        assert s1.recv() == b's1 and s2 get this'
+        assert s2.recv() == b's1 and s2 get this'
+        s1.send(b'only s0 gets this')
+        assert s0.recv() == b'only s0 gets this'
+        s2.recv_timeout = 0
+        with pytest.raises(pynng.Timeout):
+            s2.recv()
 
 
 def test_context_manager_works():
@@ -22,17 +44,15 @@ def test_context_manager_works():
 def test_pair0():
     with pynng.Pair0(listen=addr, recv_timeout=100) as s0, \
             pynng.Pair0(dial=addr, recv_timeout=100) as s1:
-        val = b'oaisdjfa'
-        s1.send(val)
-        assert s0.recv() == val
+        s1.send(b'hey howdy there')
+        assert s0.recv() == b'hey howdy there'
 
 
 def test_pair1():
     with pynng.Pair1(listen=addr, recv_timeout=100) as s0, \
             pynng.Pair1(dial=addr, recv_timeout=100) as s1:
-        val = b'oaisdjfa'
-        s1.send(val)
-        assert s0.recv() == val
+        s1.send(b'beep boop beep')
+        assert s0.recv() == b'beep boop beep'
 
 
 def test_reqrep0():
