@@ -810,8 +810,6 @@ class Sub0(Socket):
 
 
 class Req0(Socket):
-    resend_time = MsOption('req:resend-time')
-
     """A req0 socket.
 
     The Python version of `nng_req
@@ -836,9 +834,10 @@ class Req0(Socket):
     Without opening a :class:`Context`, the socket can only have a single
     outstanding request at a time.
 
-    .. literalinclude:: docs/snippets/reqrep_sync.py
+    .. literalinclude:: snippets/reqrep_sync.py
 
     """
+    resend_time = MsOption('req:resend-time')
     _opener = lib.nng_req0_open
 
     def __init__(self, *, resend_time=None, **kwargs):
