@@ -883,6 +883,12 @@ class Surveyor0(Socket):
 
     """
     _opener = lib.nng_surveyor0_open
+    survey_time = MsOption('surveyor:survey-time')
+
+    def __init__(self, *, survey_time=None, **kwargs):
+        super().__init__(**kwargs)
+        if survey_time is not None:
+            self.survey_time = survey_time
 
 
 class Respondent0(Socket):

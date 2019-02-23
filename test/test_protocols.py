@@ -130,9 +130,9 @@ def test_push_pull():
 
 
 def test_surveyor_respondent():
-    with pynng.Surveyor0(listen=addr, recv_timeout=1000) as surveyor, \
-            pynng.Respondent0(dial=addr, recv_timeout=1000) as resp1, \
-            pynng.Respondent0(dial=addr, recv_timeout=2000) as resp2:
+    with pynng.Surveyor0(listen=addr, recv_timeout=4000) as surveyor, \
+            pynng.Respondent0(dial=addr, recv_timeout=4000) as resp1, \
+            pynng.Respondent0(dial=addr, recv_timeout=4000) as resp2:
         query = b"hey how's it going buddy?"
         # wait for sockets to connect
         time.sleep(0.03)
@@ -155,11 +155,21 @@ def test_surveyor_respondent():
         resp2.send(msg2)
         resp = [surveyor.recv() for _ in range(2)]
         assert b'not too bad I suppose' in resp
-        # if they're not the same
         assert msg2 in resp
 
         with pytest.raises(pynng.BadState):
             resp2.send(b'oadsfji')
+
+        now = time.monotonic()
+        # 1 millisecond timeout
+        surveyor.survey_time = 1
+        surveyor.send(b'hey nobody should respond to me')
+        with pytest.raises(pynng.Timeout):
+            surveyor.recv()
+        later = time.monotonic()
+        print(later - now)
+        # nng default survey time is 1 second
+        assert later - now < 0.9
 
 
 def test_cannot_instantiate_socket_without_opener():
