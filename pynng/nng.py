@@ -594,6 +594,19 @@ class Socket:
 class Bus0(Socket):
     """A bus0 socket.  The Python version of `nng_bus
     <https://nanomsg.github.io/nng/man/tip/nng_bus.7>`_.
+
+    It accepts the same keyword arguments as :class:`Socket` and also has the
+    same :ref:`attributes <socket-attributes>`.
+
+    A :class:`Bus0` socket sends a message to all directly connected peers.
+    This enables creating mesh networks.  Note that messages are only sent to
+    *directly* connected peers.  You must explicitly connect all nodes with the
+    :meth:`~Socket.listen` and corresponding :meth:`~Socket.listen` calls.
+
+    Here is a demonstration of using the bus protocol:
+
+    .. literalinclude:: snippets/bus0_sync.py
+        :language: python3
     """
     _opener = lib.nng_bus0_open
 
