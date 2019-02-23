@@ -1,4 +1,3 @@
-from ast import literal_eval
 from pynng import Req0, Rep0
 
 address = 'tcp://127.0.0.1:13131'
