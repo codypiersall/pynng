@@ -834,6 +834,8 @@ class Req0(Socket):
     Without opening a :class:`Context`, the socket can only have a single
     outstanding request at a time.
 
+    Here is an example demonstrating the request/response pattern.
+
     .. literalinclude:: snippets/reqrep_sync.py
 
     """
@@ -879,7 +881,19 @@ class Surveyor0(Socket):
     The Python version of `nng_surveyor
     <https://nanomsg.github.io/nng/man/tip/nng_surveyor.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
-    has the same :ref:`attributes <socket-attributes>`.
+    has the same :ref:`attributes <socket-attributes>`.  It has one additional
+    attribute: ``survey_time``.  ``survey_time`` sets the amount of time a
+    survey lasts.
+
+    :class:`Surveyor0` sockets work with :class:`Respondent0` sockets in the
+    survey pattern.  In this pattern, a :class:`surveyor <Surveyor0>` sends a
+    message, and gives all :class:`respondents <Respondent0>` a chance to
+    chime in.  The amount of time a survey is valid is set by the attribute
+    ``survey_time``.  ``survey_time`` is the time of a survey in milliseconds.
+
+    Here is an example:
+
+    .. literalinclude:: snippets/surveyor_sync.py
 
     """
     _opener = lib.nng_surveyor0_open
@@ -897,7 +911,16 @@ class Respondent0(Socket):
     The Python version of `nng_respondent
     <https://nanomsg.github.io/nng/man/tip/nng_respondent.7>`_.
     It accepts the same keyword arguments as :class:`Socket` and also
-    has the same :ref:`attributes <socket-attributes>`.
+    has the same :ref:`attributes <socket-attributes>`.  It accepts no
+    additional arguments and has no other attributes
+
+    :class:`Surveyor0` sockets work with :class:`Respondent0` sockets in the
+    survey pattern.  In this pattern, a :class:`surveyor <Surveyor0>` sends a
+    message, and gives all :class:`respondents <Respondent0>` a chance to
+    chime in.  The amount of time a survey is valid is set by the attribute
+    ``survey_time``.  ``survey_time`` is the time of a survey in milliseconds.
+
+    See :class:`Surveyor0` docs for an example.
 
     """
     _opener = lib.nng_respondent0_open
