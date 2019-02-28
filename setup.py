@@ -111,7 +111,7 @@ setuptools.setup(
         'build_ext': BuildExtCommand,
     },
     name='pynng',
-    version='0.3.0.dev1',
+    version=__version__,
     author='Cody Piersall',
     author_email='cody.piersall@gmail.com',
     description='Networking made simply using nng',
