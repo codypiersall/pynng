@@ -101,6 +101,7 @@ with open('README.md', 'r', encoding='utf-8') as f:
 
 tests_require = [
     'pytest',
+    'pytest-asyncio',
     'pytest-trio',
     'trio',
 ]

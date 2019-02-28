@@ -1,5 +1,3 @@
-from trio.testing import trio_test
-
 import pytest
 import pynng
 from test._test_util import wait_pipe_len
@@ -36,7 +34,7 @@ def test_socket_send_recv_msg():
         assert msg2.bytes == b'we are friends, old buddy'
 
 
-@trio_test
+@pytest.mark.trio
 async def test_socket_arecv_asend_msg():
     with pynng.Pair0(listen=addr, recv_timeout=to) as s1, \
             pynng.Pair0(dial=addr, recv_timeout=to) as s2:
@@ -48,7 +46,7 @@ async def test_socket_arecv_asend_msg():
         assert msg2.pipe is s2.pipes[0]
 
 
-@trio_test
+@pytest.mark.trio
 async def test_context_arecv_asend_msg():
     with pynng.Req0(listen=addr, recv_timeout=to) as s1, \
             pynng.Rep0(dial=addr, recv_timeout=to) as s2:
@@ -102,7 +100,7 @@ def test_cannot_double_send():
         s2.recv_msg()
 
 
-@trio_test
+@pytest.mark.trio
 async def test_cannot_double_asend():
     # double send would cause a SEGFAULT!!! That's no good
     with pynng.Req0(listen=addr, recv_timeout=to) as s1, \
