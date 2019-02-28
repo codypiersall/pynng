@@ -162,12 +162,11 @@ def test_surveyor_respondent():
 
         now = time.monotonic()
         # 1 millisecond timeout
-        surveyor.survey_time = 1
+        surveyor.survey_time = 10
         surveyor.send(b'hey nobody should respond to me')
         with pytest.raises(pynng.Timeout):
             surveyor.recv()
         later = time.monotonic()
-        print(later - now)
         # nng default survey time is 1 second
         assert later - now < 0.9
 
