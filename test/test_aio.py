@@ -109,7 +109,7 @@ async def test_pub_sub_trio():
 
     async def pub():
         with pynng.Pub0(listen=addr) as pubber:
-            for i in range(1000):
+            for i in range(20):
                 prefix = 'even' if is_even(i) else 'odd'
                 msg = '{}:{}'.format(prefix, i)
                 await pubber.asend(msg.encode('ascii'))
