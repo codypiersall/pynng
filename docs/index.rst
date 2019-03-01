@@ -28,7 +28,7 @@ scalability protocols aim to solve:
    pigeons.  A *protocol* is the way that both sides have agreed to communicate
    with each other (some protocols are ad-hoc, and some are more formal).
 
-The scalability protols are the basic tools you need to build a distributed
+The scalability protocols are the basic tools you need to build a distributed
 system.  The following **protocols** are available:
 
 * **pair** - simple one-to-one communication. (:class:`~pynng.Pair0`,
