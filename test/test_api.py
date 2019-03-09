@@ -89,13 +89,14 @@ async def test_multiple_contexts():
             pynng.Req0(dial=addr, recv_timeout=500) as req2:
         async with trio.open_nursery() as n:
             ctx1, ctx2 = [rep.new_context() for _ in range(2)]
-            n.start_soon(recv_and_send, ctx1)
-            n.start_soon(recv_and_send, ctx2)
+            with ctx1, ctx2:
+                n.start_soon(recv_and_send, ctx1)
+                n.start_soon(recv_and_send, ctx2)
 
-            await req1.asend(b'oh hi')
-            await req2.asend(b'me toooo')
-            assert (await req1.arecv() == b'oh hi')
-            assert (await req2.arecv() == b'me toooo')
+                await req1.asend(b'oh hi')
+                await req2.asend(b'me toooo')
+                assert (await req1.arecv() == b'oh hi')
+                assert (await req2.arecv() == b'me toooo')
 
 
 def test_synchronous_recv_context():
