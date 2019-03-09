@@ -1,6 +1,10 @@
 #! /bin/bash
 #
 # Meant to be called in Travis-ci, not really for anything else.
+
+# grab cmake from pip
+/opt/python/cp37-cp37m/bin/pip install cmake
+cp /opt/python/cp37-cp37m/bin/cmake /usr/bin
 for v in 35 36 37; do
     python=/opt/python/cp${v}-cp${v}m/bin/python
     $python setup.py build_ext --inplace
