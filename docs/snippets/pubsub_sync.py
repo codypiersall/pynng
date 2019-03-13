@@ -12,6 +12,9 @@ with Pub0(listen=address) as pub, \
     sub1.subscribe(b'puppy')
     # The empty string matches everything!
     sub2.subscribe(b'')
+    # we're going to send two messages before receiving anything, and this is
+    # the only socket that needs to receive both messages.
+    sub2.recv_buffer_size = 2
     # sub3 is not subscribed to anything
     # make sure everyone is connected
     time.sleep(0.05)
