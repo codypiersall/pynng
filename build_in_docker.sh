@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/sh
 #
 # Meant to be called in Travis-ci, not really for anything else.
 
