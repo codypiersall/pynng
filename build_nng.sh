@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/sh
 
 # build the nng library
 # do stuff in a subshell so we don't mess up the environment

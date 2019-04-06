@@ -73,7 +73,7 @@ def build_nng_lib():
     else:
         # on Linux, build_nng.sh selects ninja if available
         script = os.path.join(THIS_DIR, 'build_nng.sh')
-        cmd = ['/bin/bash', script, NNG_REVISION]
+        cmd = ['/bin/sh', script, NNG_REVISION]
         needs_shell = False
 
     # shell=True is required for Windows
