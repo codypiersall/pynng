@@ -300,12 +300,15 @@ class Socket:
             check_err(lib.nng_pipe_notify(
                 self.socket, event, lib._nng_pipe_cb, as_void))
 
+        # The socket *must* be added to the _live_sockets map before calling
+        # listen/dial so that no callbacks are called before the socket is
+        # added to the map (because then the callback would fail!).
+        _live_sockets[id(self)] = self
+
         if listen is not None:
             self.listen(listen)
         if dial is not None:
             self.dial(dial, block=block_on_dial)
-
-        _live_sockets[id(self)] = self
 
     def dial(self, address, *, block=None):
         """Dial the specified address.
