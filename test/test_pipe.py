@@ -76,7 +76,8 @@ def test_closing_pipe_in_pre_connect_works():
         s0.name = 's0'
         s1.name = 's1'
         pre_called = False
-        post_called = False
+        post_connect_called = False
+        post_remove_called = False
 
         def pre_connect_cb(pipe):
             pipe.close()
@@ -84,9 +85,12 @@ def test_closing_pipe_in_pre_connect_works():
             pre_called = True
 
         def post_connect_cb(pipe):
-            pipe.close()
-            nonlocal post_called
-            post_called = True
+            nonlocal post_connect_called
+            post_connect_called = True
+
+        def post_remove_cb(pipe):
+            nonlocal post_remove_called
+            post_remove_called = True
 
         s0.add_pre_pipe_connect_cb(pre_connect_cb)
         s0.add_post_pipe_connect_cb(post_connect_cb)
@@ -97,7 +101,8 @@ def test_closing_pipe_in_pre_connect_works():
                 break
         assert pre_called
         time.sleep(0.5)
-        assert not post_called
+        assert not post_connect_called
+        assert not post_remove_called
         assert len(s0.pipes) == 0
         assert len(s1.pipes) == 0
 
@@ -158,3 +163,24 @@ async def test_can_asend_from_pipe():
         assert await s1.arecv() == b'hello'
         await s0.asend_msg(pynng.Message(b'it is me again'))
         assert await s1.arecv() == b'it is me again'
+
+
+def test_bad_callbacks_dont_cause_extra_failures():
+    called_pre_connect = False
+
+    def pre_connect_cb(pipe):
+        nonlocal called_pre_connect
+        called_pre_connect = True
+
+    with pynng.Pair0(listen=addr) as s0:
+        # adding something that is not a callback should still allow correct
+        # things to work.
+        s0.add_pre_pipe_connect_cb(8)
+        s0.add_pre_pipe_connect_cb(pre_connect_cb)
+        with pynng.Pair0(dial=addr) as _:
+            wait_pipe_len(s0, 1)
+            later = time.time() + 10
+            while later > time.time():
+                if called_pre_connect:
+                    break
+            assert called_pre_connect
