@@ -291,6 +291,8 @@ class Socket:
             self.recv_buffer_size = recv_buffer_size
         if send_buffer_size is not None:
             self.send_buffer_size = send_buffer_size
+        if name is not None:
+            self.name = name
 
         # set up pipe callbacks. This **must** be called before listen/dial to
         # avoid race conditions.
