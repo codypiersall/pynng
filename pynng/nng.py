@@ -192,6 +192,9 @@ class Socket:
           is read-only.  Corresponds to library option ``NNG_OPT_RAW``.  For
           more information see `nng's documentation.
           <https://nanomsg.github.io/nng/man/v1.0.1/nng.7.html#raw_mode>`_
+          Note that currently, pynng does not support ``raw`` mode sockets, but
+          we intend to `in the future
+          <https://github.com/codypiersall/pynng/issues/35>`_:
         * **protocol** (int): Read-only option which returns the 16-bit number
           of the socket's protocol.
         * **protocol_name** (str): Read-only option which returns the name of the
@@ -212,12 +215,25 @@ class Socket:
           socket.  This is suitable to be passed into poll functions like
           :func:`select.poll` or :func:`select.select`.  That is the only thing
           this file descriptor is good for; do not attempt to read from or
-          write to it.
+          write to it.  The file descriptor will be marked as **readable**
+          whenever it can receive data without blocking.  Corresponds to
+          ``NNG_OPT_RECVFD``.
         * **send_fd** (int): The sending file descriptor associated with the
           socket.  This is suitable to be passed into poll functions like
           :func:`select.poll` or :func:`select.select`.  That is the only thing
           this file descriptor is good for; do not attempt to read from or
-          write to it.
+          write to it.  The file descriptor will be marked as **readable**
+          whenever it can send data without blocking.  Corresponds to
+          ``NNG_OPT_SENDFD``.
+
+         .. Note::
+
+             When used in :func:`select.poll` or :func:`select.select`,
+             ``recv_fd`` and ``send_fd`` are both marked as **readable** when
+             they can receive or send data without blocking.  So the upshot is
+             that for :func:`select.select` they should be passed in as the
+             *rlist* and for :meth:`select.poll.register` the *eventmask*
+             should be ``POLLIN``.
 
     .. _Trio: https://trio.readthedocs.io
 
