@@ -32,13 +32,20 @@ import pynng
 import trio
 
 
+try:
+    run_sync = trio.to_thread.run_sync
+except AttributeError:
+    # versions of trio prior to 0.12.0 used this method
+    run_sync = trio.run_sync_in_worker_thread
+
+
 async def send_eternally(sock):
     """
     Eternally listen for user input in the terminal and send it on all
     available pipes.
     """
     while True:
-        stuff = await trio.run_sync_in_worker_thread(input, cancellable=True)
+        stuff = await run_sync(input, cancellable=True)
         for pipe in sock.pipes:
             await pipe.asend(stuff.encode())
 
