@@ -52,7 +52,7 @@ async def recv_eternally(sock):
 
 
 async def main():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         'mode',
         help='Whether the socket should "listen" or "dial"',
