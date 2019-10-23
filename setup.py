@@ -36,12 +36,14 @@ def build_nng_lib():
 
         # If ninja build system is installed, use it, since it's way faster
         # (this is especially important when feeling impatient for CI builds)
-        if shutil.which('ninja') and (major, minor) in ((3, 5), (3, 6), (3, 7)):
+        if shutil.which('ninja') and (major, minor) in ((3, 5), (3, 6), (3, 7),
+                                                        (3, 8)):
             # gotta soruce the correct vcvarsall!
             which_vcvars = {
                 (3, 5): r'Microsoft Visual Studio 14.0\VC',
                 (3, 6): r'Microsoft Visual Studio 14.0\VC',
                 (3, 7): r'Microsoft Visual Studio 14.0\VC',
+                (3, 8): r'Microsoft Visual Studio 14.0\VC',
             }
             vcvarsall = os.path.join(
                 r'C:\Program Files (x86)',
@@ -62,6 +64,7 @@ def build_nng_lib():
                 (3, 5): 'Visual Studio 14 2015',
                 (3, 6): 'Visual Studio 14 2015',
                 (3, 7): 'Visual Studio 14 2015',
+                (3, 8): 'Visual Studio 14 2015',
             }
             gen = cmake_generators[(major, minor)]
 

@@ -5,7 +5,7 @@
 # grab cmake from pip
 /opt/python/cp37-cp37m/bin/pip install cmake
 cp /opt/python/cp37-cp37m/bin/cmake /usr/bin
-for v in 35 36 37; do
+for v in 35 36 37 38; do
     python=/opt/python/cp${v}-cp${v}m/bin/python
     $python setup.py build_ext --inplace
     $python setup.py bdist_wheel

@@ -15,10 +15,12 @@ script:
   - ls artifacts/dist/*cp35-cp35m-*.whl
   - ls artifacts/dist/*cp36-cp36m-*.whl
   - ls artifacts/dist/*cp37-cp37m-*.whl
+  - ls artifacts/dist/*cp38-cp38m-*.whl
   # when docker runs pytest, successful runs create a file
   - ls artifacts/v35_success
   - ls artifacts/v36_success
   - ls artifacts/v37_success
+  - ls artifacts/v38_success
 deploy:
   provider: releases
   api_key:
