@@ -14,10 +14,15 @@ if sys.platform == 'win32':
         objects = ['./nng/build/nng.lib']
     else:
         objects = ['./nng/build/Release/nng.lib']
+
+    objects += ["./mbedtls/prefix/lib/mbedtls.lib", "./mbedtls/prefix/lib/mbedx509.lib",
+                "./mbedtls/prefix/lib/mbedcrypto.lib"]
+
     # libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
 else:
-    objects = ['./nng/build/libnng.a']
+    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
+               "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
     libraries = ['pthread']
 
 

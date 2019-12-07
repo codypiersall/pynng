@@ -14,6 +14,7 @@ THIS_DIR = os.path.dirname(__file__)
 
 
 NNG_REVISION = 'd3bd35ab49ad74528fd9e34cce9016d74dd91943'
+MBEDTLS_REVISION = '04a049bda1ceca48060b57bc4bcf5203ce591421'
 
 
 def build_nng_lib():
@@ -21,11 +22,11 @@ def build_nng_lib():
     # installed yet (since it is a dependency, and this script installs
     # dependencies).  Bootstrapping!
     import build_pynng
-    if os.path.exists(build_pynng.objects[0]):
+    if all(map(os.path.exists, build_pynng.objects)):
         # the object file we were planning on building already exists; we'll
         # just use it!
         return
-    if sys.platform == 'win32':
+    if sys.platform == 'win32' and os.getenv("SHELL") is None:
         is_64bit = sys.maxsize > 2**32
         major, minor, *_ = sys.version_info
         build_nng_script = os.path.join(THIS_DIR, 'build_nng.bat')
@@ -73,7 +74,7 @@ def build_nng_lib():
     else:
         # on Linux, build_nng.sh selects ninja if available
         script = os.path.join(THIS_DIR, 'build_nng.sh')
-        cmd = ['/bin/sh', script, NNG_REVISION]
+        cmd = ['/bin/sh', script, NNG_REVISION, MBEDTLS_REVISION]
         needs_shell = False
 
     # shell=True is required for Windows
@@ -84,6 +85,7 @@ def build_nng_lib():
 # extnsion builder. subclassing something else would be better!
 class BuildPyCommand(setuptools.command.build_py.build_py):
     """Build nng library before anything else."""
+
     def run(self):
         build_nng_lib()
         super(BuildPyCommand, self).run()
@@ -91,6 +93,7 @@ class BuildPyCommand(setuptools.command.build_py.build_py):
 
 class BuildExtCommand(setuptools.command.build_ext.build_ext):
     """Build nng library before anything else."""
+
     def run(self):
         build_nng_lib()
         super(BuildExtCommand, self).run()
@@ -111,7 +114,7 @@ setuptools.setup(
         'build_py': BuildPyCommand,
         'build_ext': BuildExtCommand,
     },
-    name='pynng',
+    name='pynng-tls',
     version=__version__,
     author='Cody Piersall',
     author_email='cody.piersall@gmail.com',
@@ -143,4 +146,3 @@ setuptools.setup(
     test_suite='tests',
 
 )
-
