@@ -9,9 +9,7 @@ import setuptools.command.build_ext
 # have to exec; can't import the package before it's built.
 exec(open("pynng/_version.py", encoding="utf-8").read())
 
-
 THIS_DIR = os.path.dirname(__file__)
-
 
 NNG_REVISION = 'd3bd35ab49ad74528fd9e34cce9016d74dd91943'
 MBEDTLS_REVISION = '04a049bda1ceca48060b57bc4bcf5203ce591421'
@@ -28,68 +26,21 @@ def build_nng_lib():
         return
 
     is_64bit = sys.maxsize > 2**32
+    is_posix_shell = os.getenv("SHELL") is not None
 
-    # windows cmd
-    # FIXME: does not build mbedtls
-    if sys.platform == 'win32' and os.getenv("SHELL") is None:
-        major, minor, *_ = sys.version_info
-        build_nng_script = os.path.join(THIS_DIR, 'build_nng.bat')
-        needs_shell = True
-        # pick the correct cmake generator, based on the Python version.
-        # from https://wiki.python.org/moin/WindowsCompilers for Python
-        # version, and cmake --help for list of CMake generator names
+    script = os.path.join(THIS_DIR, 'build_nng.sh') if is_posix_shell \
+        else os.path.join(THIS_DIR, 'build_nng.bat')
 
-        # If ninja build system is installed, use it, since it's way faster
-        # (this is especially important when feeling impatient for CI builds)
-        if shutil.which('ninja') and (major, minor) in ((3, 5), (3, 6), (3, 7)):
-            # gotta soruce the correct vcvarsall!
-            which_vcvars = {
-                (3, 5): r'Microsoft Visual Studio 14.0\VC',
-                (3, 6): r'Microsoft Visual Studio 14.0\VC',
-                (3, 7): r'Microsoft Visual Studio 14.0\VC',
-            }
-            vcvarsall = os.path.join(
-                r'C:\Program Files (x86)',
-                which_vcvars[(major, minor)],
-                'vcvarsall.bat',
-            )
-            if is_64bit:
-                gen = 'amd64'
-            else:
-                gen = 'x86'
-            cmd = '"{}" {} && {} Ninja {}'.format(
-                vcvarsall, gen, build_nng_script, NNG_REVISION)
-            print('-------------------')
-            print(cmd)
-            print('-------------------')
+    platform = ""
+    if sys.platform == 'win32':
+        platform = "-A x64" if is_64bit else "-A win32"
 
-        else:
-            cmake_generators = {
-                (3, 5): 'Visual Studio 14 2015',
-                (3, 6): 'Visual Studio 14 2015',
-                (3, 7): 'Visual Studio 14 2015',
-            }
-            gen = cmake_generators[(major, minor)]
+    cmd = [script, NNG_REVISION, MBEDTLS_REVISION, platform]
 
-            if is_64bit:
-                gen += ' Win64'
+    if is_posix_shell:
+        cmd = [shutil.which("sh")] + cmd
 
-            cmd = [build_nng_script, gen, NNG_REVISION]
-
-    # Linux, MSYS (bash git), MacOS
-    else:
-        script = os.path.join(THIS_DIR, 'build_nng.sh')
-        platform = ""
-        if sys.platform == 'win32':
-            platform = "-A x64" if is_64bit else "-A win32"
-
-        cmd = [shutil.which("sh"), script, NNG_REVISION,
-               MBEDTLS_REVISION, platform]
-
-        needs_shell = False
-
-    # shell=True is required for Windows
-    subprocess.check_call(cmd, shell=needs_shell)
+    subprocess.check_call(cmd)
 
 
 # TODO: this is basically a hack to get something to run before running cffi

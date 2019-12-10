@@ -20,7 +20,6 @@ fi
     )
 
     cd mbedtls
-    rm -rf build prefix
     mkdir build prefix
     cd build
     cmake $CMAKE_ARGS -DENABLE_TESTING=OFF \
@@ -39,7 +38,6 @@ fi
     )
 
     cd nng
-    rm -rf build
     mkdir build
     cd build
     cmake $CMAKE_ARGS -DNNG_ENABLE_TLS=ON \
