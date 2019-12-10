@@ -22,12 +22,16 @@ def build_nng_lib():
     # installed yet (since it is a dependency, and this script installs
     # dependencies).  Bootstrapping!
     import build_pynng
-    if all(map(os.path.exists, build_pynng.objects)):
+    if len(build_pynng.objects) > 0 and all(map(os.path.exists, build_pynng.objects)):
         # the object file we were planning on building already exists; we'll
         # just use it!
         return
+
+    is_64bit = sys.maxsize > 2**32
+
+    # windows cmd
+    # FIXME: does not build mbedtls
     if sys.platform == 'win32' and os.getenv("SHELL") is None:
-        is_64bit = sys.maxsize > 2**32
         major, minor, *_ = sys.version_info
         build_nng_script = os.path.join(THIS_DIR, 'build_nng.bat')
         needs_shell = True
@@ -53,7 +57,8 @@ def build_nng_lib():
                 gen = 'amd64'
             else:
                 gen = 'x86'
-            cmd = '"{}" {} && {} Ninja {}'.format(vcvarsall, gen, build_nng_script, NNG_REVISION)
+            cmd = '"{}" {} && {} Ninja {}'.format(
+                vcvarsall, gen, build_nng_script, NNG_REVISION)
             print('-------------------')
             print(cmd)
             print('-------------------')
@@ -71,10 +76,16 @@ def build_nng_lib():
 
             cmd = [build_nng_script, gen, NNG_REVISION]
 
+    # Linux, MSYS (bash git), MacOS
     else:
-        # on Linux, build_nng.sh selects ninja if available
         script = os.path.join(THIS_DIR, 'build_nng.sh')
-        cmd = ['/bin/sh', script, NNG_REVISION, MBEDTLS_REVISION]
+        platform = ""
+        if sys.platform == 'win32':
+            platform = "-A x64" if is_64bit else "-A win32"
+
+        cmd = [shutil.which("sh"), script, NNG_REVISION,
+               MBEDTLS_REVISION, platform]
+
         needs_shell = False
 
     # shell=True is required for Windows
