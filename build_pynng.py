@@ -44,6 +44,9 @@ ffibuilder.set_source(
          #include <nng/protocol/reqrep0/rep.h>
          #include <nng/protocol/survey0/respond.h>
          #include <nng/protocol/survey0/survey.h>
+         #include <nng/supplemental/tls/tls.h>
+         #include <nng/transport/tls/tls.h>
+
     """,
     libraries=libraries,
     # library_dirs=['nng/build/Debug',],

@@ -28,5 +28,9 @@ process_header nng/include/nng/protocol/reqrep0/req.h >> nng_api.h
 process_header nng/include/nng/protocol/reqrep0/rep.h >> nng_api.h
 process_header nng/include/nng/protocol/survey0/survey.h >> nng_api.h
 process_header nng/include/nng/protocol/survey0/respond.h >> nng_api.h
-grep '#define NNG_.*_VERSION' nng/include/nng/nng.h >> nng_api.h
+# nng_tls_config_{pass,key} have only stub implementations, and are
+# undefined when building with mbedtls. so we explicitly exclude them
+process_header nng/include/nng/supplemental/tls/tls.h | egrep -v "nng_tls_config_(pass|key)" >> nng_api.h
+process_header nng/include/nng/transport/tls/tls.h >> nng_api.h
 
+grep '#define NNG_.*_VERSION' nng/include/nng/nng.h >> nng_api.h
