@@ -18,6 +18,8 @@ from .nng import (
     Message,
 )
 
+from .tls import TLSConfig
+
 from .exceptions import (
     NNGException,
     Interrupted,
@@ -54,4 +56,3 @@ from .exceptions import (
     check_err,
     MessageStateError
 )
-
