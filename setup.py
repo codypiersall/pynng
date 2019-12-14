@@ -80,7 +80,7 @@ setuptools.setup(
     version=__version__,
     author='Cody Piersall',
     author_email='cody.piersall@gmail.com',
-    description='Networking made simply using nng',
+    description='Networking made simply using nng (TLS enabled version)',
     long_description=long_description,
     license='MIT',
     keywords='networking nng nanomsg zmq messaging message trio asyncio',
