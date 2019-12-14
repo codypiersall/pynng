@@ -26,16 +26,16 @@ def build_nng_lib():
         return
 
     is_64bit = sys.maxsize > 2**32
-    is_posix_shell = os.getenv("SHELL") is not None
+    is_posix_shell = os.getenv("SHELL") is not None or sys.platform != 'win32'
 
     script = os.path.join(THIS_DIR, 'build_nng.sh') if is_posix_shell \
         else os.path.join(THIS_DIR, 'build_nng.bat')
 
-    platform = ""
+    cmake_platform = ""
     if sys.platform == 'win32':
-        platform = "-A x64" if is_64bit else "-A win32"
+        cmake_platform = "-A x64" if is_64bit else "-A win32"
 
-    cmd = [script, NNG_REVISION, MBEDTLS_REVISION, platform]
+    cmd = [script, NNG_REVISION, MBEDTLS_REVISION, cmake_platform]
 
     if is_posix_shell:
         cmd = [shutil.which("sh")] + cmd
