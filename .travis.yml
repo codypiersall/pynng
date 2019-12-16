@@ -18,6 +18,8 @@ env:
   global:
     - CIBW_SKIP="cp27-*"
     - TWINE_USERNAME=xzz53
+    - CIBW_TEST_REQUIRES="pytest pytest-asyncio pytest-trio trio"
+    - CIBW_TEST_COMMAND="pytest -s -v {project}/test"
 
 install:
   - python -m pip install twine cibuildwheel==1.1.0
