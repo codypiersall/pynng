@@ -9,7 +9,7 @@ CMAKE_ARGS=$3
 CMAKE_CONFIG="--config Release"
 
 #if not on MSYS2
-if [ -z "$MSYSTEM" ] && ! [ "$TRAVIS_OS_NAME" == "windows" ]; then
+if [ -z "$MSYSTEM" ] && ! [ "$TRAVIS_OS_NAME" = "windows" ]; then
 	export CFLAGS=-fPIC
     CMAKE_CONFIG=""
 fi
@@ -46,7 +46,7 @@ cmake --version
           -DCMAKE_INSTALL_PREFIX=../prefix ..
     cmake --build . $CMAKE_CONFIG
 
-    if [ "$TRAVIS_OS_NAME" == "windows" ] || [ -n "$MSYSTEM" ] ; then
+    if [ "$TRAVIS_OS_NAME" = "windows" ] || [ -n "$MSYSTEM" ] ; then
         cmake --install . $CMAKE_CONFIG
     else
         make install
