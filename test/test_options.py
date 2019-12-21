@@ -1,6 +1,6 @@
 import pynng.options
 import pytest
-
+from pathlib import Path
 
 PORT = 13131
 IP = '127.0.0.1'
@@ -91,6 +91,10 @@ def test_nng_sockaddr():
         with pytest.raises(pynng.NotSupported):
             sa = s0.listeners[0].local_address
             assert str(sa) == name
+
+    # skip ipv6 test when running in Docker
+    if Path('/.dockerenv').exists():
+        return
 
     ipv6 = 'tcp://[::1]:13131'
     with pynng.Pair1(recv_timeout=50, listen=ipv6) as s0:

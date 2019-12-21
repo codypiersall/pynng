@@ -3,7 +3,7 @@ import trio
 
 import pynng
 
-from test._test_util import wait_pipe_len
+from _test_util import wait_pipe_len
 
 
 addr = 'tcp://127.0.0.1:13131'
@@ -143,4 +143,3 @@ def test_sub_sock_options():
             assert sub.recv() == b'beep hi'
             pub.send(b'hello there')
             assert sub.recv() == b'hello there'
-

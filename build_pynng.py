@@ -14,10 +14,15 @@ if sys.platform == 'win32':
         objects = ['./nng/build/nng.lib']
     else:
         objects = ['./nng/build/Release/nng.lib']
+
+    objects += ["./mbedtls/prefix/lib/mbedtls.lib", "./mbedtls/prefix/lib/mbedx509.lib",
+                "./mbedtls/prefix/lib/mbedcrypto.lib"]
+
     # libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
 else:
-    objects = ['./nng/build/libnng.a']
+    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
+               "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
     libraries = ['pthread']
 
 
@@ -26,6 +31,7 @@ ffibuilder.set_source(
     r""" // passed to the real C compiler,
          // contains implementation of things declared in cdef()
          #define NNG_DECL
+         #define NNG_STATIC_LIB
          #include <nng/nng.h>
          #include <nng/protocol/bus0/bus.h>
          #include <nng/protocol/pair0/pair.h>
@@ -38,6 +44,9 @@ ffibuilder.set_source(
          #include <nng/protocol/reqrep0/rep.h>
          #include <nng/protocol/survey0/respond.h>
          #include <nng/protocol/survey0/survey.h>
+         #include <nng/supplemental/tls/tls.h>
+         #include <nng/transport/tls/tls.h>
+
     """,
     libraries=libraries,
     # library_dirs=['nng/build/Debug',],

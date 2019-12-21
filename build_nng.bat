@@ -5,24 +5,37 @@
 :: script handles that automatically.
 :: @echo off
 
-if {%1}=={} (
-    echo.ERROR: You must provide the correct CMake compiler generator.
-    goto :end
-)
-
 pushd .
-rmdir /s /q nng\build
-:: check if nng library already exists
-if not exist nng (
-    git clone https://github.com/nanomsg/nng nng
-    pushd nng
-    git checkout %2
-    popd
-)
-mkdir nng\build
-cd nng\build && ^
-cmake -G %1 .. && ^
-cmake --build . --config Release
+rmdir /s /q mbedtls
+git clone --recursive https://github.com/ARMmbed/mbedtls.git
+pushd mbedtls
+git checkout %2
 popd
 
-:end
+mkdir mbedtls\build mbedtls\prefix
+cd mbedtls\build
+
+cmake %~3 -DENABLE_TESTING=OFF ^
+-DENABLE_PROGRAMS=OFF -DCMAKE_BUILD_TYPE=Release ^
+-DCMAKE_INSTALL_PREFIX=..\prefix ..
+cmake --build . --config Release
+cmake --install . --config Release
+
+popd
+
+pushd .
+rmdir /s /q nng
+git clone https://github.com/nanomsg/nng nng
+pushd nng
+git checkout %1
+popd
+
+mkdir nng\build
+cd nng\build
+
+cmake %~3 -DNNG_ENABLE_TLS=ON ^
+-DNNG_TESTS=OFF -DNNG_TOOLS=OFF -DCMAKE_BUILD_TYPE=Release ^
+-DMBEDTLS_ROOT_DIR=%cd%/../../mbedtls/prefix/ ..
+
+cmake --build . --config Release
+popd

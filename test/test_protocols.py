@@ -5,7 +5,7 @@ import pytest
 
 import pynng
 
-from test._test_util import wait_pipe_len
+from _test_util import wait_pipe_len
 
 # TODO: all sockets need timeouts
 
@@ -185,5 +185,3 @@ def test_can_pass_addr_as_bytes_or_str():
     with pynng.Pair0(listen=b'tcp://127.0.0.1:42421'), \
             pynng.Pair0(dial='tcp://127.0.0.1:42421'):
         pass
-
-

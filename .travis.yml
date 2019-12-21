@@ -1,35 +1,33 @@
-services:
-  - docker
-install:
-  - docker pull quay.io/pypa/manylinux1_x86_64
-  - mkdir artifacts
-script:
-  - docker run --sysctl net.ipv6.conf.all.disable_ipv6=0 -v "$(pwd)/artifacts:/mnt/artifacts"
-        -v "$(pwd):/root/pynng"
-        --rm -i -t quay.io/pypa/manylinux1_x86_64
-        bash -x -c "cd ~/pynng && ./build_in_docker.sh"
-  - ls artifacts
-  - ls artifacts/dist
-  # we're listing the files individually here because if one failed to build we
-  # want Travis to acknowledge failure.
-  - ls artifacts/dist/*cp35-cp35m-*.whl
-  - ls artifacts/dist/*cp36-cp36m-*.whl
-  - ls artifacts/dist/*cp37-cp37m-*.whl
-  # when docker runs pytest, successful runs create a file
-  - ls artifacts/v35_success
-  - ls artifacts/v36_success
-  - ls artifacts/v37_success
-deploy:
-  provider: releases
-  api_key:
-    secure: l9f4W+ziqJ51mceLi/y+O7encqYSwWOICQaptq+gM+HPFGbf/MzaBnT09IOvD05q8oaQCeNlg3CVzq+1fIt+7STk5fSj6Jb6SYqlKVFDX48kDCijmThExUqfEvT7th3EiPOD61YNvFc1TAJlPB4RoL/ItRpGpLZYvHaBhIqVLBQvPAAlAY9zB1sER5y7C9R+1EEUVezFBY3Ilp37g4M0+wCxI6COAxgXj/AMI1yKJJp6aKfaWvYlF7VBc9hDvj60Cs4nLxj+sNP00Zv2bhg1rQ+hMz4CX3Ie0yqbHXXeR1O0xtf9iQmWoGCxrA7qdK1eWkm4peBQyFN1IfepOYVv0mlNZ67pCX3jO/4Fu+Ml48rcRNDr9589dvx9t03V7Z+UMRaYsRx1YjyVgu4myxLA1pGgU10qllL7BVwbXYp1xpEIWqKtkLt/afHuOdIZGLf4lShm1qU4OtlBUXhS9nB7zMA4SQx/EjtgYxKmR3dl+qS2gmRvj9k2/MfuAP149pAP4LeQ5s887j4YWyuQdHx0PO4gTHJYCuihzBqscSZre6qOx3y1apvpTElJhJVWMtowN+yVm1thKPKBasQ0gicA620yH0g84PpaEP7DA3JYK2GiPj+ScFn3Y3TRJ29+ENRHUtzxjT4uFjI+m8rlk8mFgBKdzSjN9lDs2+p24xsMl+Q=
-  file_glob: true
-  file: artifacts/dist/*.whl
-  skip_cleanup: true
-  on:
-    repo: codypiersall/pynng
-    tags: true
+language: python
 
-branches:
-  except:
-    - docs
+jobs:
+  include:
+    # perform a linux build
+    - services: docker
+    # and a mac build
+    - os: osx
+      language: shell
+    # and a windows build
+    - os: windows
+      language: shell
+      before_install:
+        - choco install python --version 3.8.0
+        - export PATH="/c/Python38:/c/Python38/Scripts:$PATH"
+
+env:
+  global:
+    - CIBW_SKIP="cp27-*"
+    - TWINE_USERNAME=xzz53
+    - CIBW_TEST_REQUIRES="pytest pytest-asyncio pytest-trio trio"
+    - CIBW_TEST_COMMAND="pytest -s -v {project}/test"
+
+install:
+  - python -m pip install twine cibuildwheel==1.1.0
+
+script:
+  # build the wheels, put them into './wheelhouse'
+  - python -m cibuildwheel --output-dir wheelhouse
+
+after_success:
+  # if the release was tagged, upload them to PyPI
+  - if [[ $TRAVIS_TAG ]]; then python -m twine upload wheelhouse/*.whl; fi

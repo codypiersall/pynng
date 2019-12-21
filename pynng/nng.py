@@ -122,8 +122,14 @@ class BooleanOption(_NNGOption):
     _setter = options._setopt_bool
 
 
+class PointerOption(_NNGOption):
+    """Descriptor for setting pointer values"""
+    _setter = options._setopt_ptr
+
+
 class NotImplementedOption(_NNGOption):
     """Represents a currently un-implemented option in Python."""
+
     def __init__(self, option_name, errmsg):
         super().__init__(option_name)
         self.errmsg = errmsg
@@ -261,6 +267,12 @@ class Socket:
     send_fd = IntOption('send-fd')
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
+
+    tls_config = PointerOption('tls-config')
+    tls_ca_file = StringOption('tls-ca-file')
+    tls_cert_key_file = StringOption('tls-cert-key-file')
+    tls_auth_mode = IntOption('tls-authmode')
+    tls_server_name = StringOption('tls-server-name')
 
     def __init__(self, *,
                  dial=None,
@@ -689,6 +701,7 @@ class Pair1(Socket):
     .. literalinclude:: snippets/pair1_async.py
 
     """
+
     def __init__(self, *, polyamorous=None, **kwargs):
         # make sure we don't listen/dial before setting polyamorous, so we pop
         # them out of kwargs, then do the dial/listen below.
@@ -983,6 +996,12 @@ class Dialer:
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
 
+    tls_config = PointerOption('tls-config')
+    tls_ca_file = StringOption('tls-ca-file')
+    tls_cert_key_file = StringOption('tls-cert-key-file')
+    tls_auth_mode = IntOption('tls-authmode')
+    tls_server_name = StringOption('tls-server-name')
+
     def __init__(self, dialer, socket):
         """
         Args:
@@ -1033,6 +1052,12 @@ class Listener:
     peer_name = StringOption('peer-name')
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
+
+    tls_config = PointerOption('tls-config')
+    tls_ca_file = StringOption('tls-ca-file')
+    tls_cert_key_file = StringOption('tls-cert-key-file')
+    tls_auth_mode = IntOption('tls-authmode')
+    tls_server_name = StringOption('tls-server-name')
 
     def __init__(self, listener, socket):
         """
