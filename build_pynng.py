@@ -10,15 +10,16 @@ import sys
 ffibuilder = FFI()
 
 if sys.platform == 'win32':
-    if shutil.which('ninja'):
-        objects = ['./nng/build/nng.lib']
-    else:
-        objects = ['./nng/build/Release/nng.lib']
+    objects = ['./nng/build/Release/nng.lib']
 
-    objects += ["./mbedtls/prefix/lib/mbedtls.lib", "./mbedtls/prefix/lib/mbedx509.lib",
-                "./mbedtls/prefix/lib/mbedcrypto.lib"]
+    mbedtls_dir = './mbedtls/build/library/Release'
+    objects += [
+        mbedtls_dir + "/mbedtls.lib",
+        mbedtls_dir + "/mbedx509.lib",
+        mbedtls_dir + "/mbedcrypto.lib",
+    ]
 
-    # libraries determined to be necessary through trial and error
+    # system libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
 else:
     objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",

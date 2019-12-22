@@ -12,14 +12,13 @@ pushd mbedtls
 git checkout %2
 popd
 
-mkdir mbedtls\build mbedtls\prefix
+mkdir mbedtls\build
 cd mbedtls\build
 
 cmake %~3 -DENABLE_TESTING=OFF ^
 -DENABLE_PROGRAMS=OFF -DCMAKE_BUILD_TYPE=Release ^
 -DCMAKE_INSTALL_PREFIX=..\prefix ..
 cmake --build . --config Release
-cmake --install . --config Release
 
 popd
 
@@ -33,9 +32,14 @@ popd
 mkdir nng\build
 cd nng\build
 
-cmake %~3 -DNNG_ENABLE_TLS=ON ^
--DNNG_TESTS=OFF -DNNG_TOOLS=OFF -DCMAKE_BUILD_TYPE=Release ^
--DMBEDTLS_ROOT_DIR=%cd%/../../mbedtls/prefix/ ..
+cmake %~3 ^
+    -DNNG_ENABLE_TLS=ON ^
+    -DNNG_TESTS=OFF ^
+    -DNNG_TOOLS=OFF ^
+    -DCMAKE_BUILD_TYPE=Release ^
+    -DMBEDTLS_ROOT_DIR=%cd%/../../mbedtls/build/library/Release/ ^
+    -DMBEDTLS_INCLUDE_DIR=%cd%/../../mbedtls/include/ ^
+    ..
 
 cmake --build . --config Release
 popd

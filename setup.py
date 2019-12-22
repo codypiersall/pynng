@@ -20,26 +20,35 @@ def build_nng_lib():
     # installed yet (since it is a dependency, and this script installs
     # dependencies).  Bootstrapping!
     import build_pynng
-    if len(build_pynng.objects) > 0 and all(map(os.path.exists, build_pynng.objects)):
+    objs = build_pynng.objects
+    if objs and all(os.path.exists(p) for p in objs):
         # the object file we were planning on building already exists; we'll
         # just use it!
         return
 
     is_64bit = sys.maxsize > 2**32
-    is_posix_shell = os.getenv("SHELL") is not None or sys.platform != 'win32'
-
-    script = os.path.join(THIS_DIR, 'build_nng.sh') if is_posix_shell \
-        else os.path.join(THIS_DIR, 'build_nng.bat')
-
-    cmake_platform = ""
     if sys.platform == 'win32':
-        cmake_platform = "-A x64" if is_64bit else "-A win32"
+        # pick the correct cmake generator, based on the Python version.
+        # from https://wiki.python.org/moin/WindowsCompilers for Python
+        # version, and cmake --help for list of CMake generator names
+        major, minor, *_ = sys.version_info
+        cmake_generators = {
+            (3, 5): 'Visual Studio 14 2015',
+            (3, 6): 'Visual Studio 14 2015',
+            (3, 7): 'Visual Studio 14 2015',
+        }
+        gen = cmake_generators[(major, minor)]
 
-    cmd = [script, NNG_REVISION, MBEDTLS_REVISION, cmake_platform]
+        if is_64bit:
+            gen += ' Win64'
 
-    if is_posix_shell:
-        cmd = [shutil.which("sh")] + cmd
+        script = os.path.join(THIS_DIR, 'build_nng.bat')
+        cmd = [script, NNG_REVISION, MBEDTLS_REVISION, gen]
+    else:
+        script = os.path.join(THIS_DIR, 'build_nng.sh')
+        cmd = [shutil.which("sh"), script, NNG_REVISION, MBEDTLS_REVISION]
 
+    print('executing command', cmd)
     subprocess.check_call(cmd)
 
 
