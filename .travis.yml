@@ -7,17 +7,11 @@ jobs:
     # and a mac build
     - os: osx
       language: shell
-    # and a windows build
-    - os: windows
-      language: shell
-      before_install:
-        - choco install python --version 3.8.0
-        - export PATH="/c/Python38:/c/Python38/Scripts:$PATH"
 
 env:
   global:
     - CIBW_SKIP="cp27-*"
-    - TWINE_USERNAME=xzz53
+    - TWINE_USERNAME=codypiersall
     - CIBW_TEST_REQUIRES="pytest pytest-asyncio pytest-trio trio"
     - CIBW_TEST_COMMAND="pytest -s -v {project}/test"
 

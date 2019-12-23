@@ -1,3 +1,5 @@
+import time
+
 import pytest
 import trio
 
@@ -34,7 +36,8 @@ def test_closing_listener_works():
         s.listeners[0].close()
         assert len(s.listeners) == 0
         # if the listener is really closed, we should be able to listen at the
-        # same address again
+        # same address again; we'll sleep a little so OS X CI will pass.
+        time.sleep(0.01)
         s.listen(addr)
         assert len(s.listeners) == 1
     assert len(s.listeners) == 0
