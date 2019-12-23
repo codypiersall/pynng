@@ -1,6 +1,6 @@
 import os
 import shutil
-import subprocess
+from subprocess import check_call
 import sys
 
 import setuptools.command.build_py
@@ -9,11 +9,96 @@ import setuptools.command.build_ext
 # have to exec; can't import the package before it's built.
 exec(open("pynng/_version.py", encoding="utf-8").read())
 
-THIS_DIR = os.path.dirname(__file__)
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
 
-NNG_REVISION = 'd3bd35ab49ad74528fd9e34cce9016d74dd91943'
-MBEDTLS_REVISION = '04a049bda1ceca48060b57bc4bcf5203ce591421'
+NNG_REPO = 'https://github.com/nanomsg/nng'
+NNG_REV = 'd3bd35ab49ad74528fd9e34cce9016d74dd91943'
+MBEDTLS_REPO = 'https://github.com/ARMmbed/mbedtls.git'
+MBEDTLS_REV = '04a049bda1ceca48060b57bc4bcf5203ce591421'
 
+
+def build_mbedtls_windows(cmake_args):
+    """
+    Clone mbedtls and build it with cmake.
+
+    """
+    do = check_call
+    if os.path.exists('mbedtls'):
+        pass
+        # we can't use shutil.rmtree because it won't delete readonly stuff.
+        do('rmdir /q /s mbedtls', shell=True)
+    do('git clone --recursive {}'.format(MBEDTLS_REPO), shell=True)
+    do('git checkout {}'.format(MBEDTLS_REV), shell=True, cwd='mbedtls')
+    os.mkdir('mbedtls/build')
+    cmake_cmd = ['cmake'] + cmake_args
+    cmake_cmd += [
+        '-DENABLE_PROGRAMS=OFF',
+        '-DCMAKE_BUILD_TYPE=Release',
+        '-DCMAKE_INSTALL_PREFIX=..\prefix',
+        '..'
+    ]
+    do(cmake_cmd, cwd='mbedtls/build')
+    do(
+        'cmake --build . --config Release',
+        shell=True,
+        cwd='mbedtls/build',
+    )
+
+
+def build_nng_windows(cmake_args):
+    """
+    Clone nng and build it with cmake, with TLS enabled.
+
+    """
+    do = check_call
+    if os.path.exists('nng'):
+        do('rmdir /q /s nng', shell=True)
+    do('git clone {}'.format(NNG_REPO), shell=True)
+    do('git checkout {}'.format(NNG_REV), shell=True, cwd='nng')
+    os.mkdir('nng/build')
+    cmake_cmd = ['cmake'] + cmake_args
+    cmake_cmd += [
+        '-DNNG_ENABLE_TLS=ON',
+        '-DNNG_TESTS=OFF',
+        '-DNNG_TOOLS=OFF',
+        '-DCMAKE_BUILD_TYPE=Release',
+        '-DMBEDTLS_ROOT_DIR={}/mbedtls/build/library/Release/'.format(THIS_DIR),
+        '-DMBEDTLS_INCLUDE_DIR={}/mbedtls/include/'.format(THIS_DIR),
+        '..',
+    ]
+    do(cmake_cmd, cwd='nng/build')
+    do(
+        'cmake --build . --config Release',
+        shell=True,
+        cwd='nng/build',
+    )
+
+
+def build_windows_libs():
+    """
+    Builds the nng and mbedtls libs.
+
+    """
+    # pick the correct cmake generator, based on the Python version.
+    # from https://wiki.python.org/moin/WindowsCompilers for Python
+    # version, and cmake --help for list of CMake generator names.
+    # We can't *just* specify the architecture of Python because it could use
+    # an incompatible compiler, i.e. there is no guarantee that VS 2017 will be
+    # compatible with a VS 2015 build of Python.
+    major, minor, *_ = sys.version_info
+    cmake_generators = {
+        (3, 5): 'Visual Studio 14 2015',
+        (3, 6): 'Visual Studio 14 2015',
+        (3, 7): 'Visual Studio 14 2015',
+    }
+    gen = cmake_generators[(major, minor)]
+
+    is_64bit = sys.maxsize > 2**32
+    if is_64bit:
+        gen += ' Win64'
+
+    build_mbedtls_windows(['-G', gen])
+    build_nng_windows(['-G', gen])
 
 def build_nng_lib():
     # cannot import build_pynng at the top level becuase cffi may not be
@@ -26,30 +111,12 @@ def build_nng_lib():
         # just use it!
         return
 
-    is_64bit = sys.maxsize > 2**32
     if sys.platform == 'win32':
-        # pick the correct cmake generator, based on the Python version.
-        # from https://wiki.python.org/moin/WindowsCompilers for Python
-        # version, and cmake --help for list of CMake generator names
-        major, minor, *_ = sys.version_info
-        cmake_generators = {
-            (3, 5): 'Visual Studio 14 2015',
-            (3, 6): 'Visual Studio 14 2015',
-            (3, 7): 'Visual Studio 14 2015',
-        }
-        gen = cmake_generators[(major, minor)]
-
-        if is_64bit:
-            gen += ' Win64'
-
-        script = os.path.join(THIS_DIR, 'build_nng.bat')
-        cmd = [script, NNG_REVISION, MBEDTLS_REVISION, gen]
+        build_windows_libs()
     else:
         script = os.path.join(THIS_DIR, 'build_nng.sh')
-        cmd = [shutil.which("sh"), script, NNG_REVISION, MBEDTLS_REVISION]
-
-    print('executing command', cmd)
-    subprocess.check_call(cmd)
+        cmd = [shutil.which("sh"), script, NNG_REV, MBEDTLS_REV]
+        check_call(cmd)
 
 
 # TODO: this is basically a hack to get something to run before running cffi
