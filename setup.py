@@ -34,7 +34,7 @@ def build_mbedtls_windows(cmake_args):
     cmake_cmd += [
         '-DENABLE_PROGRAMS=OFF',
         '-DCMAKE_BUILD_TYPE=Release',
-        '-DCMAKE_INSTALL_PREFIX=..\prefix',
+        '-DCMAKE_INSTALL_PREFIX=../prefix',
         '..'
     ]
     do(cmake_cmd, cwd='mbedtls/build')
@@ -99,6 +99,7 @@ def build_windows_libs():
 
     build_mbedtls_windows(['-G', gen])
     build_nng_windows(['-G', gen])
+
 
 def build_nng_lib():
     # cannot import build_pynng at the top level becuase cffi may not be
