@@ -290,7 +290,7 @@ class Socket:
                  block_on_dial=None,
                  name=None,
                  tls_config=None,
-                 async_backend=None,
+                 async_backend=None
                  ):
 
         # mapping of id: Python objects
