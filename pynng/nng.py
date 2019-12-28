@@ -275,10 +275,6 @@ class Socket:
     tcp_keepalive = BooleanOption('tcp-keepalive')
 
     tls_config = PointerOption('tls-config')
-    tls_ca_file = StringOption('tls-ca-file')
-    tls_cert_key_file = StringOption('tls-cert-key-file')
-    tls_auth_mode = IntOption('tls-authmode')
-    tls_server_name = StringOption('tls-server-name')
 
     def __init__(self, *,
                  dial=None,
