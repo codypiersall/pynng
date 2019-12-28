@@ -25,6 +25,10 @@ class TLSConfig:
         cert_key_file (str):  Corresponds to ``nng_tls_config_cert_key_file``.
         passwd (str):  Password used for configuring certificates.
 
+    Check the `TLS tests
+    <https://github.com/codypiersall/pynng/blob/master/test/test_api.py>`_ for
+    usage examples.
+
     """
 
     MODE_CLIENT = pynng.lib.NNG_TLS_MODE_CLIENT
