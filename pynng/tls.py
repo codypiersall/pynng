@@ -3,7 +3,28 @@ import pynng
 
 class TLSConfig:
     """
-    Python wrapper for struct nng_tls_config.
+    TLS Configuration object.  This object is used to configure sockets that
+    are using the TLS transport.
+
+    Args:
+        mode: Must be ``TLSConfig.MODE_CLIENT`` or ``TLSConfig.MODE_SERVER``.
+            Corresponds to nng's ``mode`` argument in ``nng_tls_config_alloc``.
+        server_name (str): When configuring a client, ``server_name`` is used
+            to compare the identity of the server's certificate.  Corresponds
+            to ``nng_tls_config_server_name``.
+        ca_string (str):  Set certificate authority with a string.  Corresponds
+            to ``nng_tls_config_ca_chain``
+        own_key_string (str):  When passed with ``own_cert_string``, is used to
+            set own certificate.  Corresponds to ``nng_tls_config_own_cert``.
+        own_cert_string (str): When passed with ``own_key_string``, is used to
+            set own certificate.  Corresponds to ``nng_tls_config_own_cert``.
+        auth_mode: Set the authentication mode of the connection.  Corresponds
+            to ``nng_tls_config_auth_mode``.
+        ca_files (str or list[str]): ca files to use for the TLS connection.
+            Corresponds to ``nng_tls_config_ca_file``.
+        cert_key_file (str):  Corresponds to ``nng_tls_config_cert_key_file``.
+        passwd (str):  Password used for configuring certificates.
+
     """
 
     MODE_CLIENT = pynng.lib.NNG_TLS_MODE_CLIENT
@@ -22,10 +43,6 @@ class TLSConfig:
                  ca_files=None,
                  cert_key_file=None,
                  passwd=None):
-        """
-        Create a new tls config object. mode must be ether MODE_CLIENT or
-        MODE_SERVER
-        """
 
         if ca_string and ca_files:
             raise ValueError("Cannot set both ca_string and ca_files!")
@@ -35,6 +52,10 @@ class TLSConfig:
 
         if bool(own_cert_string) != bool(own_key_string):
             raise ValueError("own_key_string and own_cert_string must be both set or unset")
+
+        if isinstance(ca_files, str):
+            # assume the user really intended to only set a single ca file.
+            ca_files = [ca_files]
 
         tls_config_p = pynng.ffi.new('nng_tls_config **')
         pynng.check_err(pynng.lib.nng_tls_config_alloc(tls_config_p, mode))

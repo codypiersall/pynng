@@ -1,4 +1,3 @@
-import pytest
 from pynng import Pair0, TLSConfig
 
 SERVER_CERT = """

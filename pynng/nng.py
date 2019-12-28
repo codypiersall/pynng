@@ -241,6 +241,12 @@ class Socket:
              *rlist* and for :meth:`select.poll.register` the *eventmask*
              should be ``POLLIN``.
 
+        * **tls_config** (:class:`~pynng.TLSConfig`): The TLS configuration for
+          this socket.  This option is only valid if the socket is using the
+          TLS transport.  See :class:`~pynng.TLSConfig` for information about
+          the TLS configuration.  Corresponds to ``NNG_OPT_TLS_CONFIG``.  This
+          option is write-only.
+
     .. _Trio: https://trio.readthedocs.io
 
     """
@@ -287,7 +293,8 @@ class Socket:
                  opener=None,
                  block_on_dial=None,
                  name=None,
-                 async_backend=None
+                 tls_config=None,
+                 async_backend=None,
                  ):
 
         # mapping of id: Python objects
@@ -305,6 +312,8 @@ class Socket:
         if opener is None and not hasattr(self, '_opener'):
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
         check_err(self._opener(self._socket))
+        if tls_config is not None:
+            self.tls_config = tls_config
         if recv_timeout is not None:
             self.recv_timeout = recv_timeout
         if send_timeout is not None:
