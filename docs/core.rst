@@ -74,3 +74,21 @@ Listener
 
 .. autoclass:: pynng.Listener(...)
    :members: close
+
+
+---------
+TLSConfig
+---------
+
+Sockets can make use of the TLS transport on top of TCP by specifying an
+address similar to how tcp is specified.  The following are examples of valid
+TLS addresses:
+
+* ``"tls+tcp:127.0.0.1:1313"``, listening on TCP port 1313 on localhost.
+* ``"tls+tcp4:127.0.0.1:1313"``, explicitly requesting IPv4 for TCP port 1313
+  on localhost.
+* ``"tls+tcp6://[::1]:4433"``, explicitly requesting IPv6 for IPv6 localhost on
+  port 4433.
+
+
+.. autoclass:: pynng.TLSConfig(...)

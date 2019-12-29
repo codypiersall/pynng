@@ -50,6 +50,7 @@ The following **transports** are available:
 * **tcp**: communication over networks via tcp.
 * **ws**: communication over networks with websockets.  (Probably only useful if
   one end is on a browser.)
+* **tls+tcp**: Encrypted `TLS`_ communication over networks.
 * **carrier pigeons**: communication via World War 1-style `carrier pigeons`_.
   The latency is pretty high on this one.
 
@@ -60,7 +61,7 @@ This library is available under the `MIT License`_ and the source is available
 on `GitHub`_.
 
 If you need two processes to talk to each other—either locally or remotely—you
-should be using the scalability protocols. You never need to open another
+should be using the scalability protocols. You never need to open another plain
 `socket`_ again.
 
 Okay, that was a little hyperbolic.  But give pynng a chance; you might like
@@ -101,6 +102,7 @@ Indices and tables
 .. _Unix sockets: http://man7.org/linux/man-pages/man7/unix.7.html
 .. _carrier pigeons: https://en.wikipedia.org/wiki/IP_over_Avian_Carriers
 .. _socket: http://man7.org/linux/man-pages/man2/socket.2.html
+.. _TLS: https://en.wikipedia.org/wiki/Transport_Layer_Security
 .. _MIT License: https://github.com/codypiersall/pynng/blob/master/LICENSE.txt
 .. _GitHub: https://github.com/codypiersall/pynng
 .. _Trio: https://trio.readthedocs.io

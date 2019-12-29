@@ -7,4 +7,8 @@ prune nng/build
 prune nng/.git
 prune nng/.circleci
 exclude nng/.gitignore
-
+prune mbedtls/build
+prune mbedtls/.git
+prune mbedtls/.github
+prune mbedtls/.travis.yml
+exclude mbedtls/.gitignore

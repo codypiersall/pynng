@@ -12,6 +12,7 @@ dist
 *.egg-info
 build
 nng/
+mbedtls/
 .eggs
 
 .lvimrc

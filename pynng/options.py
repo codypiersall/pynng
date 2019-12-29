@@ -1,5 +1,6 @@
 import pynng
 import pynng.sockaddr
+import pynng.tls
 
 
 def _get_inst_and_func(py_obj, option_type, get_or_set):
@@ -26,6 +27,7 @@ def _get_inst_and_func(py_obj, option_type, get_or_set):
         'string': 'nng_getopt_string',
         'bool': 'nng_getopt_bool',
         'sockaddr': 'nng_getopt_sockaddr',
+        'ptr': 'nng_getopt_ptr',
     }
 
     if option_type not in option_to_func_map:
@@ -185,3 +187,15 @@ def _getopt_sockaddr(py_obj, option):
     return pynng.sockaddr._nng_sockaddr(sock_addr)
 
 
+def _setopt_ptr(py_obj, option, value):
+    if isinstance(value, pynng.tls.TLSConfig):
+        value_ptr = value._tls_config
+    else:
+        msg = 'Invalid value {} of type {}.  Expected TLSConfig.'
+        msg = msg.format(value, type(value))
+        raise ValueError(msg)
+
+    option_char = pynng.nng.to_char(option)
+    obj, lib_func = _get_inst_and_func(py_obj, 'ptr', 'set')
+    ret = lib_func(obj, option_char, value_ptr)
+    pynng.check_err(ret)

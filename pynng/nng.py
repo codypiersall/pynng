@@ -122,8 +122,14 @@ class BooleanOption(_NNGOption):
     _setter = options._setopt_bool
 
 
+class PointerOption(_NNGOption):
+    """Descriptor for setting pointer values"""
+    _setter = options._setopt_ptr
+
+
 class NotImplementedOption(_NNGOption):
     """Represents a currently un-implemented option in Python."""
+
     def __init__(self, option_name, errmsg):
         super().__init__(option_name)
         self.errmsg = errmsg
@@ -235,6 +241,12 @@ class Socket:
              *rlist* and for :meth:`select.poll.register` the *eventmask*
              should be ``POLLIN``.
 
+        * **tls_config** (:class:`~pynng.TLSConfig`): The TLS configuration for
+          this socket.  This option is only valid if the socket is using the
+          TLS transport.  See :class:`~pynng.TLSConfig` for information about
+          the TLS configuration.  Corresponds to ``NNG_OPT_TLS_CONFIG``.  This
+          option is write-only.
+
     .. _Trio: https://trio.readthedocs.io
 
     """
@@ -262,6 +274,8 @@ class Socket:
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
 
+    tls_config = PointerOption('tls-config')
+
     def __init__(self, *,
                  dial=None,
                  listen=None,
@@ -275,6 +289,7 @@ class Socket:
                  opener=None,
                  block_on_dial=None,
                  name=None,
+                 tls_config=None,
                  async_backend=None
                  ):
 
@@ -293,6 +308,8 @@ class Socket:
         if opener is None and not hasattr(self, '_opener'):
             raise TypeError('Cannot directly instantiate a Socket.  Try a subclass.')
         check_err(self._opener(self._socket))
+        if tls_config is not None:
+            self.tls_config = tls_config
         if recv_timeout is not None:
             self.recv_timeout = recv_timeout
         if send_timeout is not None:
@@ -689,6 +706,7 @@ class Pair1(Socket):
     .. literalinclude:: snippets/pair1_async.py
 
     """
+
     def __init__(self, *, polyamorous=None, **kwargs):
         # make sure we don't listen/dial before setting polyamorous, so we pop
         # them out of kwargs, then do the dial/listen below.
@@ -983,6 +1001,12 @@ class Dialer:
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
 
+    tls_config = PointerOption('tls-config')
+    tls_ca_file = StringOption('tls-ca-file')
+    tls_cert_key_file = StringOption('tls-cert-key-file')
+    tls_auth_mode = IntOption('tls-authmode')
+    tls_server_name = StringOption('tls-server-name')
+
     def __init__(self, dialer, socket):
         """
         Args:
@@ -1033,6 +1057,12 @@ class Listener:
     peer_name = StringOption('peer-name')
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
+
+    tls_config = PointerOption('tls-config')
+    tls_ca_file = StringOption('tls-ca-file')
+    tls_cert_key_file = StringOption('tls-cert-key-file')
+    tls_auth_mode = IntOption('tls-authmode')
+    tls_server_name = StringOption('tls-server-name')
 
     def __init__(self, listener, socket):
         """

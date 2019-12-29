@@ -1,9 +1,11 @@
+import time
+
 import pytest
 import trio
 
 import pynng
 
-from test._test_util import wait_pipe_len
+from _test_util import wait_pipe_len
 
 
 addr = 'tcp://127.0.0.1:13131'
@@ -34,7 +36,8 @@ def test_closing_listener_works():
         s.listeners[0].close()
         assert len(s.listeners) == 0
         # if the listener is really closed, we should be able to listen at the
-        # same address again
+        # same address again; we'll sleep a little so OS X CI will pass.
+        time.sleep(0.01)
         s.listen(addr)
         assert len(s.listeners) == 1
     assert len(s.listeners) == 0
@@ -143,4 +146,3 @@ def test_sub_sock_options():
             assert sub.recv() == b'beep hi'
             pub.send(b'hello there')
             assert sub.recv() == b'hello there'
-

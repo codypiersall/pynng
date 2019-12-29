@@ -361,6 +361,29 @@ int nng_surveyor0_open(nng_socket *);
 int nng_surveyor0_open_raw(nng_socket *);
 int nng_respondent0_open(nng_socket *);
 int nng_respondent0_open_raw(nng_socket *);
+typedef struct nng_tls_config nng_tls_config;
+typedef enum nng_tls_mode {
+ NNG_TLS_MODE_CLIENT = 0,
+ NNG_TLS_MODE_SERVER = 1,
+} nng_tls_mode;
+typedef enum nng_tls_auth_mode {
+ NNG_TLS_AUTH_MODE_NONE = 0,
+ NNG_TLS_AUTH_MODE_OPTIONAL = 1,
+ NNG_TLS_AUTH_MODE_REQUIRED = 2,
+} nng_tls_auth_mode;
+int nng_tls_config_alloc(nng_tls_config **, nng_tls_mode);
+void nng_tls_config_hold(nng_tls_config *);
+void nng_tls_config_free(nng_tls_config *);
+int nng_tls_config_server_name(nng_tls_config *, const char *);
+int nng_tls_config_ca_chain(
+    nng_tls_config *, const char *, const char *);
+int nng_tls_config_own_cert(
+    nng_tls_config *, const char *, const char *, const char *);
+int nng_tls_config_auth_mode(nng_tls_config *, nng_tls_auth_mode);
+int nng_tls_config_ca_file(nng_tls_config *, const char *);
+int nng_tls_config_cert_key_file(
+    nng_tls_config *, const char *, const char *);
+int nng_tls_register(void);
 #define NNG_MAJOR_VERSION 1
 #define NNG_MINOR_VERSION 1
 #define NNG_PATCH_VERSION 1
