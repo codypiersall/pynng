@@ -107,9 +107,6 @@ Many other protocols are available as well:
 * `Push0`, `Pull0`: Aggregate messages from multiple sources and load balance
   among many destinations.
 
-Feel free to check out the [documentation](https://pynng.readthedocs.io), which
-is currently a work in progress.
-
 Examples
 --------
 
@@ -124,11 +121,5 @@ The **only** stable branch is `master`.  There will *never* be a `git push -f`
 on master.  On the other hand, all other branches are not considered stable;
 they may be deleted, rebased, force-pushed, and any other manner of funky
 business.
-
-TODO
-----
-
-* More docs.  Most of the public API has docstrings, but hosted documentation
-  at readthedocs will happen one day.
 
 [nanomsg next generation]: https://nanomsg.github.io/nng/index.html
