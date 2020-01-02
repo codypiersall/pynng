@@ -86,11 +86,10 @@ def test_nng_sockaddr():
         assert sa.path == path
         assert str(sa) == path
 
-    name = 'thisisinproc'
-    with pynng.Pair1(recv_timeout=50, listen='inproc://{}'.format(name)) as s0:
-        with pytest.raises(pynng.NotSupported):
-            sa = s0.listeners[0].local_address
-            assert str(sa) == name
+    url = 'inproc://thisisinproc'
+    with pynng.Pair1(recv_timeout=50, listen=url) as s0:
+        sa = s0.listeners[0].local_address
+        assert str(sa) == url
 
     # skip ipv6 test when running in Docker
     if Path('/.dockerenv').exists():
