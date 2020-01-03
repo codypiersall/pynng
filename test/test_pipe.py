@@ -51,10 +51,7 @@ def test_pipe_local_and_remote_addresses():
         assert str(local_addr0) == addr.replace('tcp://', '')
         assert str(local_addr0) == str(remote_addr1)
         # on Windows, the local address is 0.0.0.0:0
-        if sys.platform == 'win32':
-            assert str(local_addr1) == '0.0.0.0:0'
-        else:
-            assert str(local_addr1) == str(remote_addr0)
+        assert str(local_addr1) == str(remote_addr0)
 
 
 def test_pre_pipe_connect_cb_totally_works():
