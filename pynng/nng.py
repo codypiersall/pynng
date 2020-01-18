@@ -6,6 +6,7 @@ Provides a Pythonic interface to cffi nng bindings
 import logging
 import weakref
 import threading
+import atexit
 
 import pynng
 from ._nng import ffi, lib
@@ -28,13 +29,16 @@ Socket
 Surveyor0 Respondent0
 '''.split()
 
-# a mapping of id(sock): sock for use in callbacks.  When a socket is
-# initialized, it adds itself to this dict.  When a socket is closed, it
-# removes itself from this dict.  In order to allow sockets to be garbage
-# collected, a weak reference to the socket is stored here instead of the
-# actual socket.
+# Register an atexit handler to call the nng_fini() cleanup function.
+# This is necessary to ensure:
+#   * The Python interpreter doesn't finalize and kill the reap thread
+#     during a callback to _nng_pipe_cb
+#   * Cleanup background queue threads used by NNG
 
-_live_sockets = weakref.WeakValueDictionary()
+def _pynng_atexit():
+    lib.nng_fini()
+
+atexit.register(_pynng_atexit)
 
 
 def _ensure_can_send(thing):
@@ -329,16 +333,14 @@ class Socket:
 
         # set up pipe callbacks. This **must** be called before listen/dial to
         # avoid race conditions.
-        as_void = ffi.cast('void *', id(self))
+
+        handle = ffi.new_handle(self)
+        self._handle = handle
+
         for event in (lib.NNG_PIPE_EV_ADD_PRE, lib.NNG_PIPE_EV_ADD_POST,
                       lib.NNG_PIPE_EV_REM_POST):
             check_err(lib.nng_pipe_notify(
-                self.socket, event, lib._nng_pipe_cb, as_void))
-
-        # The socket *must* be added to the _live_sockets map before calling
-        # listen/dial so that no callbacks are called before the socket is
-        # added to the map (because then the callback would fail!).
-        _live_sockets[id(self)] = self
+                self.socket, event, lib._nng_pipe_cb, handle))
 
         if listen is not None:
             self.listen(listen)
@@ -1263,11 +1265,14 @@ def _do_callbacks(pipe, callbacks):
             msg = 'Exception raised in pre pipe connect callback {!r}'
             logger.exception(msg.format(cb))
 
-
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
-    sock_id = int(ffi.cast('size_t', arg))
-    sock = _live_sockets[sock_id]
+
+    logging.debug("Pipe callback event {}".format(event))
+
+    # Get the Socket from the handle passed through the callback arguments
+    sock = ffi.from_handle(arg)
+
     # exceptions don't propagate out of this function, so if any exception is
     # raised in any of the callbacks, we just log it (using logger.exception).
     with sock._pipe_notify_lock:
