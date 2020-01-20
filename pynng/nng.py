@@ -496,9 +496,13 @@ class Socket:
     def _add_pipe(self, lib_pipe):
         # this is only called inside the pipe callback.
         pipe_id = lib.nng_pipe_id(lib_pipe)
-        pipe = Pipe(lib_pipe, self)
-        self._pipes[pipe_id] = pipe
-        return pipe
+
+        # If the pipe already exists in the Socket, don't create a new one
+        if pipe_id not in self._pipes:
+            pipe = Pipe(lib_pipe, self)
+            self._pipes[pipe_id] = pipe
+
+        return self._pipes[pipe_id]
 
     def _remove_pipe(self, lib_pipe):
         pipe_id = lib.nng_pipe_id(lib_pipe)
@@ -570,16 +574,27 @@ class Socket:
         set it on the Message ``msg``
 
         """
-        lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        try:
-            msg.pipe = self._pipes[pipe_id]
-        except KeyError:
-            # if pipe_id < 0, that *probably* means we hit a race where the
-            # associated pipe was closed.  So only warn when pipe_id is valid
-            if pipe_id >= 0:
-                logger.warning("Could not associate msg with pipe (pipe_id == %d)",
-                               pipe_id)
+
+        # Wrap pipe handling inside the notify lock since we can create
+        # a new Pipe and associate it with the Socket if the callbacks
+        # haven't been called yet. This will ensure there's no race
+        # condition with the pipe callbacks.
+        with self._pipe_notify_lock:
+            lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
+            pipe_id = lib.nng_pipe_id(lib_pipe)
+            try:
+                msg.pipe = self._pipes[pipe_id]
+            except KeyError:
+                # A message may have been received before the pipe callback was called.
+                # Create a new Pipe and associate it with the Socket.
+                # When the callback is called, it will detect that the pipe was already.
+
+                # if pipe_id < 0, that *probably* means we hit a race where the
+                # associated pipe was closed.
+                if pipe_id >= 0:
+                    # Add the pipe to the socket
+                    msg.pipe = self._add_pipe(lib_pipe)
+
 
     def recv_msg(self, block=True):
         """Receive a :class:`Message` on the socket."""
@@ -1288,7 +1303,11 @@ def _nng_pipe_cb(lib_pipe, event, arg):
                 # will result in a KeyError below.
                 sock._remove_pipe(lib_pipe)
         elif event == lib.NNG_PIPE_EV_ADD_POST:
-            pipe = sock._pipes[pipe_id]
+            # The ADD_POST event can arrive before ADD_PRE, in which case the Socket
+            # won't have the pipe_id in the _pipes dictionary
+
+            # _add_pipe will return an existing pipe or create a new one if it doesn't exist
+            pipe = sock._add_pipe(lib_pipe)
             _do_callbacks(pipe, sock._on_post_pipe_add)
         elif event == lib.NNG_PIPE_EV_REM_POST:
             try:
