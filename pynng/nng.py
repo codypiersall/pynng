@@ -6,6 +6,7 @@ Provides a Pythonic interface to cffi nng bindings
 import logging
 import weakref
 import threading
+import atexit
 
 import pynng
 from ._nng import ffi, lib
@@ -28,13 +29,16 @@ Socket
 Surveyor0 Respondent0
 '''.split()
 
-# a mapping of id(sock): sock for use in callbacks.  When a socket is
-# initialized, it adds itself to this dict.  When a socket is closed, it
-# removes itself from this dict.  In order to allow sockets to be garbage
-# collected, a weak reference to the socket is stored here instead of the
-# actual socket.
+# Register an atexit handler to call the nng_fini() cleanup function.
+# This is necessary to ensure:
+#   * The Python interpreter doesn't finalize and kill the reap thread
+#     during a callback to _nng_pipe_cb
+#   * Cleanup background queue threads used by NNG
 
-_live_sockets = weakref.WeakValueDictionary()
+def _pynng_atexit():
+    lib.nng_fini()
+
+atexit.register(_pynng_atexit)
 
 
 def _ensure_can_send(thing):
@@ -329,16 +333,14 @@ class Socket:
 
         # set up pipe callbacks. This **must** be called before listen/dial to
         # avoid race conditions.
-        as_void = ffi.cast('void *', id(self))
+
+        handle = ffi.new_handle(self)
+        self._handle = handle
+
         for event in (lib.NNG_PIPE_EV_ADD_PRE, lib.NNG_PIPE_EV_ADD_POST,
                       lib.NNG_PIPE_EV_REM_POST):
             check_err(lib.nng_pipe_notify(
-                self.socket, event, lib._nng_pipe_cb, as_void))
-
-        # The socket *must* be added to the _live_sockets map before calling
-        # listen/dial so that no callbacks are called before the socket is
-        # added to the map (because then the callback would fail!).
-        _live_sockets[id(self)] = self
+                self.socket, event, lib._nng_pipe_cb, handle))
 
         if listen is not None:
             self.listen(listen)
@@ -494,9 +496,13 @@ class Socket:
     def _add_pipe(self, lib_pipe):
         # this is only called inside the pipe callback.
         pipe_id = lib.nng_pipe_id(lib_pipe)
-        pipe = Pipe(lib_pipe, self)
-        self._pipes[pipe_id] = pipe
-        return pipe
+
+        # If the pipe already exists in the Socket, don't create a new one
+        if pipe_id not in self._pipes:
+            pipe = Pipe(lib_pipe, self)
+            self._pipes[pipe_id] = pipe
+
+        return self._pipes[pipe_id]
 
     def _remove_pipe(self, lib_pipe):
         pipe_id = lib.nng_pipe_id(lib_pipe)
@@ -568,16 +574,27 @@ class Socket:
         set it on the Message ``msg``
 
         """
-        lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        try:
-            msg.pipe = self._pipes[pipe_id]
-        except KeyError:
-            # if pipe_id < 0, that *probably* means we hit a race where the
-            # associated pipe was closed.  So only warn when pipe_id is valid
-            if pipe_id >= 0:
-                logger.warning("Could not associate msg with pipe (pipe_id == %d)",
-                               pipe_id)
+
+        # Wrap pipe handling inside the notify lock since we can create
+        # a new Pipe and associate it with the Socket if the callbacks
+        # haven't been called yet. This will ensure there's no race
+        # condition with the pipe callbacks.
+        with self._pipe_notify_lock:
+            lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
+            pipe_id = lib.nng_pipe_id(lib_pipe)
+            try:
+                msg.pipe = self._pipes[pipe_id]
+            except KeyError:
+                # A message may have been received before the pipe callback was called.
+                # Create a new Pipe and associate it with the Socket.
+                # When the callback is called, it will detect that the pipe was already.
+
+                # if pipe_id < 0, that *probably* means we hit a race where the
+                # associated pipe was closed.
+                if pipe_id >= 0:
+                    # Add the pipe to the socket
+                    msg.pipe = self._add_pipe(lib_pipe)
+
 
     def recv_msg(self, block=True):
         """Receive a :class:`Message` on the socket."""
@@ -1263,11 +1280,14 @@ def _do_callbacks(pipe, callbacks):
             msg = 'Exception raised in pre pipe connect callback {!r}'
             logger.exception(msg.format(cb))
 
-
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
-    sock_id = int(ffi.cast('size_t', arg))
-    sock = _live_sockets[sock_id]
+
+    logging.debug("Pipe callback event {}".format(event))
+
+    # Get the Socket from the handle passed through the callback arguments
+    sock = ffi.from_handle(arg)
+
     # exceptions don't propagate out of this function, so if any exception is
     # raised in any of the callbacks, we just log it (using logger.exception).
     with sock._pipe_notify_lock:
@@ -1283,7 +1303,11 @@ def _nng_pipe_cb(lib_pipe, event, arg):
                 # will result in a KeyError below.
                 sock._remove_pipe(lib_pipe)
         elif event == lib.NNG_PIPE_EV_ADD_POST:
-            pipe = sock._pipes[pipe_id]
+            # The ADD_POST event can arrive before ADD_PRE, in which case the Socket
+            # won't have the pipe_id in the _pipes dictionary
+
+            # _add_pipe will return an existing pipe or create a new one if it doesn't exist
+            pipe = sock._add_pipe(lib_pipe)
             _do_callbacks(pipe, sock._on_post_pipe_add)
         elif event == lib.NNG_PIPE_EV_REM_POST:
             try:
