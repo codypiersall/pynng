@@ -33,6 +33,20 @@ async def test_arecv_asyncio_cancel():
 
 
 @pytest.mark.trio
+async def test_asend_trio_send_timeout():
+    with pytest.raises(pynng.exceptions.Timeout):
+        with pynng.Pair0(listen=addr, send_timeout=1) as p0:
+            await p0.asend(b'foo')
+
+
+@pytest.mark.asyncio
+async def test_asend_asyncio_send_timeout():
+    with pytest.raises(pynng.exceptions.Timeout):
+        with pynng.Pair0(listen=addr, send_timeout=1) as p0:
+            await p0.asend(b'foo')
+
+
+@pytest.mark.trio
 async def test_arecv_trio_cancel():
     with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
         with pytest.raises(trio.TooSlowError):
