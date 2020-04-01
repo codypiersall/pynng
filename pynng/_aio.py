@@ -62,7 +62,7 @@ def asyncio_helper(aio):
     def rescheduler():
         loop.call_soon_threadsafe(_set_future_finished, fut)
 
-    return fut, rescheduler
+    return wait_for_aio(), rescheduler
 
 
 def trio_helper(aio):
