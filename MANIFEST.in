@@ -1,5 +1,6 @@
 include *.sh *.py *.bat 8.txt *.md
 include *.h
+include LICENSE.txt
 recursive-include nng *
 recursive-include test *.py
 recursive-include pynng *.py
