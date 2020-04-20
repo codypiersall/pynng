@@ -4,7 +4,6 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 import logging
-import weakref
 import threading
 import atexit
 
@@ -35,8 +34,10 @@ Surveyor0 Respondent0
 #     during a callback to _nng_pipe_cb
 #   * Cleanup background queue threads used by NNG
 
+
 def _pynng_atexit():
     lib.nng_fini()
+
 
 atexit.register(_pynng_atexit)
 
@@ -594,7 +595,6 @@ class Socket:
                 if pipe_id >= 0:
                     # Add the pipe to the socket
                     msg.pipe = self._add_pipe(lib_pipe)
-
 
     def recv_msg(self, block=True):
         """Receive a :class:`Message` on the socket."""
@@ -1280,10 +1280,11 @@ def _do_callbacks(pipe, callbacks):
             msg = 'Exception raised in pre pipe connect callback {!r}'
             logger.exception(msg.format(cb))
 
+
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
 
-    logging.debug("Pipe callback event {}".format(event))
+    logger.debug("Pipe callback event {}".format(event))
 
     # Get the Socket from the handle passed through the callback arguments
     sock = ffi.from_handle(arg)
