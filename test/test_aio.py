@@ -10,7 +10,7 @@ import pynng
 addr = 'tcp://127.0.0.1:31245'
 
 
-@pytest.mark.trio
+@pytest.mark.asyncio
 async def test_arecv_asend_asyncio():
     with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, \
             pynng.Pair0(dial=addr) as dialer:

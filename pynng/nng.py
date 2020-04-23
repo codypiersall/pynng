@@ -34,10 +34,8 @@ Surveyor0 Respondent0
 #     during a callback to _nng_pipe_cb
 #   * Cleanup background queue threads used by NNG
 
-
 def _pynng_atexit():
     lib.nng_fini()
-
 
 atexit.register(_pynng_atexit)
 
@@ -348,6 +346,8 @@ class Socket:
         if dial is not None:
             self.dial(dial, block=block_on_dial)
 
+        self._aio = _aio.AIOHelper(self, self._async_backend)
+
     def dial(self, address, *, block=None):
         """Dial the specified address.
 
@@ -464,14 +464,12 @@ class Socket:
 
     async def arecv(self):
         """The asynchronous version of :meth:`~Socket.recv`"""
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            return await aio.arecv()
+        return await self._aio.arecv()
 
     async def asend(self, data):
         """Asynchronous version of :meth:`~Socket.send`."""
         _ensure_can_send(data)
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            return await aio.asend(data)
+        return await self._aio.asend(data)
 
     def __enter__(self):
         return self
@@ -596,6 +594,7 @@ class Socket:
                     # Add the pipe to the socket
                     msg.pipe = self._add_pipe(lib_pipe)
 
+
     def recv_msg(self, block=True):
         """Receive a :class:`Message` on the socket."""
         flags = 0
@@ -632,18 +631,16 @@ class Socket:
         """
         with msg._mem_freed_lock:
             msg._ensure_can_send()
-            with _aio.AIOHelper(self, self._async_backend) as aio:
-                # Note: the aio helper sets the _mem_freed flag on the msg
-                return await aio.asend_msg(msg)
+            # Note: the aio helper sets the _mem_freed flag on the msg
+            return await self._aio.asend_msg(msg)
 
     async def arecv_msg(self):
         """
         Asynchronously receive the :class:`Message` ``msg`` on the socket.
         """
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            msg = await aio.arecv_msg()
-            self._try_associate_msg_with_pipe(msg)
-            return msg
+        msg = await self._aio.arecv_msg()
+        self._try_associate_msg_with_pipe(msg)
+        return msg
 
 
 class Bus0(Socket):
@@ -1172,14 +1169,12 @@ class Context:
 
     async def arecv(self):
         """Asynchronously receive data using this context."""
-        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-            return await aio.arecv()
+        return await self._aio.arecv()
 
     async def asend(self, data):
         """Asynchronously send data using this context."""
         _ensure_can_send(data)
-        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-            return await aio.asend(data)
+        return await self._aio.asend(data)
 
     def recv_msg(self):
         """Synchronously receive a :class:`Message` using this context."""
@@ -1258,18 +1253,15 @@ class Context:
         """
         with msg._mem_freed_lock:
             msg._ensure_can_send()
-            with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-                # Note: the aio helper sets the _mem_freed flag on the msg
-                return await aio.asend_msg(msg)
+            return self.socket.asend_msg(msg)
 
     async def arecv_msg(self):
         """
         Asynchronously receive a :class:`Message` on the context.
         """
-        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-            msg = await aio.arecv_msg()
-            self._socket._try_associate_msg_with_pipe(msg)
-            return msg
+        msg = await self.socket.arecv_msg()
+        self._socket._try_associate_msg_with_pipe(msg)
+        return msg
 
 
 def _do_callbacks(pipe, callbacks):
@@ -1279,7 +1271,6 @@ def _do_callbacks(pipe, callbacks):
         except Exception:
             msg = 'Exception raised in pre pipe connect callback {!r}'
             logger.exception(msg.format(cb))
-
 
 @ffi.def_extern()
 def _nng_pipe_cb(lib_pipe, event, arg):
