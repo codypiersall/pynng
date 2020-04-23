@@ -143,8 +143,13 @@ class AIOHelper:
             self._lib_arecv = lib.nng_ctx_recv
             self._lib_asend = lib.nng_ctx_send
         self.obj = obj
+
         if async_backend is None:
-            async_backend = sniffio.current_async_library()
+            try:
+                async_backend = sniffio.current_async_library()
+            except sniffio.AsyncLibraryNotFoundError:
+                return
+
         if async_backend not in self._aio_helper_map:
             raise ValueError(
                 'The async backend {} is not currently supported.'
