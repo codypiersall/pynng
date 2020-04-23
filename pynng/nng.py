@@ -1156,7 +1156,7 @@ class Context:
 
     """
 
-    def __init__(self, socket):
+    def __init__(self, socket, async_backend=None):
         # need to set attributes first, so that if anything goes wrong,
         # __del__() doesn't throw an AttributeError
         self._context = None
@@ -1164,6 +1164,8 @@ class Context:
         self._socket = socket
         self._context = ffi.new('nng_ctx *')
         check_err(lib.nng_ctx_open(self._context, socket.socket))
+
+        self._aio = _aio.AIOHelper(self, async_backend)
 
         assert lib.nng_ctx_id(self.context) != -1
 
