@@ -5,7 +5,7 @@ import trio
 
 import pynng
 
-from _test_util import wait_pipe_len
+from ._test_util import wait_pipe_len
 
 
 addr = 'tcp://127.0.0.1:13131'
@@ -130,6 +130,9 @@ def test_pair1_polyamorousness():
 
             p2.send(b'hello there s2')
             assert s2.recv() == b'hello there s2'
+            # TODO: Should *not* need to do this sleep, but stuff hangs without
+            # it.
+            time.sleep(0.05)
 
 
 def test_sub_sock_options():

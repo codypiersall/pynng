@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import time
 
 import pytest
 import trio
@@ -110,6 +111,8 @@ async def test_pub_sub_trio():
 
             # mark subscriber as having received None sentinel
             sentinel_received[which] = True
+            # TODO: This sleep is a hack.
+            time.sleep(0.05)
 
     async with trio.open_nursery() as n:
         # whip up the subs
