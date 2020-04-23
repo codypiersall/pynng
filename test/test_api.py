@@ -130,6 +130,9 @@ def test_pair1_polyamorousness():
 
             p2.send(b'hello there s2')
             assert s2.recv() == b'hello there s2'
+            # TODO: Should *not* need to do this sleep, but stuff hangs without
+            # it.
+            time.sleep(0.05)
 
 
 def test_sub_sock_options():
