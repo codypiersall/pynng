@@ -68,11 +68,11 @@ def asyncio_helper(aio):
 def trio_helper(aio):
     # Record the info needed to get back into this task
     import trio
-    token = trio.hazmat.current_trio_token()
-    task = trio.hazmat.current_task()
+    token = trio.lowlevel.current_trio_token()
+    task = trio.lowlevel.current_task()
 
     def resumer():
-        token.run_sync_soon(trio.hazmat.reschedule, task)
+        token.run_sync_soon(trio.lowlevel.reschedule, task)
 
     async def wait_for_aio():
         # Machinery to handle Trio cancellation, and convert it into nng cancellation
@@ -88,10 +88,10 @@ def trio_helper(aio):
             raise_cancel_fn = raise_cancel_arg
             # And then tell Trio that we weren't able to cancel the operation immediately, so it should keep
             # waiting.
-            return trio.hazmat.Abort.FAILED
+            return trio.lowlevel.Abort.FAILED
 
         # Put the Trio task to sleep.
-        await trio.hazmat.wait_task_rescheduled(abort_fn)
+        await trio.lowlevel.wait_task_rescheduled(abort_fn)
 
         err = lib.nng_aio_result(aio.aio)
         if err == lib.NNG_ECANCELED:
