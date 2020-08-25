@@ -7,7 +7,7 @@ import trio
 
 import pynng
 
-addr = 'tcp://127.0.0.1:31245'
+addr = 'inproc://test-addr'
 
 
 @pytest.mark.trio

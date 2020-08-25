@@ -10,7 +10,7 @@ import pytest
 import pynng
 from _test_util import wait_pipe_len
 
-addr = 'tcp://127.0.0.1:31414'
+addr = 'inproc://test-addr'
 
 
 def test_pipe_gets_added_and_removed():

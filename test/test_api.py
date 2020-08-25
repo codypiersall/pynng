@@ -8,8 +8,8 @@ import pynng
 from _test_util import wait_pipe_len
 
 
-addr = 'tcp://127.0.0.1:13131'
-addr2 = 'tcp://127.0.0.1:13132'
+addr = 'inproc://test-addr'
+addr2 = 'inproc://test-addr2'
 
 
 def test_dialers_get_added():
@@ -138,13 +138,15 @@ def test_pair1_polyamorousness():
 def test_sub_sock_options():
     with pynng.Pub0(listen=addr) as pub:
         # test single option topic
-        with pynng.Sub0(dial=addr, topics='beep', recv_timeout=500) as sub:
+        with pynng.Sub0(dial=addr, topics='beep', recv_timeout=1500) as sub:
             wait_pipe_len(sub, 1)
+            wait_pipe_len(pub, 1)
             pub.send(b'beep hi')
             assert sub.recv() == b'beep hi'
         with pynng.Sub0(dial=addr, topics=['beep', 'hello'],
                         recv_timeout=500) as sub:
             wait_pipe_len(sub, 1)
+            wait_pipe_len(pub, 1)
             pub.send(b'beep hi')
             assert sub.recv() == b'beep hi'
             pub.send(b'hello there')

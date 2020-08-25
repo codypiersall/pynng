@@ -4,7 +4,8 @@ from pathlib import Path
 
 PORT = 13131
 IP = '127.0.0.1'
-addr = 'tcp://{}:{}'.format(IP, PORT)
+tcp_addr = 'tcp://{}:{}'.format(IP, PORT)
+addr = 'inproc://test-addr'
 
 
 def test_timeout_works():
@@ -51,8 +52,8 @@ def test_can_set_recvmaxsize():
     with pynng.Pair1(
             recv_timeout=50,
             recv_max_size=100,
-            listen=addr) as s0, \
-            pynng.Pair1(dial=addr) as s1:
+            listen=tcp_addr) as s0, \
+            pynng.Pair1(dial=tcp_addr) as s1:
         listener = s0.listeners[0]
         msg = b'\0' * 101
         assert listener.recv_max_size == s0.recv_max_size
@@ -62,7 +63,7 @@ def test_can_set_recvmaxsize():
 
 
 def test_nng_sockaddr():
-    with pynng.Pair1(recv_timeout=50, listen=addr) as s0:
+    with pynng.Pair1(recv_timeout=50, listen=tcp_addr) as s0:
         sa = s0.listeners[0].local_address
         assert isinstance(sa, pynng.sockaddr.InAddr)
         # big-endian
@@ -77,7 +78,7 @@ def test_nng_sockaddr():
             ip_parts[3] << 24
         )
         assert expected_addr == sa.addr
-        assert str(sa) == addr.replace('tcp://', '')
+        assert str(sa) == tcp_addr.replace('tcp://', '')
 
     path = '/tmp/thisisipc'
     with pynng.Pair1(recv_timeout=50, listen='ipc://{}'.format(path)) as s0:

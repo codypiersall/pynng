@@ -2,7 +2,7 @@ import pytest
 import pynng
 from _test_util import wait_pipe_len
 
-addr = 'tcp://127.0.0.1:42421'
+addr = 'inproc://test-addr'
 
 # timeout, ms
 to = 1000

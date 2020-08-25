@@ -9,8 +9,7 @@ from _test_util import wait_pipe_len
 
 # TODO: all sockets need timeouts
 
-
-addr = 'tcp://127.0.0.1:13131'
+addr = 'inproc://test-addr'
 
 
 def test_bus():
