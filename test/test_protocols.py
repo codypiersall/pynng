@@ -5,7 +5,7 @@ import pytest
 
 import pynng
 
-from ._test_util import wait_pipe_len
+from _test_util import wait_pipe_len
 
 # TODO: all sockets need timeouts
 
