@@ -3,7 +3,8 @@ This is pynng.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/codypiersall/pynng/blob/master/LICENSE.txt)
 [![PyPI Version](https://img.shields.io/pypi/v/pynng.svg)](https://pypi.org/project/pynng)
-[![Actions Status](https://github.com/codypiersall/pynng/workflows/build-wheels/badge.svg)](https://github.com/codypiersall/pynng/actions)
+[![Build succeeding](https://github.com/codypiersall/pynng/workflows/smoketest/badge.svg)](https://github.com/codypiersall/pynng/actions)
+[![Wheels building](https://github.com/codypiersall/pynng/workflows/build-wheels/badge.svg)](https://github.com/codypiersall/pynng/actions)
 [![docs](https://img.shields.io/readthedocs/pynng.svg)](https://pynng.readthedocs.io)
 
 Ergonomic bindings for [nanomsg next generation] \(nng), in Python.
