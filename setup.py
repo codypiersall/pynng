@@ -12,7 +12,7 @@ exec(open("pynng/_version.py", encoding="utf-8").read())
 THIS_DIR = os.path.abspath(os.path.dirname(__file__))
 
 NNG_REPO = 'https://github.com/nanomsg/nng'
-NNG_REV = '4f5e11c391c4a8f1b2731aee5ad47bc0c925042a'
+NNG_REV = '60198afcb25766a5ca060c9d3c368c4d37ad40da'
 MBEDTLS_REPO = 'https://github.com/ARMmbed/mbedtls.git'
 MBEDTLS_REV = '04a049bda1ceca48060b57bc4bcf5203ce591421'
 
