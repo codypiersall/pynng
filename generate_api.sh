@@ -33,4 +33,5 @@ process_header nng/include/nng/protocol/survey0/respond.h >> nng_api.h
 process_header nng/include/nng/supplemental/tls/tls.h | egrep -v "nng_tls_config_(pass|key)" >> nng_api.h
 process_header nng/include/nng/transport/tls/tls.h >> nng_api.h
 
-grep '#define NNG_.*_VERSION' nng/include/nng/nng.h >> nng_api.h
+grep '^#define NNG_FLAG' nng/include/nng/nng.h >> nng_api.h
+grep '^#define NNG_.*_VERSION' nng/include/nng/nng.h >> nng_api.h

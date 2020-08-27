@@ -692,7 +692,7 @@ class Pair0(Socket):
 
 
 class Pair1(Socket):
-    """A socket for bidrectional communication with potentially many partners.
+    """A socket for bidrectional communication with potentially many peers.
     The Python version of `nng_pair1
     <https://nanomsg.github.io/nng/man/tip/nng_pair.7>`_.
 
@@ -701,10 +701,18 @@ class Pair1(Socket):
     keyword-only argument, ``polyamorous``, which must be set to ``True`` to
     connect with more than one peer.
 
-    .. Note::
+    .. Warning::
 
         If you want to connect to multiple peers you **must** pass
-        ``polyamorous=True`` when you create your socket.
+        ``polyamorous=True`` when you create your socket.  ``polyamorous`` is a
+        read-only attribute of the socket and cannot be changed after creation.
+
+    .. Warning::
+
+        Pair1 was an experimental feature in nng, and is currently deprecated.
+        It will likely be removed in the future; see `nng's docs
+        <https://nng.nanomsg.org/man/v1.3.2/nng_pair_open.3.html>`_ for
+        details.
 
     To get the benefits of polyamory, you need to use the methods that work
     with :class:`Message` objects: :meth:`Socket.recv_msg` and
@@ -724,22 +732,24 @@ class Pair1(Socket):
 
     """
 
-    def __init__(self, *, polyamorous=None, **kwargs):
+    def __init__(self, *, polyamorous=False, **kwargs):
         # make sure we don't listen/dial before setting polyamorous, so we pop
         # them out of kwargs, then do the dial/listen below.
         # It's not beautiful, but it will work.
         dial_addr = kwargs.pop('dial', None)
         listen_addr = kwargs.pop('dial', None)
         super().__init__(**kwargs)
-        if polyamorous is not None:
-            self.polyamorous = polyamorous
+        if polyamorous:
+            self._opener = lib.nng_pair1_open_poly
+        else:
+            self._opener = lib.nng_pair1_open
         # now we can do the listen/dial
         if dial_addr is not None:
             self.dial(dial_addr, block=kwargs.get('block_on_dial'))
         if listen_addr is not None:
             self.listen(listen_addr)
 
-    _opener = lib.nng_pair1_open
+    _opener = lib.nng_pair1_open_poly
     polyamorous = BooleanOption('pair1:polyamorous')
 
 
