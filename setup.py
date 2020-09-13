@@ -34,12 +34,11 @@ def build_mbedtls(cmake_args):
 
     """
     do = check_call
-    if os.path.exists('mbedtls'):
-        _rmdir('mbedtls')
-    do('git clone --recursive {}'.format(MBEDTLS_REPO), shell=True)
-    # for local hacking, just copy a directory (network connection is slow)
-    # do('cp -r ../mbedtls mbedtls', shell=True)
-    do('git checkout {}'.format(MBEDTLS_REV), shell=True, cwd='mbedtls')
+    if not os.path.exists('mbedtls'):
+        do('git clone --recursive {}'.format(MBEDTLS_REPO), shell=True)
+        # for local hacking, just copy a directory (network connection is slow)
+        # do('cp -r ../mbedtls mbedtls', shell=True)
+        do('git checkout {}'.format(MBEDTLS_REV), shell=True, cwd='mbedtls')
     cwd = 'mbedtls/build'
     os.mkdir(cwd)
     cmake_cmd = ['cmake'] + cmake_args
@@ -64,12 +63,11 @@ def build_nng(cmake_args):
 
     """
     do = check_call
-    if os.path.exists('nng'):
-        _rmdir('nng')
-    do('git clone {}'.format(NNG_REPO), shell=True)
-    # for local hacking, just copy a directory (network connection is slow)
-    # do('cp -r ../nng-clean nng', shell=True)
-    do('git checkout {}'.format(NNG_REV), shell=True, cwd='nng')
+    if not os.path.exists('nng'):
+        do('git clone {}'.format(NNG_REPO), shell=True)
+        # for local hacking, just copy a directory (network connection is slow)
+        # do('cp -r ../nng-clean nng', shell=True)
+        do('git checkout {}'.format(NNG_REV), shell=True, cwd='nng')
     os.mkdir('nng/build')
     cmake_cmd = ['cmake'] + cmake_args
     cmake_cmd += [
