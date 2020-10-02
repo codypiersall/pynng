@@ -62,7 +62,8 @@ with open('nng_api.h') as f:
 
 callbacks = """
     // aio callback: https://nanomsg.github.io/nng/man/tip/nng_aio_alloc.3
-    extern "Python" void _async_complete(void *);
+    extern "Python" void _recv_complete(void *);
+    extern "Python" void _send_complete(void *);
 
     // nng_pipe_notify callback:
     // https://nanomsg.github.io/nng/man/tip/nng_pipe_notify.3

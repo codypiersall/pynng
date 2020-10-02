@@ -10,62 +10,63 @@ import pynng
 from .exceptions import check_err
 
 
-# global variable for mapping asynchronous operations with the Python data
-# assocated with them.  Key is id(obj), value is obj
-_aio_map = {}
+@ffi.def_extern()
+def _send_complete(void_p):
+    """
+    This is called when an async send is complete
+    """
 
+    aio = ffi.from_handle(void_p)
+    if aio.send_callback:
+      aio.send_callback()
 
 @ffi.def_extern()
-def _async_complete(void_p):
+def _recv_complete(void_p):
     """
-    This is the callback provided to nng_aio_* functions which completes the
-    Python future argument passed to it.  It schedules _set_future_finished
-    to run to complete the future associated with the event.
+    This is called when an async receive is complete
     """
-    # this is not a public interface, so asserting invariants is good.
-    assert isinstance(void_p, ffi.CData)
-    id = int(ffi.cast('size_t', void_p))
 
-    rescheduler = _aio_map.pop(id)
-    rescheduler()
+    aio = ffi.from_handle(void_p)
+    if aio.recv_callback:
+      aio.recv_callback()
 
-
-def asyncio_helper(aio):
+def asyncio_helper(aio_p):
     """
     Returns a callable that will be passed to _async_complete.  The callable is
     responsible for rescheduling the event loop
 
     """
-    loop = asyncio.get_event_loop()
+
+    loop = asyncio.get_running_loop()
     fut = loop.create_future()
 
+    def _set_future_finished(fut):
+      if not fut.cancelled():
+        fut.set_result(None)
+
+    def callback():
+      loop.call_soon_threadsafe(_set_future_finished, fut)
+
     async def wait_for_aio():
-        already_called_nng_aio_cancel = False
         while True:
             try:
                 await asyncio.shield(fut)
             except asyncio.CancelledError:
-                if not already_called_nng_aio_cancel:
-                    lib.nng_aio_cancel(aio.aio)
-                    already_called_nng_aio_cancel = True
+                if not fut.done():
+                  lib.nng_aio_cancel(aio_p)
+                else:
+                  raise asyncio.CancelledError
             else:
                 break
-        err = lib.nng_aio_result(aio.aio)
+
+        err = lib.nng_aio_result(aio_p)
         if err == lib.NNG_ECANCELED:
             raise asyncio.CancelledError
         check_err(err)
 
-    def _set_future_finished(fut):
-        if not fut.done():
-            fut.set_result(None)
+    return wait_for_aio(), callback
 
-    def rescheduler():
-        loop.call_soon_threadsafe(_set_future_finished, fut)
-
-    return wait_for_aio(), rescheduler
-
-
-def trio_helper(aio):
+def trio_helper(aio_p):
     # Record the info needed to get back into this task
     import trio
     token = trio.lowlevel.current_trio_token()
@@ -81,7 +82,7 @@ def trio_helper(aio):
         def abort_fn(raise_cancel_arg):
             # This function is called if Trio wants to cancel the operation.
             # First, ask nng to cancel the operation.
-            lib.nng_aio_cancel(aio.aio)
+            lib.nng_aio_cancel(aio_p)
             # nng cancellation doesn't happen immediately, so we need to save the raise_cancel function
             # into the enclosing scope to call it later, after we find out if the cancellation actually happened.
             nonlocal raise_cancel_fn
@@ -93,7 +94,7 @@ def trio_helper(aio):
         # Put the Trio task to sleep.
         await trio.lowlevel.wait_task_rescheduled(abort_fn)
 
-        err = lib.nng_aio_result(aio.aio)
+        err = lib.nng_aio_result(aio_p)
         if err == lib.NNG_ECANCELED:
             # This operation was successfully cancelled.
             # Call the function Trio gave us, which raises the proper Trio cancellation exception
@@ -101,7 +102,6 @@ def trio_helper(aio):
         check_err(err)
 
     return wait_for_aio(), resumer
-
 
 class AIOHelper:
     """
@@ -121,14 +121,15 @@ class AIOHelper:
     # asyncio_helper to get an idea of what the functions need to do.
     _aio_helper_map = {
         'asyncio': asyncio_helper,
-        'trio': trio_helper,
+        'trio': trio_helper
     }
 
     def __init__(self, obj, async_backend):
         # set to None now so we can know if we need to free it later
         # This should be at the top of __init__ so that __del__ doesn't raise
         # an unexpected AttributeError if something funky happens
-        self.aio = None
+        self.send_aio = None
+        self.recv_aio = None
         # this is not a public interface, let's make some assertions
         assert isinstance(obj, (pynng.Socket, pynng.Context))
         # we need to choose the correct nng lib functions based on the type of
@@ -142,59 +143,80 @@ class AIOHelper:
             self._lib_arecv = lib.nng_ctx_recv
             self._lib_asend = lib.nng_ctx_send
         self.obj = obj
+
         if async_backend is None:
-            async_backend = sniffio.current_async_library()
+            try:
+                async_backend = sniffio.current_async_library()
+            except sniffio.AsyncLibraryNotFoundError:
+                return
+
         if async_backend not in self._aio_helper_map:
             raise ValueError(
                 'The async backend {} is not currently supported.'
                 .format(async_backend)
             )
-        self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
-        aio_p = ffi.new('nng_aio **')
-        _aio_map[id(self.cb_arg)] = self.cb_arg
-        idarg = id(self.cb_arg)
-        as_void = ffi.cast('void *', idarg)
-        lib.nng_aio_alloc(aio_p, lib._async_complete, as_void)
-        self.aio = aio_p[0]
+
+        self.handle = ffi.new_handle(self)
+
+        send_aio_p = ffi.new('nng_aio **')
+        lib.nng_aio_alloc(send_aio_p, lib._send_complete, self.handle)
+        self.send_aio = send_aio_p[0]
+
+        recv_aio_p = ffi.new('nng_aio **')
+        lib.nng_aio_alloc(recv_aio_p, lib._recv_complete, self.handle)
+        self.recv_aio = recv_aio_p[0]
+
+        self.helper = self._aio_helper_map[async_backend]
+
+        self.send_callback = None
+        self.recv_callback = None
 
     async def arecv(self):
         msg = await self.arecv_msg()
         return msg.bytes
 
     async def arecv_msg(self):
-        check_err(self._lib_arecv(self._nng_obj, self.aio))
-        await self.awaitable
-        check_err(lib.nng_aio_result(self.aio))
-        msg = lib.nng_aio_get_msg(self.aio)
+        (awaitable, self.recv_callback) = self.helper(self.recv_aio)
+        check_err(self._lib_arecv(self._nng_obj, self.recv_aio))
+        await awaitable
+        check_err(lib.nng_aio_result(self.recv_aio))
+        msg = lib.nng_aio_get_msg(self.recv_aio)
         return pynng.Message(msg)
 
     async def asend(self, data):
+        (awaitable, self.send_callback) = self.helper(self.send_aio)
+
         msg_p = ffi.new('nng_msg **')
         check_err(lib.nng_msg_alloc(msg_p, 0))
         msg = msg_p[0]
         check_err(lib.nng_msg_append(msg, data, len(data)))
-        check_err(lib.nng_aio_set_msg(self.aio, msg))
-        check_err(self._lib_asend(self._nng_obj, self.aio))
-        return await self.awaitable
+        check_err(lib.nng_aio_set_msg(self.send_aio, msg))
+        check_err(self._lib_asend(self._nng_obj, self.send_aio))
+        return await awaitable
 
     async def asend_msg(self, msg):
         """
         Asynchronously send a Message
 
         """
-        lib.nng_aio_set_msg(self.aio, msg._nng_msg)
-        check_err(self._lib_asend(self._nng_obj, self.aio))
+        (awaitable, self.send_callback) = self.helper(self.send_aio)
+        lib.nng_aio_set_msg(self.send_aio, msg._nng_msg)
+        check_err(self._lib_asend(self._nng_obj, self.send_aio))
         msg._mem_freed = True
-        return await self.awaitable
+        return await awaitable
 
     def _free(self):
         """
         Free resources allocated with nng
         """
         # TODO: Do we need to check if self.awaitable is not finished?
-        if self.aio is not None:
-            lib.nng_aio_free(self.aio)
-            self.aio = None
+        if self.send_aio is not None:
+            lib.nng_aio_free(self.send_aio)
+            self.send_aio = None
+
+        if self.recv_aio is not None:
+            lib.nng_aio_free(self.recv_aio)
+            self.recv_aio = None
 
     def __enter__(self):
         return self
