@@ -4,10 +4,18 @@ import time
 
 import pytest
 import trio
+import curio
 
 import pynng
 
 addr = 'inproc://test-addr'
+
+@pytest.mark.curio
+async def test_arecv_asend_curio():
+    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, \
+            pynng.Pair0(dial=addr) as dialer:
+        await dialer.asend(b'hello there buddy')
+        assert (await listener.arecv()) == b'hello there buddy'
 
 
 @pytest.mark.trio
@@ -16,6 +24,30 @@ async def test_arecv_asend_asyncio():
             pynng.Pair0(dial=addr) as dialer:
         await dialer.asend(b'hello there buddy')
         assert (await listener.arecv()) == b'hello there buddy'
+
+
+@pytest.mark.trio
+async def test_asend_arecv_trio():
+    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, \
+            pynng.Pair0(dial=addr, send_timeout=2000) as dialer:
+        await dialer.asend(b'hello there')
+        assert (await listener.arecv()) == b'hello there'
+
+
+@pytest.mark.curio
+async def test_arecv_curio_cancel():
+    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
+        with pytest.raises(curio.CancelledError):
+            async with curio.timeout_after(0.5):
+                await p0.arecv()
+
+
+@pytest.mark.trio
+async def test_arecv_trio_cancel():
+    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
+        with pytest.raises(trio.TooSlowError):
+            with trio.fail_after(0.001):
+                await p0.arecv()
 
 
 @pytest.mark.asyncio
@@ -33,8 +65,8 @@ async def test_arecv_asyncio_cancel():
             await asyncio.gather(fut, cancel_soon(fut))
 
 
-@pytest.mark.trio
-async def test_asend_trio_send_timeout():
+@pytest.mark.curio
+async def test_asend_curio_send_timeout():
     with pytest.raises(pynng.exceptions.Timeout):
         with pynng.Pair0(listen=addr, send_timeout=1) as p0:
             await p0.asend(b'foo')
@@ -48,19 +80,10 @@ async def test_asend_asyncio_send_timeout():
 
 
 @pytest.mark.trio
-async def test_arecv_trio_cancel():
-    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
-        with pytest.raises(trio.TooSlowError):
-            with trio.fail_after(0.001):
-                await p0.arecv()
-
-
-@pytest.mark.trio
-async def test_asend_arecv_trio():
-    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, \
-            pynng.Pair0(dial=addr, send_timeout=2000) as dialer:
-        await dialer.asend(b'hello there')
-        assert (await listener.arecv()) == b'hello there'
+async def test_asend_trio_send_timeout():
+    with pytest.raises(pynng.exceptions.Timeout):
+        with pynng.Pair0(listen=addr, send_timeout=1) as p0:
+            await p0.asend(b'foo')
 
 
 @pytest.mark.trio

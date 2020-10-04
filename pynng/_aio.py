@@ -8,7 +8,7 @@ import sniffio
 from ._nng import ffi, lib
 import pynng
 from .exceptions import check_err
-
+import concurrent
 
 # global variable for mapping asynchronous operations with the Python data
 # assocated with them.  Key is id(obj), value is obj
@@ -28,6 +28,29 @@ def _async_complete(void_p):
 
     rescheduler = _aio_map.pop(id)
     rescheduler()
+
+
+def curio_helper(aio):
+    import curio
+    fut = concurrent.futures.Future()
+
+    async def wait_for_aio():
+        try:
+            await curio.traps._future_wait(fut)
+        except curio.CancelledError:
+            if fut.cancelled():
+                lib.nng_aio_cancel(aio.aio)
+    
+        err = lib.nng_aio_result(aio.aio)
+        if err == lib.NNG_ECANCELED:
+            raise curio.CancelledError()
+        check_err(err)
+    
+    def callback():
+        if not fut.cancelled():
+            fut.set_result(True)
+
+    return wait_for_aio(), callback
 
 
 def asyncio_helper(aio):
@@ -122,6 +145,7 @@ class AIOHelper:
     _aio_helper_map = {
         'asyncio': asyncio_helper,
         'trio': trio_helper,
+        'curio': curio_helper
     }
 
     def __init__(self, obj, async_backend):
