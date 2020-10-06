@@ -17,5 +17,5 @@ jobs:
           architecture: x64
       - run: sudo apt install -y ninja-build
       - run: python setup.py develop
-      - run: pip install trio pytest pytest-trio pytest-asyncio
+      - run: pip install trio curio pytest pytest-trio pytest-asyncio git+https://github.com/johnnoone/pytest-curio.git#master
       - run: pytest -v test
