@@ -37,8 +37,8 @@ Building from the GitHub repo works as well, natch:
     cd pynng
     pip3 install -e .
 
-(If you want to run tests, you also need to `pip3 install pytest` and `pip3
-install trio`, then just run `pytest`.)
+(If you want to run tests, you also need to `pip3 install trio curio pytest pytest-asyncio pytest-trio pytest-curio`,
+then just run `pytest`.)
 
 pynng might work on the BSDs as well.  Who knows!
 
@@ -76,7 +76,7 @@ with Pair0(listen='tcp://127.0.0.1:54321') as s1, \
 
 Asynchronous sending also works with
 
-[trio](https://trio.readthedocs.io/en/latest/) and
+[curio](https://github.com/dabeaz/curio), [trio](https://trio.readthedocs.io/en/latest/) and
 [asyncio](https://docs.python.org/3/library/asyncio.html).  Here is an example
 using trio:
 

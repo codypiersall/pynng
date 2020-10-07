@@ -7,7 +7,9 @@ This directory contains examples on using pynng for different tasks.
   pair0.  Adapted from [nng pair
   example](https://nanomsg.org/gettingstarted/nng/pair.html).
 * [`pair1_async.py`](./pair1_async.py): Demonstrates a polyamorous pair1
-  connection.
+  connection using trio.
+* [`pair1_async_curio.py`](./pair1_async.py): Demonstrates a polyamorous pair1
+  connection using curio.
 
 Adding an Example
 -----------------

@@ -150,7 +150,9 @@ tests_require = [
     'pytest',
     'pytest-asyncio',
     'pytest-trio',
+    'pytest-curio',
     'trio',
+    'curio'
 ]
 
 setuptools.setup(
@@ -173,6 +175,7 @@ setuptools.setup(
         'Development Status :: 3 - Alpha',
         'Framework :: AsyncIO',
         'Framework :: Trio',
+        'Framework :: Curio',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 3 :: Only',
