@@ -7,7 +7,7 @@ jobs:
     env:
       CIBW_SKIP: "cp27-* cp35-* pp27-* pp36-win32"
       CIBW_BEFORE_BUILD_LINUX: pip install cmake
-      CIBW_TEST_REQUIRES: pytest pytest-trio pytest-asyncio trio curio git+https://github.com/johnnoone/pytest-curio.git#master
+      CIBW_TEST_REQUIRES: pytest pytest-trio pytest-asyncio trio curio pytest-curio
       CIBW_TEST_COMMAND: pytest -v {project}/test
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

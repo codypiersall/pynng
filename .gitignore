@@ -14,6 +14,7 @@ build
 nng/
 mbedtls/
 .eggs
-
+.venv/
+.vscode/
 .lvimrc
 .ycm_extra_conf.py
