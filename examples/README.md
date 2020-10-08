@@ -13,7 +13,12 @@ This directory contains examples on using pynng for different tasks.
    [`pipeline.py`](./pair1_async.py): Push/Pull adapted from [nng example](https://nanomsg.org/gettingstarted/nng/pipeline.html)
 * Request/Reply (I ask, you answer) :
    [`reqprep.py`](./reqprep.py): Rep0/Req0 adapted from [nng example](https://nanomsg.org/gettingstarted/nng/pipeline.html)
-
+* Pub/Sub (Topics & Broadcast):
+   [`pubsub.py`](./pubsub.py): Pub0/Sub0 adapted from [nng example](https://nanomsg.org/gettingstarted/nng/pubsub.html)
+* Survey (Everybody Votes):
+   [`survey.py`](./survey.py): Surveyor0/Respondent0 adapted from [nng example](https://nanomsg.org/gettingstarted/nng/survey.html)
+* Bus (Routing):
+   [`bus.py`](./bus.py): Bus0 adapted from [nng example](https://nanomsg.org/gettingstarted/nng/bus.html)
 
 
 

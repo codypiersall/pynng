@@ -9,13 +9,12 @@ import datetime
 import pynng
 import curio
 
-DATE = 'DATE'
+DATE = "DATE"
 
-address = 'ipc:///tmp/reqrep.ipc'
+address = "ipc:///tmp/reqrep.ipc"
 
 
 async def node0(sock):
-
     async def response_eternally():
         while True:
             msg = await sock.arecv_msg()
@@ -25,29 +24,29 @@ async def node0(sock):
                 date = str(datetime.datetime.now())
                 await sock.asend(date.encode())
 
-
     sock.listen(address)
     return await curio.spawn(response_eternally)
 
 
-async def node1(sock):
+async def node1():
+    with pynng.Req0() as sock:
         sock.dial(address)
         print(f"NODE1: SENDING DATE REQUEST")
         await sock.asend(DATE.encode())
         msg = await sock.arecv_msg()
         print(f"NODE1: RECEIVED DATE {msg.bytes.decode()}")
-        
 
 
 async def main():
-    with pynng.Rep0() as rep, pynng.Req0() as req:
+    with pynng.Rep0() as rep:
         n0 = await node0(rep)
         await curio.sleep(1)
-        await node1(req)
+        await node1()
+
         await n0.cancel()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         curio.run(main)
     except KeyboardInterrupt:
