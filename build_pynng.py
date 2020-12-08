@@ -4,6 +4,7 @@
 # script should ensure that it is built before running.  It looks in this file
 # to see what the expected object file is based on the platform.
 from cffi import FFI
+import os
 import sys
 
 ffibuilder = FFI()
@@ -24,6 +25,8 @@ else:
     objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
                "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
     libraries = ['pthread']
+    if 'x86' not in os.uname().machine:
+        libraries.append('atomic')
 
 
 ffibuilder.set_source(
