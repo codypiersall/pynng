@@ -4,7 +4,6 @@
 # script should ensure that it is built before running.  It looks in this file
 # to see what the expected object file is based on the platform.
 from cffi import FFI
-import shutil
 import sys
 
 ffibuilder = FFI()
