@@ -25,7 +25,10 @@ else:
     objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
                "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
     libraries = ['pthread']
-    if 'x86' not in os.uname().machine:
+    machine = os.uname().machine
+    # this is a pretty heuristic... but let's go with it anyway.
+    # it would be better to get linker information from cmake somehow.
+    if not ('x86' in machine or 'i386' in machine or 'i686' in machine):
         libraries.append('atomic')
 
 
