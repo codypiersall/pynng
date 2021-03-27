@@ -58,7 +58,7 @@ async def main():
         async with curio.TaskGroup(wait=all) as g:
             await g.spawn(client, "client0", 3)
             await g.spawn(client, "client1", 3)
-            await g.spawn(client, "client2", 4))
+            await g.spawn(client, "client2", 4)
 
         await n0.join()
 
