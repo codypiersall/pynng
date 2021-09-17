@@ -371,7 +371,7 @@ class Socket:
             return self._dial(address, flags=0)
         elif block is None:
             try:
-                return self.dial(address, block=False)
+                return self.dial(address, block=True)
             except pynng.ConnectionRefused:
                 msg = 'Synchronous dial failed; attempting asynchronous now'
                 logger.exception(msg)
