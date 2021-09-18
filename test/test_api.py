@@ -1,3 +1,4 @@
+import gc
 import time
 
 import pytest
@@ -151,3 +152,13 @@ def test_sub_sock_options():
             assert sub.recv() == b'beep hi'
             pub.send(b'hello there')
             assert sub.recv() == b'hello there'
+
+
+def test_sockets_get_garbage_collected():
+    # from issue90
+    with pynng.Pub0() as _:
+        pass
+    _ = None
+    gc.collect()
+    objs = [o for o in gc.get_objects() if isinstance(o, pynng.Pub0)]
+    assert len(objs) == 0
