@@ -10,6 +10,7 @@ import sys
 ffibuilder = FFI()
 
 if sys.platform == 'win32':
+    incdirs = ['nng/include']
     objects = ['./nng/build/Release/nng.lib']
 
     mbedtls_dir = './mbedtls/build/library/Release'
@@ -21,7 +22,14 @@ if sys.platform == 'win32':
 
     # system libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
+# comment out this block if you want to build this with you own libraries
+# e.g.: python setup.py build_ext -I<inc_path> -L<lib_path> -l<lib>
+#elif True:
+#    incdirs = None
+#    libraries = ['pthread' 'mbedtls' 'nng']
+#    objects = None
 else:
+    incdirs = ['nng/include']
     objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
                "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
     libraries = ['pthread']
@@ -57,7 +65,7 @@ ffibuilder.set_source(
     libraries=libraries,
     # library_dirs=['nng/build/Debug',],
     # (more arguments like setup.py's Extension class:
-    include_dirs=['nng/include'],
+    include_dirs=incdirs,
     extra_objects=objects,
 )
 
