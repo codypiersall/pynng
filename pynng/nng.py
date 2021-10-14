@@ -92,6 +92,12 @@ class _NNGOption:
         self.__class__._setter(instance, self.option, value)
 
 
+class ArbitraryOption(_NNGOption):
+    """Descriptor for getting/setting arbitrary options"""
+    _getter = options._getopt_arbitrary
+    _setter = options._setopt_arbitrary
+
+
 class IntOption(_NNGOption):
     """Descriptor for getting/setting integer options"""
     _getter = options._getopt_int
@@ -279,7 +285,10 @@ class Socket:
     tcp_nodelay = BooleanOption('tcp-nodelay')
     tcp_keepalive = BooleanOption('tcp-keepalive')
 
-    tls_config = PointerOption('tls-config')
+    #tls_config = PointerOption('tls-config')
+    # Sockets are Transport agnostic.
+    # The tls-config is transport specific and has to be set on the listener/dialer
+    tls_config = None
 
     def __init__(self, *,
                  dial=None,
@@ -386,11 +395,21 @@ class Socket:
 
         """
         dialer = ffi.new('nng_dialer *')
-        ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
+        if self.tls_config:
+            ret = lib.nng_dialer_create(dialer, self.socket, to_char(address))
+        else:
+            ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
         d_id = lib.nng_dialer_id(dialer[0])
         py_dialer = Dialer(dialer, self)
+        if self.tls_config:
+            py_dialer.tls_config = self.tls_config
+            lib.nng_dialer_start(dialer[0], flags)
+            # FIXME: Set the tls_config to None here
+            # If one wants another dialer with the same tls_config it
+            # has to be set again which might be confusing
+            self.tls_config = None
         self._dialers[d_id] = py_dialer
         return py_dialer
 
@@ -401,11 +420,21 @@ class Socket:
 
         """
         listener = ffi.new('nng_listener *')
-        ret = lib.nng_listen(self.socket, to_char(address), listener, flags)
+        if self.tls_config:
+            ret = lib.nng_listener_create(listener, self.socket, to_char(address))
+        else:
+            ret = lib.nng_listen(self.socket, to_char(address), listener, flags)
         check_err(ret)
         # we can only get here if check_err doesn't raise
         l_id = lib.nng_listener_id(listener[0])
         py_listener = Listener(listener, self)
+        if self.tls_config:
+            py_listener.tls_config = self.tls_config
+            lib.nng_listener_start(listener[0], flags)
+            # FIXME: Set the tls_config to None here
+            # If one wants another listener with the same tls_config it
+            # has to be set again which might be confusing
+            self.tls_config = None
         self._listeners[l_id] = py_listener
         return py_listener
 
@@ -873,9 +902,36 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
-        options._setopt_string(self, b'sub:subscribe', topic)
+        options._setopt_arbitrary(self, b'sub:subscribe', topic)
 
     def unsubscribe(self, topic):
+        """Unsubscribe to the specified topic.
+
+        .. Note::
+
+            If you pass a :class:`str` as the ``topic``, it will be
+            automatically encoded with :meth:`str.encode`.  If this is not the
+            desired behavior, just pass :class:`bytes` in as the topic.
+
+        """
+        options._setopt_arbitrary(self, b'sub:unsubscribe', topic)
+
+    def subscribe_string(self, topic):
+        """Subscribe to the specified topic.
+
+        Topics are matched by looking at the first bytes of any received
+        message.
+
+        .. Note::
+
+            If you pass a :class:`str` as the ``topic``, it will be
+            automatically encoded with :meth:`str.encode`.  If this is not the
+            desired behavior, just pass :class:`bytes` in as the topic.
+
+        """
+        options._setopt_string(self, b'sub:subscribe', topic)
+
+    def unsubscribe_string(self, topic):
         """Unsubscribe to the specified topic.
 
         .. Note::

@@ -21,13 +21,14 @@ def _get_inst_and_func(py_obj, option_type, get_or_set):
 
     # map Python wrapper class to nng attribute
     option_to_func_map = {
-        'int': 'nng_getopt_int',
-        'size': 'nng_getopt_size',
-        'ms': 'nng_getopt_ms',
-        'string': 'nng_getopt_string',
-        'bool': 'nng_getopt_bool',
-        'sockaddr': 'nng_getopt_sockaddr',
-        'ptr': 'nng_getopt_ptr',
+        'arbitrary': 'nng_get',
+        'int': 'nng_get_int',
+        'size': 'nng_get_size',
+        'ms': 'nng_get_ms',
+        'string': 'nng_get_string',
+        'bool': 'nng_get_bool',
+        'sockaddr': 'nng_get_addr',
+        'ptr': 'nng_get_ptr',
     }
 
     if option_type not in option_to_func_map:
@@ -35,7 +36,7 @@ def _get_inst_and_func(py_obj, option_type, get_or_set):
 
     basic_funcname = option_to_func_map[option_type]
     if isinstance(py_obj, pynng.Socket):
-        funcname = basic_funcname
+        funcname = basic_funcname.replace('nng_', 'nng_socket_')
         obj = py_obj.socket
     elif isinstance(py_obj, pynng.Dialer):
         funcname = basic_funcname.replace('nng_', 'nng_dialer_')
@@ -52,14 +53,31 @@ def _get_inst_and_func(py_obj, option_type, get_or_set):
         raise TypeError(msg)
 
     if get_or_set == 'set':
-        funcname = funcname.replace('getopt', 'setopt')
-        # special-case for nng_setopt_string, which expects NULL-terminated
-        # strings; we use the generic setopt in that case.
-        if option_type == 'string':
-            funcname = funcname.replace('_string', '')
+        funcname = funcname.replace('get', 'set')
 
     nng_func = getattr(pynng.lib, funcname)
     return obj, nng_func
+
+
+def _getopt_arbitrary(py_obj, option):
+    """Gets the specified option"""
+    opt = pynng.ffi.new('char *[]', 1)
+    opt_as_char = pynng.nng.to_char(option)
+    obj, lib_func = _get_inst_and_func(py_obj, 'arbitrary', 'get')
+    ret = lib_func(obj, opt_as_char, opt)
+    pynng.check_err(ret)
+    py_string = pynng.ffi.string(opt[0]).decode()
+    pynng.lib.nng_strfree(opt[0])
+    return py_string
+
+
+def _setopt_arbitrary(py_obj, option, value):
+    """Sets an arbitrary option to the specified value"""
+    opt_as_char = pynng.nng.to_char(option)
+    val_as_char = pynng.nng.to_char(value)
+    obj, lib_func = _get_inst_and_func(py_obj, 'arbitrary', 'set')
+    ret = lib_func(obj, opt_as_char, val_as_char, len(value))
+    pynng.check_err(ret)
 
 
 def _getopt_int(obj, option):
@@ -156,7 +174,7 @@ def _setopt_string(py_obj, option, value):
     opt_as_char = pynng.nng.to_char(option)
     val_as_char = pynng.nng.to_char(value)
     obj, lib_func = _get_inst_and_func(py_obj, 'string', 'set')
-    ret = lib_func(obj, opt_as_char, val_as_char, len(value))
+    ret = lib_func(obj, opt_as_char, val_as_char)
     pynng.check_err(ret)
 
 

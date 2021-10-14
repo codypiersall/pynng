@@ -69,6 +69,7 @@ class BuildNng(BuilderBase):
         '-DNNG_ENABLE_TLS=ON',
         '-DNNG_TESTS=OFF',
         '-DNNG_TOOLS=OFF',
+        '-DNNG_ELIDE_DEPRECATED=ON',
         '-DCMAKE_BUILD_TYPE=Release',
         '-DMBEDTLS_ROOT_DIR={}/mbedtls/prefix/'.format(this_dir),
     ]
@@ -174,10 +175,10 @@ setup(
     tests_require=[
         'pytest',
         'pytest-asyncio',
-        'pytest-trio',
-        'pytest-curio',
         'trio',
+        'pytest-trio',
         'curio'
+        'pytest-curio',
     ],
     test_suite='tests',
 )
