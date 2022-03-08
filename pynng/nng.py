@@ -456,10 +456,13 @@ class Socket:
         lib.nng_free(data[0], size_t[0])
         return recvd
 
-    def send(self, data):
+    def send(self, data, block=True):
+        flags = 0
+        if not block:
+            flags |= lib.NNG_FLAG_NONBLOCK
         """Sends ``data`` (either ``bytes`` or ``bytearray``) on socket."""
         _ensure_can_send(data)
-        err = lib.nng_send(self.socket, data, len(data), 0)
+        err = lib.nng_send(self.socket, data, len(data), flags)
         check_err(err)
 
     async def arecv(self):
