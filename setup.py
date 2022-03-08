@@ -2,6 +2,7 @@ import os
 from subprocess import check_call
 import shutil
 import sys
+import errno
 
 import setuptools.command.build_py
 import setuptools.command.build_ext
@@ -40,7 +41,12 @@ def build_mbedtls(cmake_args):
         # do('cp -r ../mbedtls mbedtls', shell=True)
         do('git checkout {}'.format(MBEDTLS_REV), shell=True, cwd='mbedtls')
     cwd = 'mbedtls/build'
-    os.mkdir(cwd)
+    try:
+        os.mkdir(cwd)
+    except OSError as ex:
+        if ex.errno != errno.EEXIST:
+            raise
+        pass
     cmake_cmd = ['cmake'] + cmake_args
     cmake_cmd += [
         '-DENABLE_PROGRAMS=OFF',
@@ -68,7 +74,13 @@ def build_nng(cmake_args):
         # for local hacking, just copy a directory (network connection is slow)
         # do('cp -r ../nng-clean nng', shell=True)
         do('git checkout {}'.format(NNG_REV), shell=True, cwd='nng')
-    os.mkdir('nng/build')
+
+    try:
+        os.mkdir('nng/build')
+    except OSError as ex:
+        if ex.errno != errno.EEXIST:
+            raise
+        pass
     cmake_cmd = ['cmake'] + cmake_args
     cmake_cmd += [
         '-DNNG_ENABLE_TLS=ON',
@@ -121,7 +133,7 @@ def build_nng_lib():
         # the object file we were planning on building already exists; we'll
         # just use it!
         return
-
+    print("build_libs")
     build_libs()
 
 
