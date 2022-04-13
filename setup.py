@@ -10,6 +10,7 @@ import setuptools.command.build_ext
 exec(open("pynng/_version.py", encoding="utf-8").read())
 
 THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(THIS_DIR)
 
 NNG_REPO = 'https://github.com/nanomsg/nng'
 NNG_REV = '4f5e11c391c4a8f1b2731aee5ad47bc0c925042a'
@@ -62,6 +63,7 @@ def build_nng(cmake_args):
     Clone nng and build it with cmake, with TLS enabled.
 
     """
+    print("build_nng()")
     do = check_call
     if not os.path.exists('nng'):
         do('git clone {}'.format(NNG_REPO), shell=True)
@@ -92,6 +94,7 @@ def build_libs():
     Builds the nng and mbedtls libs.
 
     """
+    print('build_libs()')
     # The user has to have the correct Visual Studio version on the path or the
     # build will fail, possibly in exciting and mysterious ways.
     major, minor, *_ = sys.version_info
@@ -112,6 +115,7 @@ def build_libs():
 
 
 def build_nng_lib():
+    print("build_nng_lib()")
     # cannot import build_pynng at the top level becuase cffi may not be
     # installed yet (since it is a dependency, and this script installs
     # dependencies).  Bootstrapping!
@@ -183,6 +187,7 @@ setuptools.setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
         'Topic :: Software Development :: Libraries',
         'Topic :: System :: Networking',
     ]),
