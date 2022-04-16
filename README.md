@@ -38,7 +38,7 @@ Building from the GitHub repo works as well, natch:
     pip3 install -e .
 
 (If you want to run tests, you also need to `pip3 install trio curio pytest pytest-asyncio pytest-trio pytest-curio`,
-then just run `pytest`.)
+then just run `pytest test`.)
 
 pynng might work on the BSDs as well.  Who knows!
 
