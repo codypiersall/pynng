@@ -26,7 +26,7 @@ class TLSConfig:
         passwd (str):  Password used for configuring certificates.
 
     Check the `TLS tests
-    <https://github.com/codypiersall/pynng/blob/master/test/test_api.py>`_ for
+    <https://github.com/codypiersall/pynng/blob/master/test/test_tls.py>`_ for
     usage examples.
 
     """
