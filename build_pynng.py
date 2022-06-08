@@ -28,7 +28,7 @@ else:
     machine = os.uname().machine
     # this is a pretty heuristic... but let's go with it anyway.
     # it would be better to get linker information from cmake somehow.
-    if not ('x86' in machine or 'i386' in machine or 'i686' in machine):
+    if not ('x86' in machine or 'i386' in machine or 'i686' in machine or 'arm64' in machine):
         libraries.append('atomic')
 
 
