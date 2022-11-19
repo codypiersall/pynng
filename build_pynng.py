@@ -7,17 +7,24 @@ from cffi import FFI
 import os
 import sys
 
+WINDOWS = sys.platform == 'win32'
+
 ffibuilder = FFI()
 
-if sys.platform == 'win32':
-    objects = ['./nng/build/Release/nng.lib']
+if WINDOWS:
+    objects = []
+    # we detect ninja in the setup script; ninja and plain ol' Visual Studio put the
+    # build artifacts in different places.  Kind of annoying.  Maybe it would be better
+    # to modify where ninja puts its artifacts?
+    objects.append(f'./nng/build/Release/nng.lib')
 
-    mbedtls_dir = './mbedtls/build/library/Release'
+    mbedtls_dir = f'./mbedtls/build/library/Release'
     objects += [
         mbedtls_dir + "/mbedtls.lib",
         mbedtls_dir + "/mbedx509.lib",
         mbedtls_dir + "/mbedcrypto.lib",
     ]
+
 
     # system libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
