@@ -18,3 +18,4 @@ mbedtls/
 .vscode/
 .lvimrc
 .ycm_extra_conf.py
+*.whl
