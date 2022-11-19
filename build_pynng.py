@@ -4,7 +4,7 @@
 # script should ensure that it is built before running.  It looks in this file
 # to see what the expected object file is based on the platform.
 from cffi import FFI
-import os
+import os,sysconfig
 import sys
 
 WINDOWS = sys.platform == 'win32'
@@ -35,7 +35,16 @@ else:
     machine = os.uname().machine
     # this is a pretty heuristic... but let's go with it anyway.
     # it would be better to get linker information from cmake somehow.
-    if not ('x86' in machine or 'i386' in machine or 'i686' in machine):
+    # Building process will be broken if add -latomic in Mac with clang. https://github.com/nodejs/node/pull/30099
+    clang = False
+    try:
+        if os.environ['CC'] == "clang":
+            clang = True
+    except KeyError:
+        clang = False
+    if sysconfig.get_config_var('CC') == 'clang':
+        clang = True
+    if not ('x86' in machine or 'i386' in machine or 'i686' in machine or (clang and 'Darwin' in os.uname().sysname)):
         libraries.append('atomic')
 
 
