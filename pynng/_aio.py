@@ -40,12 +40,12 @@ def curio_helper(aio):
         except curio.CancelledError:
             if fut.cancelled():
                 lib.nng_aio_cancel(aio.aio)
-    
+
         err = lib.nng_aio_result(aio.aio)
         if err == lib.NNG_ECANCELED:
             raise curio.CancelledError()
         check_err(err)
-    
+
     def callback():
         if not fut.cancelled():
             fut.set_result(True)

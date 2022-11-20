@@ -26,7 +26,7 @@ if sys.platform == 'win32':
 # e.g.: python setup.py build_ext -I<inc_path> -L<lib_path> -l<lib>
 #elif True:
 #    incdirs = None
-#    libraries = ['pthread' 'mbedtls' 'nng']
+#    libraries = ['pthread', 'mbedtls', 'nng']
 #    objects = None
 else:
     incdirs = ['nng/include']

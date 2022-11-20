@@ -6,7 +6,7 @@ _nng_py.c
 Release
 _nng.c
 *.pyd
-__pycache__
+**/__pycache__/
 *.swp
 .pytest_cache
 dist
