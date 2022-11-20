@@ -7,17 +7,11 @@ from cffi import FFI
 import os,sysconfig
 import sys
 
-WINDOWS = sys.platform == 'win32'
-
 ffibuilder = FFI()
 
-if WINDOWS:
-    objects = []
-    # we detect ninja in the setup script; ninja and plain ol' Visual Studio put the
-    # build artifacts in different places.  Kind of annoying.  Maybe it would be better
-    # to modify where ninja puts its artifacts?
-    objects.append(f'./nng/build/Release/nng.lib')
-
+if sys.platform == 'win32':
+    incdirs = ['nng/include']
+    objects = ['./nng/build/Release/nng.lib']
     mbedtls_dir = f'./mbedtls/build/library/Release'
     objects += [
         mbedtls_dir + "/mbedtls.lib",
@@ -28,7 +22,14 @@ if WINDOWS:
 
     # system libraries determined to be necessary through trial and error
     libraries = ['Ws2_32', 'Advapi32']
+# comment out this block if you want to build this with you own libraries
+# e.g.: python setup.py build_ext -I<inc_path> -L<lib_path> -l<lib>
+#elif True:
+#    incdirs = None
+#    libraries = ['pthread' 'mbedtls' 'nng']
+#    objects = None
 else:
+    incdirs = ['nng/include']
     objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
                "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
     libraries = ['pthread']
@@ -73,7 +74,7 @@ ffibuilder.set_source(
     libraries=libraries,
     # library_dirs=['nng/build/Debug',],
     # (more arguments like setup.py's Extension class:
-    include_dirs=['nng/include'],
+    include_dirs=incdirs,
     extra_objects=objects,
 )
 
