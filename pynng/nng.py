@@ -373,8 +373,6 @@ class Socket:
             try:
                 return self.dial(address, block=True)
             except pynng.ConnectionRefused:
-                msg = 'Synchronous dial failed; attempting asynchronous now'
-                logger.exception(msg)
                 return self.dial(address, block=False)
         else:
             return self._dial(address, flags=lib.NNG_FLAG_NONBLOCK)
