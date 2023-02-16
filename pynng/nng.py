@@ -34,9 +34,15 @@ Surveyor0 Respondent0
 #     during a callback to _nng_pipe_cb
 #   * Cleanup background queue threads used by NNG
 
+# NOTE: enabling this can lead to nng panic / crash on python runtime shutdown. Depending on when the atexit function
+# is called and objects garbage are collected, it might be possible that nng_fini is already called, but we are is
+# still calling the nng lib (e.g. nni_aio_free by AIOHelper.__del__).
+
+nng_fini_at_exit = False
 
 def _pynng_atexit():
-    lib.nng_fini()
+    if nng_fini_at_exit:
+        lib.nng_fini()
 
 
 atexit.register(_pynng_atexit)
