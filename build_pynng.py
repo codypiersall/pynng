@@ -30,8 +30,8 @@ if sys.platform == 'win32':
 #    objects = None
 else:
     incdirs = ['nng/include']
-    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
-               "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
+    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib64/libmbedtls.a",
+               "./mbedtls/prefix/lib64/libmbedx509.a", "./mbedtls/prefix/lib64/libmbedcrypto.a"]
     libraries = ['pthread']
     machine = os.uname().machine
     # this is a pretty heuristic... but let's go with it anyway.
