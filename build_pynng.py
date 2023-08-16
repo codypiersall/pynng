@@ -26,12 +26,12 @@ if sys.platform == 'win32':
 # e.g.: python setup.py build_ext -I<inc_path> -L<lib_path> -l<lib>
 #elif True:
 #    incdirs = None
-#    libraries = ['pthread' 'mbedtls' 'nng']
+#    libraries = ['pthread', 'mbedtls', 'nng']
 #    objects = None
 else:
     incdirs = ['nng/include']
-    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
-               "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
+    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib64/libmbedtls.a",
+               "./mbedtls/prefix/lib64/libmbedx509.a", "./mbedtls/prefix/lib64/libmbedcrypto.a"]
     libraries = ['pthread']
     machine = os.uname().machine
     # this is a pretty heuristic... but let's go with it anyway.
