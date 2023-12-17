@@ -9,9 +9,6 @@ from distutils.command.build import build as dbuild
 
 WINDOWS = sys.platform == 'win32'
 
-# have to exec; can't import the package before it's built.
-exec(open("pynng/_version.py", encoding="utf-8").read())
-
 def maybe_copy(src, dst):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.exists(src):
@@ -163,43 +160,5 @@ setup(
         'build_nng': BuildNng,
         'build_ext': BuildBuild,
     },
-    name='pynng',
-    version=__version__,
-    author='Cody Piersall',
-    author_email='cody.piersall@gmail.com',
-    description='Networking made simply using nng',
-    long_description=long_description,
-    license='MIT',
-    keywords='networking nng nanomsg zmq messaging message trio asyncio',
-    long_description_content_type='text/markdown',
-    url='https://github.com/codypiersall/pynng',
-    packages=find_packages(),
-    classifiers=([
-        'Development Status :: 3 - Alpha',
-        'Framework :: AsyncIO',
-        'Framework :: Trio',
-        'License :: OSI Approved :: MIT License',
-        'Operating System :: OS Independent',
-        'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10',
-        'Topic :: Software Development :: Libraries',
-        'Topic :: System :: Networking',
-    ]),
-    setup_requires=['cffi', 'pytest-runner',],
-    install_requires=['cffi', 'sniffio'],
     cffi_modules=['build_pynng.py:ffibuilder'],
-    tests_require=[
-        'pytest',
-        'pytest-asyncio',
-        'pytest-trio',
-        'pytest-curio',
-        'trio',
-        'curio'
-    ],
-    test_suite='tests',
 )
