@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64
+      - run: sudo apt update
       - run: sudo apt install -y ninja-build
-      - run: python setup.py develop
-      - run: pip install trio curio pytest pytest-trio pytest-asyncio pytest-curio
+      - run: pip install -v -e '.[dev]'
       - run: pytest -v test
