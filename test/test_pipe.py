@@ -32,6 +32,8 @@ def test_close_pipe_works():
         wait_pipe_len(s1, 1)
         pipe0 = s0.pipes[0]
         pipe0.close()
+        pipe1 = s1.pipes[0]
+        pipe1.close()
         wait_pipe_len(s0, 0)
         wait_pipe_len(s1, 0)
 
