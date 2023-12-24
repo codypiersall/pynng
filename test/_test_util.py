@@ -13,6 +13,7 @@ def wait_pipe_len(sock, expected, timeout=10):
     later = now + timeout
     while time.time() < later and len(sock.pipes) != expected:
         time.sleep(0.0005)
-    return len(sock.pipes) == expected
+    if len(sock.pipes) != expected:
+        raise TimeoutError(f'Waiting for {expected} pipes, but have {len(sock.pipes)} pipes')
 
 

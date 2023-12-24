@@ -18,28 +18,28 @@ def test_pipe_gets_added_and_removed():
         assert len(s0.pipes) == 0
         assert len(s1.pipes) == 0
         s1.dial(addr)
-        assert wait_pipe_len(s0, 1)
-        assert wait_pipe_len(s1, 1)
-    assert wait_pipe_len(s0, 0)
-    assert wait_pipe_len(s1, 0)
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
+    wait_pipe_len(s0, 0)
+    wait_pipe_len(s1, 0)
 
 
 def test_close_pipe_works():
     # this is some racy business
     with pynng.Pair0(listen=addr) as s0, \
-            pynng.Pair0(reconnect_time_min=40000, dial=addr) as s1:
-        assert wait_pipe_len(s0, 1)
-        assert wait_pipe_len(s1, 1)
+            pynng.Pair0(dial=addr) as s1:
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
         pipe0 = s0.pipes[0]
         pipe0.close()
-        assert wait_pipe_len(s0, 0)
-        assert wait_pipe_len(s1, 0)
+        wait_pipe_len(s0, 0)
+        wait_pipe_len(s1, 0)
 
 
 def test_pipe_local_and_remote_addresses():
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
-        assert wait_pipe_len(s0, 1)
-        assert wait_pipe_len(s1, 1)
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
         p0 = s0.pipes[0]
         p1 = s1.pipes[0]
         local_addr0 = p0.local_address
@@ -61,8 +61,8 @@ def test_pre_pipe_connect_cb_totally_works():
             called = True
         s0.add_pre_pipe_connect_cb(pre_connect_cb)
         s1.dial(addr)
-        assert wait_pipe_len(s0, 1)
-        assert wait_pipe_len(s1, 1)
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
         assert called
 
 
