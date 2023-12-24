@@ -72,37 +72,34 @@ def test_closing_pipe_in_pre_connect_works():
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
         s0.name = 's0'
         s1.name = 's1'
-        pre_called = False
-        post_connect_called = False
-        post_remove_called = False
+        pre_connect_cb_was_called = False
+        post_connect_cb_was_called = False
 
         def pre_connect_cb(pipe):
             pipe.close()
-            nonlocal pre_called
-            pre_called = True
+            nonlocal pre_connect_cb_was_called
+            pre_connect_cb_was_called = True
 
         def post_connect_cb(pipe):
-            nonlocal post_connect_called
-            post_connect_called = True
-
-        def post_remove_cb(pipe):
-            nonlocal post_remove_called
-            post_remove_called = True
+            nonlocal post_connect_cb_was_called
+            post_connect_cb_was_called = True
 
         s0.add_pre_pipe_connect_cb(pre_connect_cb)
         s0.add_post_pipe_connect_cb(post_connect_cb)
+        s1.add_pre_pipe_connect_cb(pre_connect_cb)
+        s1.add_post_pipe_connect_cb(post_connect_cb)
+
         s1.dial(addr)
-        later = time.time() + 5
-        while later > time.time():
-            if pre_called:
+        later = time.monotonic() + 5
+        while later > time.monotonic():
+            if pre_connect_cb_was_called:
                 break
             # just give other threads a chance to run
             time.sleep(0.0001)
-        assert pre_called
+        assert pre_connect_cb_was_called
         wait_pipe_len(s0, 0)
         wait_pipe_len(s1, 0)
-        assert not post_connect_called
-        assert not post_remove_called
+        assert not post_connect_cb_was_called
 
 
 def test_post_pipe_connect_cb_works():
