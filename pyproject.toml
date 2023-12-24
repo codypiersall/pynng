@@ -80,11 +80,18 @@ test-requires = [
 
 test-command = "pytest {project}/test"
 
+# wheels aren't built correctly for Python 3.6; seems like setuptools doesn't like
+# pyproject.toml for that old Python.
 skip = "cp36-*"
 
 # skip all Python 3.12 because pytest-curio is not compatible with 3.12 right now.
 # https://github.com/johnnoone/pytest-curio/pull/7
 test-skip = "cp312*"
+
+[tool.cibuildwheel.windows]
+# Windows builds fail because they try to use the same directory for different
+# architectures, and that's no good.
+before-build = "bash .github/rmstuff.sh"
 
 # pytest configuration
 [tool.pytest.ini_options]
