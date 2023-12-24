@@ -14,7 +14,6 @@ addr = 'inproc://test-addr'
 
 
 def test_pipe_gets_added_and_removed():
-    # add sleeps to ensure the nng_pipe_cb gets called.
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
         assert len(s0.pipes) == 0
         assert len(s1.pipes) == 0
@@ -95,13 +94,13 @@ def test_closing_pipe_in_pre_connect_works():
         while later > time.time():
             if pre_called:
                 break
+            # just give other threads a chance to run
+            time.sleep(0.0001)
         assert pre_called
-        time.sleep(0.5)
+        wait_pipe_len(s0, 0)
+        wait_pipe_len(s1, 0)
         assert not post_connect_called
         assert not post_remove_called
-        # TODO: These lines *should* work and yet they don't consistently work.
-        # assert len(s0.pipes) == 0
-        # assert len(s1.pipes) == 0
 
 
 def test_post_pipe_connect_cb_works():
@@ -150,7 +149,6 @@ def test_can_send_from_pipe():
         assert s1.recv() == b'hello'
         s0.send_msg(pynng.Message(b'it is me again'))
         assert s1.recv() == b'it is me again'
-        time.sleep(0.05)
 
 
 @pytest.mark.trio

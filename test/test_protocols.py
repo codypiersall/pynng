@@ -80,7 +80,8 @@ def test_pubsub0():
 
         sub.subscribe(b'')
         msg = b'i am requesting'
-        time.sleep(0.04)
+        wait_pipe_len(sub, 1)
+        wait_pipe_len(pub, 1)
         pub.send(msg)
         assert sub.recv() == msg
 
@@ -119,7 +120,10 @@ def test_push_pull():
 
         t1.start()
         t2.start()
-        time.sleep(0.01)
+        wait_pipe_len(push, 2)
+        wait_pipe_len(pull1, 1)
+        wait_pipe_len(pull1, 1)
+
         push.send(b'somewhere someone should see this')
         push.send(b'somewhereeeee')
         t1.join()
@@ -134,7 +138,9 @@ def test_surveyor_respondent():
             pynng.Respondent0(dial=addr, recv_timeout=4000) as resp2:
         query = b"hey how's it going buddy?"
         # wait for sockets to connect
-        time.sleep(0.03)
+        wait_pipe_len(surveyor, 2)
+        wait_pipe_len(resp1, 1)
+        wait_pipe_len(resp2, 1)
         surveyor.send(query)
         assert resp1.recv() == query
         assert resp2.recv() == query
