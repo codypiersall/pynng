@@ -38,7 +38,7 @@ async def test_asend_arecv_trio():
 async def test_arecv_curio_cancel():
     with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
         with pytest.raises(curio.CancelledError):
-            async with curio.timeout_after(0.5):
+            async with curio.timeout_after(0.001):
                 await p0.arecv()
 
 
@@ -123,7 +123,6 @@ async def test_pub_sub_trio():
 
             while True:
                 val = await subber.arecv()
-                print(val)
 
                 lot, _, i = val.partition(b':')
 
@@ -134,8 +133,6 @@ async def test_pub_sub_trio():
 
             # mark subscriber as having received None sentinel
             sentinel_received[which] = True
-            # TODO: This sleep is a hack.
-            time.sleep(0.05)
 
     async with trio.open_nursery() as n:
         # whip up the subs

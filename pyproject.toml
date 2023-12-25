@@ -1,13 +1,99 @@
+[project]
+name = "pynng"
+authors = [
+    {name = "Cody Piersall", email = "cody.piersall@gmail.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Framework :: Trio",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.5",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Networking",
+]
+dependencies = [
+    "cffi",
+]
+description = "Networking made simply using nng"
+license = {file = "LICENSE.txt"}
+dynamic = ["version"]
+keywords = [
+    "networking",
+    "nng",
+    "nanomsg",
+    "zmq",
+    "messaging",
+    "message",
+    "trio",
+    "asyncio",
+]
+readme = "README.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-trio",
+    "pytest-curio",
+    "curio",
+    "trio",
+]
+
+[project.urls]
+Homepage = "https://github.com/codypiersall/pynng"
+Source = "https://github.com/codypiersall/pynng"
+Documentation = "https://pynng.readthedocs.io/en/latest/"
+
+[tool.setuptools.dynamic]
+version = {attr = "pynng._version.__version__"}
+[tool.setuptools.packages.find]
+include = ["pynng"]
+
 [build-system]
 build-backend = "setuptools.build_meta"
 requires = [
-    "setuptools>=53.0.0",
-    'cmake',
+    "setuptools",
+    "setuptools-scm",
+    "cffi",
+    "cmake",
     "build",
     "wheel",
-    'cffi',
 ]
+
+[tool.cibuildwheel]
+test-requires = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-trio",
+    "pytest-curio",
+    "curio",
+    "trio",
+]
+
+test-command = "pytest {project}/test"
+
+# wheels aren't built correctly for Python 3.6; seems like setuptools doesn't like
+# pyproject.toml for that old Python.
+skip = "cp36-*"
+
+# skip all Python 3.12 because pytest-curio is not compatible with 3.12 right now.
+# https://github.com/johnnoone/pytest-curio/pull/7
+test-skip = "cp312*"
+
+[tool.cibuildwheel.windows]
+# Windows builds fail because they try to use the same directory for different
+# architectures, and that's no good.
+before-build = "bash .github/rmstuff.sh"
 
 # pytest configuration
 [tool.pytest.ini_options]
 addopts = "--capture=no --verbose"
+testpaths = "test"
