@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "cffi",
+    "sniffio",
 ]
 description = "Networking made simply using nng"
 license = {file = "LICENSE.txt"}
