@@ -9,8 +9,8 @@ import pynng
 from _test_util import wait_pipe_len
 
 
-addr = 'inproc://test-addr'
-addr2 = 'inproc://test-addr2'
+addr = "inproc://test-addr"
+addr2 = "inproc://test-addr2"
 
 
 def test_dialers_get_added():
@@ -60,22 +60,22 @@ def test_nonblocking_recv_works():
 def test_nonblocking_send_works():
     with pynng.Pair0(listen=addr) as s:
         with pytest.raises(pynng.TryAgain):
-            s.send(b'sad message, never will be seen', block=False)
+            s.send(b"sad message, never will be seen", block=False)
 
 
 @pytest.mark.trio
 async def test_context():
-    with pynng.Req0(listen=addr, recv_timeout=1000) as req_sock, \
-            pynng.Rep0(dial=addr, recv_timeout=1000) as rep_sock:
+    with pynng.Req0(listen=addr, recv_timeout=1000) as req_sock, pynng.Rep0(
+        dial=addr, recv_timeout=1000
+    ) as rep_sock:
         with req_sock.new_context() as req, rep_sock.new_context() as rep:
-
             assert isinstance(req, pynng.Context)
             assert isinstance(rep, pynng.Context)
-            request = b'i am requesting'
+            request = b"i am requesting"
             await req.asend(request)
             assert await rep.arecv() == request
 
-            response = b'i am responding'
+            response = b"i am responding"
             await rep.asend(response)
             assert await req.arecv() == response
 
@@ -84,7 +84,7 @@ async def test_context():
 
             # responders can't send before receiving
             with pytest.raises(pynng.BadState):
-                await rep.asend(b'I cannot do this why am I trying')
+                await rep.asend(b"I cannot do this why am I trying")
 
 
 @pytest.mark.trio
@@ -94,33 +94,35 @@ async def test_multiple_contexts():
         await trio.sleep(0.05)
         await ctx.asend(data)
 
-    with pynng.Rep0(listen=addr, recv_timeout=500) as rep, \
-            pynng.Req0(dial=addr, recv_timeout=500) as req1, \
-            pynng.Req0(dial=addr, recv_timeout=500) as req2:
+    with pynng.Rep0(listen=addr, recv_timeout=500) as rep, pynng.Req0(
+        dial=addr, recv_timeout=500
+    ) as req1, pynng.Req0(dial=addr, recv_timeout=500) as req2:
         async with trio.open_nursery() as n:
             ctx1, ctx2 = [rep.new_context() for _ in range(2)]
             with ctx1, ctx2:
                 n.start_soon(recv_and_send, ctx1)
                 n.start_soon(recv_and_send, ctx2)
 
-                await req1.asend(b'oh hi')
-                await req2.asend(b'me toooo')
-                assert (await req1.arecv() == b'oh hi')
-                assert (await req2.arecv() == b'me toooo')
+                await req1.asend(b"oh hi")
+                await req2.asend(b"me toooo")
+                assert await req1.arecv() == b"oh hi"
+                assert await req2.arecv() == b"me toooo"
 
 
 def test_synchronous_recv_context():
-    with pynng.Rep0(listen=addr, recv_timeout=500) as rep, \
-            pynng.Req0(dial=addr, recv_timeout=500) as req:
-        req.send(b'oh hello there old pal')
-        assert rep.recv() == b'oh hello there old pal'
-        rep.send(b'it is so good to hear from you')
-        assert req.recv() == b'it is so good to hear from you'
+    with pynng.Rep0(listen=addr, recv_timeout=500) as rep, pynng.Req0(
+        dial=addr, recv_timeout=500
+    ) as req:
+        req.send(b"oh hello there old pal")
+        assert rep.recv() == b"oh hello there old pal"
+        rep.send(b"it is so good to hear from you")
+        assert req.recv() == b"it is so good to hear from you"
 
 
 def test_pair1_polyamorousness():
-    with pynng.Pair1(listen=addr, polyamorous=True, recv_timeout=500) as s0, \
-            pynng.Pair1(dial=addr, polyamorous=True, recv_timeout=500) as s1:
+    with pynng.Pair1(
+        listen=addr, polyamorous=True, recv_timeout=500
+    ) as s0, pynng.Pair1(dial=addr, polyamorous=True, recv_timeout=500) as s1:
         wait_pipe_len(s0, 1)
         # pipe for s1 .
         p1 = s0.pipes[0]
@@ -132,33 +134,33 @@ def test_pair1_polyamorousness():
             p2 = pipes[1]
             if p2 is p1:
                 p2 = pipes[0]
-            p1.send(b'hello s1')
-            assert s1.recv() == b'hello s1'
+            p1.send(b"hello s1")
+            assert s1.recv() == b"hello s1"
 
-            p2.send(b'hello there s2')
-            assert s2.recv() == b'hello there s2'
+            p2.send(b"hello there s2")
+            assert s2.recv() == b"hello there s2"
             # TODO: Should *not* need to do this sleep, but stuff hangs without
             # it.
             time.sleep(0.05)
+
 
 # ToDo: Check in detail what is going wrong on pp3x-* wheels! Skipping for now.
 @pytest.mark.skip
 def test_sub_sock_options():
     with pynng.Pub0(listen=addr) as pub:
         # test single option topic
-        with pynng.Sub0(dial=addr, topics='beep', recv_timeout=1500) as sub:
+        with pynng.Sub0(dial=addr, topics="beep", recv_timeout=1500) as sub:
             wait_pipe_len(sub, 1)
             wait_pipe_len(pub, 1)
-            pub.send(b'beep hi')
-            assert sub.recv() == b'beep hi'
-        with pynng.Sub0(dial=addr, topics=['beep', 'hello'],
-                        recv_timeout=500) as sub:
+            pub.send(b"beep hi")
+            assert sub.recv() == b"beep hi"
+        with pynng.Sub0(dial=addr, topics=["beep", "hello"], recv_timeout=500) as sub:
             wait_pipe_len(sub, 1)
             wait_pipe_len(pub, 1)
-            pub.send(b'beep hi')
-            assert sub.recv() == b'beep hi'
-            pub.send(b'hello there')
-            assert sub.recv() == b'hello there'
+            pub.send(b"beep hi")
+            assert sub.recv() == b"beep hi"
+            pub.send(b"hello there")
+            assert sub.recv() == b"hello there"
 
 
 # skip because it fails in CI for pypy (all platforms?) and Python 3.7 on Mac.

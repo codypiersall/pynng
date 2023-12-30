@@ -94,6 +94,10 @@ test-skip = "cp312*"
 # architectures, and that's no good.
 before-build = "bash .github/rmstuff.sh"
 
+[tool.black]
+# Just a placeholder because I have a plugin that won't run without a section in
+# pyproject.toml
+
 # pytest configuration
 [tool.pytest.ini_options]
 addopts = "--capture=no --verbose"

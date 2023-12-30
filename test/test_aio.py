@@ -8,30 +8,34 @@ import curio
 
 import pynng
 
-addr = 'inproc://test-addr'
+addr = "inproc://test-addr"
+
 
 @pytest.mark.curio
 async def test_arecv_asend_curio():
-    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, \
-            pynng.Pair0(dial=addr) as dialer:
-        await dialer.asend(b'hello there buddy')
-        assert (await listener.arecv()) == b'hello there buddy'
+    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, pynng.Pair0(
+        dial=addr
+    ) as dialer:
+        await dialer.asend(b"hello there buddy")
+        assert (await listener.arecv()) == b"hello there buddy"
 
 
 @pytest.mark.trio
 async def test_arecv_asend_asyncio():
-    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, \
-            pynng.Pair0(dial=addr) as dialer:
-        await dialer.asend(b'hello there buddy')
-        assert (await listener.arecv()) == b'hello there buddy'
+    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, pynng.Pair0(
+        dial=addr
+    ) as dialer:
+        await dialer.asend(b"hello there buddy")
+        assert (await listener.arecv()) == b"hello there buddy"
 
 
 @pytest.mark.trio
 async def test_asend_arecv_trio():
-    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, \
-            pynng.Pair0(dial=addr, send_timeout=2000) as dialer:
-        await dialer.asend(b'hello there')
-        assert (await listener.arecv()) == b'hello there'
+    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, pynng.Pair0(
+        dial=addr, send_timeout=2000
+    ) as dialer:
+        await dialer.asend(b"hello there")
+        assert (await listener.arecv()) == b"hello there"
 
 
 @pytest.mark.curio
@@ -69,21 +73,21 @@ async def test_arecv_asyncio_cancel():
 async def test_asend_curio_send_timeout():
     with pytest.raises(pynng.exceptions.Timeout):
         with pynng.Pair0(listen=addr, send_timeout=1) as p0:
-            await p0.asend(b'foo')
+            await p0.asend(b"foo")
 
 
 @pytest.mark.asyncio
 async def test_asend_asyncio_send_timeout():
     with pytest.raises(pynng.exceptions.Timeout):
         with pynng.Pair0(listen=addr, send_timeout=1) as p0:
-            await p0.asend(b'foo')
+            await p0.asend(b"foo")
 
 
 @pytest.mark.trio
 async def test_asend_trio_send_timeout():
     with pytest.raises(pynng.exceptions.Timeout):
         with pynng.Pair0(listen=addr, send_timeout=1) as p0:
-            await p0.asend(b'foo')
+            await p0.asend(b"foo")
 
 
 @pytest.mark.trio
@@ -103,30 +107,30 @@ async def test_pub_sub_trio():
     async def pub():
         with pynng.Pub0(listen=addr) as pubber:
             for i in range(20):
-                prefix = 'even' if is_even(i) else 'odd'
-                msg = '{}:{}'.format(prefix, i)
-                await pubber.asend(msg.encode('ascii'))
+                prefix = "even" if is_even(i) else "odd"
+                msg = "{}:{}".format(prefix, i)
+                await pubber.asend(msg.encode("ascii"))
 
             while not all(sentinel_received.values()):
                 # signal completion
-                await pubber.asend(b'odd:None')
-                await pubber.asend(b'even:None')
+                await pubber.asend(b"odd:None")
+                await pubber.asend(b"even:None")
 
     async def subs(which):
-        if which == 'even':
+        if which == "even":
             pred = is_even
         else:
             pred = lambda i: not is_even(i)
 
         with pynng.Sub0(dial=addr, recv_timeout=5000) as subber:
-            subber.subscribe(which + ':')
+            subber.subscribe(which + ":")
 
             while True:
                 val = await subber.arecv()
 
-                lot, _, i = val.partition(b':')
+                lot, _, i = val.partition(b":")
 
-                if i == b'None':
+                if i == b"None":
                     break
 
                 assert pred(int(i))
@@ -136,7 +140,7 @@ async def test_pub_sub_trio():
 
     async with trio.open_nursery() as n:
         # whip up the subs
-        for _, lot in itertools.product(range(1), ('even', 'odd')):
+        for _, lot in itertools.product(range(1), ("even", "odd")):
             sentinel_received[lot] = False
             n.start_soon(subs, lot)
 

@@ -4,49 +4,57 @@
 # script should ensure that it is built before running.  It looks in this file
 # to see what the expected object file is based on the platform.
 from cffi import FFI
-import os,sysconfig
+import os, sysconfig
 import sys
 
 ffibuilder = FFI()
 
-if sys.platform == 'win32':
-    incdirs = ['nng/include']
-    objects = ['./nng/build/Release/nng.lib']
-    mbedtls_dir = f'./mbedtls/build/library/Release'
+if sys.platform == "win32":
+    incdirs = ["nng/include"]
+    objects = ["./nng/build/Release/nng.lib"]
+    mbedtls_dir = f"./mbedtls/build/library/Release"
     objects += [
         mbedtls_dir + "/mbedtls.lib",
         mbedtls_dir + "/mbedx509.lib",
         mbedtls_dir + "/mbedcrypto.lib",
     ]
 
-
     # system libraries determined to be necessary through trial and error
-    libraries = ['Ws2_32', 'Advapi32']
+    libraries = ["Ws2_32", "Advapi32"]
 # comment out this block if you want to build this with you own libraries
 # e.g.: python setup.py build_ext -I<inc_path> -L<lib_path> -l<lib>
-#elif True:
+# elif True:
 #    incdirs = None
 #    libraries = ['pthread' 'mbedtls' 'nng']
 #    objects = None
 else:
-    incdirs = ['nng/include']
-    objects = ['./nng/build/libnng.a', "./mbedtls/prefix/lib/libmbedtls.a",
-               "./mbedtls/prefix/lib/libmbedx509.a", "./mbedtls/prefix/lib/libmbedcrypto.a"]
-    libraries = ['pthread']
+    incdirs = ["nng/include"]
+    objects = [
+        "./nng/build/libnng.a",
+        "./mbedtls/prefix/lib/libmbedtls.a",
+        "./mbedtls/prefix/lib/libmbedx509.a",
+        "./mbedtls/prefix/lib/libmbedcrypto.a",
+    ]
+    libraries = ["pthread"]
     machine = os.uname().machine
     # this is a pretty heuristic... but let's go with it anyway.
     # it would be better to get linker information from cmake somehow.
     # Building process will be broken if add -latomic in Mac with clang. https://github.com/nodejs/node/pull/30099
     clang = False
     try:
-        if os.environ['CC'] == "clang":
+        if os.environ["CC"] == "clang":
             clang = True
     except KeyError:
         clang = False
-    if sysconfig.get_config_var('CC') == 'clang':
+    if sysconfig.get_config_var("CC") == "clang":
         clang = True
-    if not ('x86' in machine or 'i386' in machine or 'i686' in machine or (clang and 'Darwin' in os.uname().sysname)):
-        libraries.append('atomic')
+    if not (
+        "x86" in machine
+        or "i386" in machine
+        or "i686" in machine
+        or (clang and "Darwin" in os.uname().sysname)
+    ):
+        libraries.append("atomic")
 
 
 ffibuilder.set_source(
@@ -79,7 +87,7 @@ ffibuilder.set_source(
 )
 
 
-with open('nng_api.h') as f:
+with open("nng_api.h") as f:
     api = f.read()
 
 callbacks = """

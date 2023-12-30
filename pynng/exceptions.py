@@ -12,6 +12,7 @@ from ._nng import ffi, lib as nng
 
 class NNGException(Exception):
     """The base exception for any exceptional condition in the nng bindings."""
+
     def __init__(self, msg, errno):
         super().__init__(msg)
         self.errno = errno
@@ -199,5 +200,3 @@ def check_err(err):
     string = string.decode()
     exc = EXCEPTION_MAP.get(err, NNGException)
     raise exc(string, err)
-
-

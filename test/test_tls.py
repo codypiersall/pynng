@@ -66,14 +66,16 @@ BYTES = b"1234567890"
 
 @pytest.mark.skip
 def test_config_string():
-    with Pair0(recv_timeout=1000, send_timeout=1000) as server, \
-            Pair0(recv_timeout=1000, send_timeout=1000) as client:
-        c_server = TLSConfig(TLSConfig.MODE_SERVER,
-                             own_key_string=SERVER_KEY,
-                             own_cert_string=SERVER_CERT)
+    with Pair0(recv_timeout=1000, send_timeout=1000) as server, Pair0(
+        recv_timeout=1000, send_timeout=1000
+    ) as client:
+        c_server = TLSConfig(
+            TLSConfig.MODE_SERVER,
+            own_key_string=SERVER_KEY,
+            own_cert_string=SERVER_CERT,
+        )
         server.tls_config = c_server
-        c_client = TLSConfig(TLSConfig.MODE_CLIENT,
-                             ca_string=CA_CERT)
+        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_string=CA_CERT)
         client.tls_config = c_client
 
         server.listen(URL)
@@ -83,6 +85,7 @@ def test_config_string():
         server.send(BYTES)
         assert client.recv() == BYTES
 
+
 @pytest.mark.skip
 def test_config_file(tmp_path):
     ca_crt_file = tmp_path / "ca.crt"
@@ -91,13 +94,12 @@ def test_config_file(tmp_path):
     key_pair_file = tmp_path / "key_pair_file.pem"
     key_pair_file.write_text(SERVER_CERT + SERVER_KEY)
 
-    with Pair0(recv_timeout=1000, send_timeout=1000) as server, \
-            Pair0(recv_timeout=1000, send_timeout=1000) as client:
-        c_server = TLSConfig(TLSConfig.MODE_SERVER,
-                             cert_key_file=str(key_pair_file))
+    with Pair0(recv_timeout=1000, send_timeout=1000) as server, Pair0(
+        recv_timeout=1000, send_timeout=1000
+    ) as client:
+        c_server = TLSConfig(TLSConfig.MODE_SERVER, cert_key_file=str(key_pair_file))
         server.tls_config = c_server
-        c_client = TLSConfig(TLSConfig.MODE_CLIENT,
-                             ca_files=[str(ca_crt_file)])
+        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_files=[str(ca_crt_file)])
         client.tls_config = c_client
 
         server.listen(URL)

@@ -24,7 +24,7 @@ def _async_complete(void_p):
     """
     # this is not a public interface, so asserting invariants is good.
     assert isinstance(void_p, ffi.CData)
-    id = int(ffi.cast('size_t', void_p))
+    id = int(ffi.cast("size_t", void_p))
 
     rescheduler = _aio_map.pop(id)
     rescheduler()
@@ -32,6 +32,7 @@ def _async_complete(void_p):
 
 def curio_helper(aio):
     import curio
+
     fut = concurrent.futures.Future()
 
     async def wait_for_aio():
@@ -40,12 +41,12 @@ def curio_helper(aio):
         except curio.CancelledError:
             if fut.cancelled():
                 lib.nng_aio_cancel(aio.aio)
-    
+
         err = lib.nng_aio_result(aio.aio)
         if err == lib.NNG_ECANCELED:
             raise curio.CancelledError()
         check_err(err)
-    
+
     def callback():
         if not fut.cancelled():
             fut.set_result(True)
@@ -91,6 +92,7 @@ def asyncio_helper(aio):
 def trio_helper(aio):
     # Record the info needed to get back into this task
     import trio
+
     token = trio.lowlevel.current_trio_token()
     task = trio.lowlevel.current_task()
 
@@ -135,6 +137,7 @@ class AIOHelper:
     somewhat straightforward to support different event loops by adding a key
     to the ``_aio_helper_map`` and supplying a helper function.
     """
+
     # global dict that maps {event loop: helper_function}.  The helper function
     # takes one argument (an AIOHelper instance) and returns an (awaitable,
     # callback_function) tuple.  The callback_function will be called (with no
@@ -143,9 +146,9 @@ class AIOHelper:
     # It might just be clearer to look at the implementation of trio_helper and
     # asyncio_helper to get an idea of what the functions need to do.
     _aio_helper_map = {
-        'asyncio': asyncio_helper,
-        'trio': trio_helper,
-        'curio': curio_helper
+        "asyncio": asyncio_helper,
+        "trio": trio_helper,
+        "curio": curio_helper,
     }
 
     def __init__(self, obj, async_backend):
@@ -170,14 +173,13 @@ class AIOHelper:
             async_backend = sniffio.current_async_library()
         if async_backend not in self._aio_helper_map:
             raise ValueError(
-                'The async backend {} is not currently supported.'
-                .format(async_backend)
+                "The async backend {} is not currently supported.".format(async_backend)
             )
         self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
-        aio_p = ffi.new('nng_aio **')
+        aio_p = ffi.new("nng_aio **")
         _aio_map[id(self.cb_arg)] = self.cb_arg
         idarg = id(self.cb_arg)
-        as_void = ffi.cast('void *', idarg)
+        as_void = ffi.cast("void *", idarg)
         lib.nng_aio_alloc(aio_p, lib._async_complete, as_void)
         self.aio = aio_p[0]
 
@@ -193,7 +195,7 @@ class AIOHelper:
         return pynng.Message(msg)
 
     async def asend(self, data):
-        msg_p = ffi.new('nng_msg **')
+        msg_p = ffi.new("nng_msg **")
         check_err(lib.nng_msg_alloc(msg_p, 0))
         msg = msg_p[0]
         check_err(lib.nng_msg_append(msg, data, len(data)))

@@ -38,16 +38,18 @@ class TLSConfig:
     AUTH_MODE_OPTIONAL = pynng.lib.NNG_TLS_AUTH_MODE_OPTIONAL
     AUTH_MODE_REQUIRED = pynng.lib.NNG_TLS_AUTH_MODE_REQUIRED
 
-    def __init__(self, mode,
-                 server_name=None,
-                 ca_string=None,
-                 own_key_string=None,
-                 own_cert_string=None,
-                 auth_mode=None,
-                 ca_files=None,
-                 cert_key_file=None,
-                 passwd=None):
-
+    def __init__(
+        self,
+        mode,
+        server_name=None,
+        ca_string=None,
+        own_key_string=None,
+        own_cert_string=None,
+        auth_mode=None,
+        ca_files=None,
+        cert_key_file=None,
+        passwd=None,
+    ):
         if ca_string and ca_files:
             raise ValueError("Cannot set both ca_string and ca_files!")
 
@@ -55,13 +57,15 @@ class TLSConfig:
             raise ValueError("Cannot set both own_{key,cert}_string an cert_key_file!")
 
         if bool(own_cert_string) != bool(own_key_string):
-            raise ValueError("own_key_string and own_cert_string must be both set or unset")
+            raise ValueError(
+                "own_key_string and own_cert_string must be both set or unset"
+            )
 
         if isinstance(ca_files, str):
             # assume the user really intended to only set a single ca file.
             ca_files = [ca_files]
 
-        tls_config_p = pynng.ffi.new('nng_tls_config **')
+        tls_config_p = pynng.ffi.new("nng_tls_config **")
         pynng.check_err(pynng.lib.nng_tls_config_alloc(tls_config_p, mode))
         self._tls_config = tls_config_p[0]
 
@@ -111,9 +115,13 @@ class TLSConfig:
         """
         cert_char = pynng.nng.to_char(cert)
         key_char = pynng.nng.to_char(key)
-        passwd_char = pynng.nng.to_char(passwd) if passwd is not None else pynng.ffi.NULL
+        passwd_char = (
+            pynng.nng.to_char(passwd) if passwd is not None else pynng.ffi.NULL
+        )
 
-        err = pynng.lib.nng_tls_config_own_cert(self._tls_config, cert_char, key_char, passwd_char)
+        err = pynng.lib.nng_tls_config_own_cert(
+            self._tls_config, cert_char, key_char, passwd_char
+        )
         pynng.check_err(err)
 
     def set_auth_mode(self, mode):
@@ -136,7 +144,11 @@ class TLSConfig:
         Load own certificate and key from file.
         """
         path_char = pynng.nng.to_char(path)
-        passwd_char = pynng.nng.to_char(passwd) if passwd is not None else pynng.ffi.NULL
+        passwd_char = (
+            pynng.nng.to_char(passwd) if passwd is not None else pynng.ffi.NULL
+        )
 
-        err = pynng.lib.nng_tls_config_cert_key_file(self._tls_config, path_char, passwd_char)
+        err = pynng.lib.nng_tls_config_cert_key_file(
+            self._tls_config, path_char, passwd_char
+        )
         pynng.check_err(err)

@@ -37,7 +37,7 @@ class SockAddr:
         return self.type_to_str[self.family]
 
     def __repr__(self):
-        return 'nng_sockaddr {{.family = {}}}'.format(self.family)
+        return "nng_sockaddr {{.family = {}}}".format(self.family)
 
 
 class InprocAddr(SockAddr):
@@ -95,10 +95,10 @@ class InAddr(SockAddr):
         return self._mem.sa_addr
 
     def __str__(self):
-        as_bytes = struct.pack('I', self.addr)
+        as_bytes = struct.pack("I", self.addr)
         ip = socket.inet_ntop(socket.AF_INET, as_bytes)
         port = socket.ntohs(self.port)
-        return '{}:{}'.format(ip, port)
+        return "{}:{}".format(ip, port)
 
 
 class In6Addr(SockAddr):
@@ -155,4 +155,3 @@ def _nng_sockaddr(sa):
     # fall through to SockAddr, e.g. if it's unspecified
     cls = lookup.get(sa[0].s_family, SockAddr)
     return cls(sa)
-

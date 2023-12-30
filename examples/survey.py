@@ -16,7 +16,6 @@ def get_current_date():
 
 
 async def server(sock, max_survey_request=10):
-
     async def survey_eternally():
         nonlocal max_survey_request
         while max_survey_request:
@@ -25,7 +24,7 @@ async def server(sock, max_survey_request=10):
             while True:
                 try:
                     msg = await sock.arecv_msg()
-                    print(f"SERVER: RECEIVED \"{msg.bytes.decode()}\" SURVEY RESPONSE")
+                    print(f'SERVER: RECEIVED "{msg.bytes.decode()}" SURVEY RESPONSE')
                 except pynng.Timeout:
                     break
             print("SERVER: SURVEY COMPLETE")
@@ -36,25 +35,24 @@ async def server(sock, max_survey_request=10):
 
 
 async def client(name, max_survey=3):
-
     async def send_survey_eternally():
         nonlocal max_survey
         with pynng.Respondent0() as sock:
             sock.dial(address)
             while max_survey:
                 await sock.arecv_msg()
-                print(f"CLIENT ({name}): RECEIVED SURVEY REQUEST\"")
+                print(f'CLIENT ({name}): RECEIVED SURVEY REQUEST"')
                 print(f"CLIENT ({name}): SENDING DATE SURVEY RESPONSE")
-                await sock.asend(get_current_date().encode())       
-                max_survey -= 1 
-        
+                await sock.asend(get_current_date().encode())
+                max_survey -= 1
+
     return await curio.spawn(send_survey_eternally)
 
 
 async def main():
     with pynng.Surveyor0() as surveyor:
         n0 = await server(surveyor)
-        
+
         async with curio.TaskGroup(wait=all) as g:
             await g.spawn(client, "client0", 3)
             await g.spawn(client, "client1", 3)

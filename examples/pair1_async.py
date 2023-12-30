@@ -55,35 +55,36 @@ async def recv_eternally(sock):
         msg = await sock.arecv_msg()
         source_addr = str(msg.pipe.remote_address)
         content = msg.bytes.decode()
-        print('{} says: {}'.format(source_addr, content))
+        print("{} says: {}".format(source_addr, content))
 
 
 async def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        'mode',
+        "mode",
         help='Whether the socket should "listen" or "dial"',
-        choices=['listen', 'dial'],
+        choices=["listen", "dial"],
     )
     p.add_argument(
-        'addr',
-        help='Address to listen or dial; e.g. tcp://127.0.0.1:13134',
+        "addr",
+        help="Address to listen or dial; e.g. tcp://127.0.0.1:13134",
     )
     args = p.parse_args()
 
     with pynng.Pair1(polyamorous=True) as sock:
         async with trio.open_nursery() as n:
-            if args.mode == 'listen':
+            if args.mode == "listen":
                 # the listening socket can get dialled by any number of dialers.
                 # add a couple callbacks to see when the socket is receiving
                 # connections.
                 def pre_connect_cb(pipe):
                     addr = str(pipe.remote_address)
-                    print('~~~~got connection from {}'.format(addr))
+                    print("~~~~got connection from {}".format(addr))
 
                 def post_remove_cb(pipe):
                     addr = str(pipe.remote_address)
-                    print('~~~~goodbye for now from {}'.format(addr))
+                    print("~~~~goodbye for now from {}".format(addr))
+
                 sock.add_pre_pipe_connect_cb(pre_connect_cb)
                 sock.add_post_pipe_remove_cb(post_remove_cb)
                 sock.listen(args.addr)
@@ -93,7 +94,7 @@ async def main():
             n.start_soon(send_eternally, sock)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         trio.run(main)
     except KeyboardInterrupt:

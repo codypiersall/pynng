@@ -33,7 +33,6 @@ async def node1(message):
 
 async def main():
     with pynng.Pull0() as pull:
-
         n0 = await node0(pull)
         await curio.sleep(1)
 
