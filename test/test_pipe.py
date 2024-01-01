@@ -25,16 +25,37 @@ def test_pipe_gets_added_and_removed():
 
 
 def test_close_pipe_works():
-    # this is some racy business
-    with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
+    with pynng.Pair0() as s0, pynng.Pair0() as s1:
+        # list of pipes that got the callback called on them
+        cb_pipes = []
+
+        def cb(pipe):
+            cb_pipes.append(pipe)
+
+        # first add callbacks, before listening and dialing.  The callback just adds
+        # the pipe to cb_pipes; but this way we can ensure the callback got called.
+        s0.add_post_pipe_remove_cb(cb)
+        s1.add_post_pipe_remove_cb(cb)
+        s0.listen(addr)
+        s1.dial(addr)
         wait_pipe_len(s0, 1)
         wait_pipe_len(s1, 1)
+        p0 = s0.pipes[0]
+        p1 = s1.pipes[0]
         pipe0 = s0.pipes[0]
         pipe0.close()
-        pipe1 = s1.pipes[0]
-        pipe1.close()
-        wait_pipe_len(s0, 0)
-        wait_pipe_len(s1, 0)
+        # time out in 5 seconds if stuff dosen't work
+        timeout = time.monotonic() + 5.0
+        while len(cb_pipes) < 2 and time.monotonic() < timeout:
+            time.sleep(0.0005)
+        if time.monotonic() > timeout:
+            raise TimeoutError(
+                "Pipe close callbacks were not called; pipe close doesn't work?"
+            )
+        # we cannot assert the length of cb_pipes is 2 because the sockets might have
+        # reconnected in the meantime, so we can only assert that the pipes that
+        # *should* have been closed *have* been closed.
+        assert p0 in cb_pipes and p1 in cb_pipes
 
 
 def test_pipe_local_and_remote_addresses():

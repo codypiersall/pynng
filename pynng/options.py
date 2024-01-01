@@ -18,47 +18,41 @@ def _get_inst_and_func(py_obj, option_type, get_or_set):
             setopt* functions
 
     """
+    # nng option getter/setter functions are all named in the same consistent manner.
+    # The form is: nng_{nng_type}_{access_method}_{option_type}
+    #
+    # Where:
+    # * lib_type is "socket", "dialer", "listener", "pipe", or "ctx";
+    # * access_method is "get" or "set";
+    # * option_type is "bool", "int", "ms", "size", "uint64", "ptr", or "string"
+    #
+    # we can figure out which method to call based on the py_obj (Socket, Dialer,
+    # etc.), whether we are getting or settting, and
 
-    # map Python wrapper class to nng attribute
-    option_to_func_map = {
-        "int": "nng_getopt_int",
-        "size": "nng_getopt_size",
-        "ms": "nng_getopt_ms",
-        "string": "nng_getopt_string",
-        "bool": "nng_getopt_bool",
-        "sockaddr": "nng_getopt_sockaddr",
-        "ptr": "nng_getopt_ptr",
-    }
-
-    if option_type not in option_to_func_map:
-        raise ValueError('Bad option type "{}"'.format(option_type))
-
-    basic_funcname = option_to_func_map[option_type]
     if isinstance(py_obj, pynng.Socket):
-        funcname = basic_funcname
+        name = "socket"
         obj = py_obj.socket
     elif isinstance(py_obj, pynng.Dialer):
-        funcname = basic_funcname.replace("nng_", "nng_dialer_")
+        name = "dialer"
         obj = py_obj.dialer
     elif isinstance(py_obj, pynng.Listener):
-        funcname = basic_funcname.replace("nng_", "nng_listener_")
+        name = "listener"
         obj = py_obj.listener
     elif isinstance(py_obj, pynng.Pipe):
-        funcname = basic_funcname.replace("nng_", "nng_pipe_")
+        name = "pipe"
         obj = py_obj.pipe
+    elif isinstance(py_obj, pynng.Context):
+        name = "ctx"
+        obj = py_obj.context
     else:
-        msg = 'The type "{}" is not supported'
-        msg = msg.format(type(py_obj))
-        raise TypeError(msg)
+        raise TypeError(f'The type "{type(py_obj)}" is not supported')
 
-    if get_or_set == "set":
-        funcname = funcname.replace("getopt", "setopt")
-        # special-case for nng_setopt_string, which expects NULL-terminated
-        # strings; we use the generic setopt in that case.
-        if option_type == "string":
-            funcname = funcname.replace("_string", "")
-
-    nng_func = getattr(pynng.lib, funcname)
+    if option_type:
+        function_name = f"nng_{name}_{get_or_set}_{option_type}"
+    else:
+        # opaque get/set
+        function_name = f"nng_{name}_{get_or_set}"
+    nng_func = getattr(pynng.lib, function_name)
     return obj, nng_func
 
 
@@ -148,14 +142,18 @@ def _getopt_string(py_obj, option):
 
 
 def _setopt_string(py_obj, option, value):
-    """Sets the specified option to the specified value
-
-    This is different than the library's nng_setopt_string, because it
-    expects the string to be NULL terminated, and we don't.
-    """
+    """Sets the specified option to the specified value"""
     opt_as_char = pynng.nng.to_char(option)
     val_as_char = pynng.nng.to_char(value)
     obj, lib_func = _get_inst_and_func(py_obj, "string", "set")
+    ret = lib_func(obj, opt_as_char, val_as_char)
+    pynng.check_err(ret)
+
+
+def _setopt_string_nonnull(py_obj, option, value):
+    opt_as_char = pynng.nng.to_char(option)
+    val_as_char = pynng.nng.to_char(value)
+    obj, lib_func = _get_inst_and_func(py_obj, "", "set")
     ret = lib_func(obj, opt_as_char, val_as_char, len(value))
     pynng.check_err(ret)
 
@@ -181,7 +179,7 @@ def _setopt_bool(py_obj, option, value):
 def _getopt_sockaddr(py_obj, option):
     opt_as_char = pynng.nng.to_char(option)
     sock_addr = pynng.ffi.new("nng_sockaddr []", 1)
-    obj, lib_func = _get_inst_and_func(py_obj, "sockaddr", "get")
+    obj, lib_func = _get_inst_and_func(py_obj, "addr", "get")
     ret = lib_func(obj, opt_as_char, sock_addr)
     pynng.check_err(ret)
     return pynng.sockaddr._nng_sockaddr(sock_addr)
