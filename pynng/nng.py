@@ -57,13 +57,15 @@ def _ensure_can_send(thing):
         )
 
 
-def to_char(charlike):
+def to_char(charlike, add_null_term=False):
     """Convert str or bytes to char*."""
     # fast path for stuff that doesn't need to be changed.
     if isinstance(charlike, ffi.CData):
         return charlike
     if isinstance(charlike, str):
         charlike = charlike.encode()
+    if add_null_term:
+        charlike = charlike + b"\x00"
     charlike = ffi.new("char[]", charlike)
     return charlike
 
@@ -307,7 +309,7 @@ class Socket:
         block_on_dial=None,
         name=None,
         tls_config=None,
-        async_backend=None
+        async_backend=None,
     ):
         # mapping of id: Python objects
         self._dialers = {}
@@ -907,7 +909,7 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
-        options._setopt_string(self, b"sub:subscribe", topic)
+        options._setopt_string_nonnull(self, b"sub:subscribe", topic)
 
     def unsubscribe(self, topic):
         """Unsubscribe to the specified topic.
@@ -919,7 +921,7 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
-        options._setopt_string(self, b"sub:unsubscribe", topic)
+        options._setopt_string_nonnull(self, b"sub:unsubscribe", topic)
 
 
 class Req0(Socket):

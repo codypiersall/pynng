@@ -16,7 +16,7 @@ process_header() {
     sed 's/^NNG_DECL *//g'
 }
 
-process_header nng/include/nng/nng.h >> nng_api.h
+process_header nng/include/nng/nng.h | awk '1;/extern int nng_msg_getopt/{exit}'| head -n -1 >> nng_api.h
 process_header nng/include/nng/protocol/bus0/bus.h >> nng_api.h
 process_header nng/include/nng/protocol/pair0/pair.h >> nng_api.h
 process_header nng/include/nng/protocol/pair1/pair.h >> nng_api.h

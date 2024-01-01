@@ -22,21 +22,16 @@ struct nng_sockaddr_inproc {
  uint16_t sa_family;
  char sa_name[(128)];
 };
-typedef struct nng_sockaddr_inproc nng_sockaddr_inproc;
 struct nng_sockaddr_path {
  uint16_t sa_family;
  char sa_path[(128)];
 };
-typedef struct nng_sockaddr_path nng_sockaddr_path;
-typedef struct nng_sockaddr_path nng_sockaddr_ipc;
 struct nng_sockaddr_in6 {
  uint16_t sa_family;
  uint16_t sa_port;
  uint8_t sa_addr[16];
+ uint32_t sa_scope;
 };
-typedef struct nng_sockaddr_in6 nng_sockaddr_in6;
-typedef struct nng_sockaddr_in6 nng_sockaddr_udp6;
-typedef struct nng_sockaddr_in6 nng_sockaddr_tcp6;
 struct nng_sockaddr_in {
  uint16_t sa_family;
  uint16_t sa_port;
@@ -48,10 +43,23 @@ struct nng_sockaddr_zt {
  uint64_t sa_nodeid;
  uint32_t sa_port;
 };
+struct nng_sockaddr_abstract {
+ uint16_t sa_family;
+ uint16_t sa_len;
+ uint8_t sa_name[107];
+};
+struct nng_sockaddr_storage {
+ uint16_t sa_family;
+ uint64_t sa_pad[16];
+};
+typedef struct nng_sockaddr_inproc nng_sockaddr_inproc;
+typedef struct nng_sockaddr_path nng_sockaddr_path;
+typedef struct nng_sockaddr_path nng_sockaddr_ipc;
 typedef struct nng_sockaddr_in nng_sockaddr_in;
-typedef struct nng_sockaddr_in nng_sockaddr_udp;
-typedef struct nng_sockaddr_in nng_sockaddr_tcp;
+typedef struct nng_sockaddr_in6 nng_sockaddr_in6;
 typedef struct nng_sockaddr_zt nng_sockaddr_zt;
+typedef struct nng_sockaddr_abstract nng_sockaddr_abstract;
+typedef struct nng_sockaddr_storage nng_sockaddr_storage;
 typedef union nng_sockaddr {
  uint16_t s_family;
  nng_sockaddr_ipc s_ipc;
@@ -59,6 +67,8 @@ typedef union nng_sockaddr {
  nng_sockaddr_in6 s_in6;
  nng_sockaddr_in s_in;
  nng_sockaddr_zt s_zt;
+ nng_sockaddr_abstract s_abstract;
+ nng_sockaddr_storage s_storage;
 } nng_sockaddr;
 enum nng_sockaddr_family {
  NNG_AF_UNSPEC = 0,
@@ -66,7 +76,8 @@ enum nng_sockaddr_family {
  NNG_AF_IPC = 2,
  NNG_AF_INET = 3,
  NNG_AF_INET6 = 4,
- NNG_AF_ZT = 5
+ NNG_AF_ZT = 5,
+ NNG_AF_ABSTRACT = 6
 };
 typedef struct nng_iov {
  void * iov_buf;
@@ -75,23 +86,6 @@ typedef struct nng_iov {
 extern void nng_fini(void);
 extern int nng_close(nng_socket);
 extern int nng_socket_id(nng_socket);
-extern void nng_closeall(void);
-extern int nng_setopt(nng_socket, const char *, const void *, size_t);
-extern int nng_setopt_bool(nng_socket, const char *, bool);
-extern int nng_setopt_int(nng_socket, const char *, int);
-extern int nng_setopt_ms(nng_socket, const char *, nng_duration);
-extern int nng_setopt_size(nng_socket, const char *, size_t);
-extern int nng_setopt_uint64(nng_socket, const char *, uint64_t);
-extern int nng_setopt_string(nng_socket, const char *, const char *);
-extern int nng_setopt_ptr(nng_socket, const char *, void *);
-extern int nng_getopt(nng_socket, const char *, void *, size_t *);
-extern int nng_getopt_bool(nng_socket, const char *, bool *);
-extern int nng_getopt_int(nng_socket, const char *, int *);
-extern int nng_getopt_ms(nng_socket, const char *, nng_duration *);
-extern int nng_getopt_size(nng_socket, const char *, size_t *);
-extern int nng_getopt_uint64(nng_socket, const char *, uint64_t *);
-extern int nng_getopt_ptr(nng_socket, const char *, void **);
-extern int nng_getopt_string(nng_socket, const char *, char **);
 extern int nng_socket_set(nng_socket, const char *, const void *, size_t);
 extern int nng_socket_set_bool(nng_socket, const char *, bool);
 extern int nng_socket_set_int(nng_socket, const char *, int);
@@ -129,24 +123,6 @@ extern int nng_dialer_close(nng_dialer);
 extern int nng_listener_close(nng_listener);
 extern int nng_dialer_id(nng_dialer);
 extern int nng_listener_id(nng_listener);
-extern int nng_dialer_setopt(nng_dialer, const char *, const void *, size_t);
-extern int nng_dialer_setopt_bool(nng_dialer, const char *, bool);
-extern int nng_dialer_setopt_int(nng_dialer, const char *, int);
-extern int nng_dialer_setopt_ms(nng_dialer, const char *, nng_duration);
-extern int nng_dialer_setopt_size(nng_dialer, const char *, size_t);
-extern int nng_dialer_setopt_uint64(nng_dialer, const char *, uint64_t);
-extern int nng_dialer_setopt_ptr(nng_dialer, const char *, void *);
-extern int nng_dialer_setopt_string(nng_dialer, const char *, const char *);
-extern int nng_dialer_getopt(nng_dialer, const char *, void *, size_t *);
-extern int nng_dialer_getopt_bool(nng_dialer, const char *, bool *);
-extern int nng_dialer_getopt_int(nng_dialer, const char *, int *);
-extern int nng_dialer_getopt_ms(nng_dialer, const char *, nng_duration *);
-extern int nng_dialer_getopt_size(nng_dialer, const char *, size_t *);
-extern int nng_dialer_getopt_sockaddr(
-    nng_dialer, const char *, nng_sockaddr *);
-extern int nng_dialer_getopt_uint64(nng_dialer, const char *, uint64_t *);
-extern int nng_dialer_getopt_ptr(nng_dialer, const char *, void **);
-extern int nng_dialer_getopt_string(nng_dialer, const char *, char **);
 extern int nng_dialer_set(nng_dialer, const char *, const void *, size_t);
 extern int nng_dialer_set_bool(nng_dialer, const char *, bool);
 extern int nng_dialer_set_int(nng_dialer, const char *, int);
@@ -166,28 +142,6 @@ extern int nng_dialer_get_string(nng_dialer, const char *, char **);
 extern int nng_dialer_get_ptr(nng_dialer, const char *, void **);
 extern int nng_dialer_get_ms(nng_dialer, const char *, nng_duration *);
 extern int nng_dialer_get_addr(nng_dialer, const char *, nng_sockaddr *);
-extern int nng_listener_setopt(
-    nng_listener, const char *, const void *, size_t);
-extern int nng_listener_setopt_bool(nng_listener, const char *, bool);
-extern int nng_listener_setopt_int(nng_listener, const char *, int);
-extern int nng_listener_setopt_ms(nng_listener, const char *, nng_duration);
-extern int nng_listener_setopt_size(nng_listener, const char *, size_t);
-extern int nng_listener_setopt_uint64(nng_listener, const char *, uint64_t);
-extern int nng_listener_setopt_ptr(nng_listener, const char *, void *);
-extern int nng_listener_setopt_string(
-    nng_listener, const char *, const char *);
-extern int nng_listener_getopt(nng_listener, const char *, void *, size_t *);
-extern int nng_listener_getopt_bool(nng_listener, const char *, bool *);
-extern int nng_listener_getopt_int(nng_listener, const char *, int *);
-extern int nng_listener_getopt_ms(
-    nng_listener, const char *, nng_duration *);
-extern int nng_listener_getopt_size(nng_listener, const char *, size_t *);
-extern int nng_listener_getopt_sockaddr(
-    nng_listener, const char *, nng_sockaddr *);
-extern int nng_listener_getopt_uint64(
-    nng_listener, const char *, uint64_t *);
-extern int nng_listener_getopt_ptr(nng_listener, const char *, void **);
-extern int nng_listener_getopt_string(nng_listener, const char *, char **);
 extern int nng_listener_set(
     nng_listener, const char *, const void *, size_t);
 extern int nng_listener_set_bool(nng_listener, const char *, bool);
@@ -219,17 +173,9 @@ extern int nng_ctx_open(nng_ctx *, nng_socket);
 extern int nng_ctx_close(nng_ctx);
 extern int nng_ctx_id(nng_ctx);
 extern void nng_ctx_recv(nng_ctx, nng_aio *);
+extern int nng_ctx_recvmsg(nng_ctx, nng_msg **, int);
 extern void nng_ctx_send(nng_ctx, nng_aio *);
-extern int nng_ctx_getopt(nng_ctx, const char *, void *, size_t *);
-extern int nng_ctx_getopt_bool(nng_ctx, const char *, bool *);
-extern int nng_ctx_getopt_int(nng_ctx, const char *, int *);
-extern int nng_ctx_getopt_ms(nng_ctx, const char *, nng_duration *);
-extern int nng_ctx_getopt_size(nng_ctx, const char *, size_t *);
-extern int nng_ctx_setopt(nng_ctx, const char *, const void *, size_t);
-extern int nng_ctx_setopt_bool(nng_ctx, const char *, bool);
-extern int nng_ctx_setopt_int(nng_ctx, const char *, int);
-extern int nng_ctx_setopt_ms(nng_ctx, const char *, nng_duration);
-extern int nng_ctx_setopt_size(nng_ctx, const char *, size_t);
+extern int nng_ctx_sendmsg(nng_ctx, nng_msg *, int);
 extern int nng_ctx_get(nng_ctx, const char *, void *, size_t *);
 extern int nng_ctx_get_bool(nng_ctx, const char *, bool *);
 extern int nng_ctx_get_int(nng_ctx, const char *, int *);
@@ -254,12 +200,14 @@ extern char *nng_strdup(const char *);
 extern void nng_strfree(char *);
 extern int nng_aio_alloc(nng_aio **, void (*)(void *), void *);
 extern void nng_aio_free(nng_aio *);
+extern void nng_aio_reap(nng_aio *);
 extern void nng_aio_stop(nng_aio *);
 extern int nng_aio_result(nng_aio *);
 extern size_t nng_aio_count(nng_aio *);
 extern void nng_aio_cancel(nng_aio *);
 extern void nng_aio_abort(nng_aio *, int);
 extern void nng_aio_wait(nng_aio *);
+extern bool nng_aio_busy(nng_aio *);
 extern void nng_aio_set_msg(nng_aio *, nng_msg *);
 extern nng_msg *nng_aio_get_msg(nng_aio *);
 extern int nng_aio_set_input(nng_aio *, unsigned, void *);
@@ -276,6 +224,8 @@ extern void nng_sleep_aio(nng_duration, nng_aio *);
 extern int nng_msg_alloc(nng_msg **, size_t);
 extern void nng_msg_free(nng_msg *);
 extern int nng_msg_realloc(nng_msg *, size_t);
+extern int nng_msg_reserve(nng_msg *, size_t);
+extern size_t nng_msg_capacity(nng_msg *);
 extern void * nng_msg_header(nng_msg *);
 extern size_t nng_msg_header_len(const nng_msg *);
 extern void * nng_msg_body(nng_msg *);
@@ -317,16 +267,6 @@ extern void nng_msg_clear(nng_msg *);
 extern void nng_msg_header_clear(nng_msg *);
 extern void nng_msg_set_pipe(nng_msg *, nng_pipe);
 extern nng_pipe nng_msg_get_pipe(const nng_msg *);
-extern int nng_msg_getopt(nng_msg *, int, void *, size_t *);
-extern int nng_pipe_getopt(nng_pipe, const char *, void *, size_t *);
-extern int nng_pipe_getopt_bool(nng_pipe, const char *, bool *);
-extern int nng_pipe_getopt_int(nng_pipe, const char *, int *);
-extern int nng_pipe_getopt_ms(nng_pipe, const char *, nng_duration *);
-extern int nng_pipe_getopt_size(nng_pipe, const char *, size_t *);
-extern int nng_pipe_getopt_sockaddr(nng_pipe, const char *, nng_sockaddr *);
-extern int nng_pipe_getopt_uint64(nng_pipe, const char *, uint64_t *);
-extern int nng_pipe_getopt_ptr(nng_pipe, const char *, void **);
-extern int nng_pipe_getopt_string(nng_pipe, const char *, char **);
 extern int nng_pipe_get(nng_pipe, const char *, void *, size_t *);
 extern int nng_pipe_get_bool(nng_pipe, const char *, bool *);
 extern int nng_pipe_get_int(nng_pipe, const char *, int *);
@@ -369,10 +309,12 @@ enum nng_unit_enum {
  NNG_UNIT_EVENTS = 4
 };
 extern uint64_t nng_stat_value(nng_stat *);
+extern bool nng_stat_bool(nng_stat *);
 extern const char *nng_stat_string(nng_stat *);
 extern const char *nng_stat_desc(nng_stat *);
 extern uint64_t nng_stat_timestamp(nng_stat *);
 extern int nng_device(nng_socket, nng_socket);
+extern void nng_device_aio(nng_aio *, nng_socket, nng_socket);
 enum nng_errno_enum {
  NNG_EINTR = 1,
  NNG_ENOMEM = 2,
@@ -595,5 +537,5 @@ int nng_tls_register(void);
 #define NNG_FLAG_ALLOC 1u // Recv to allocate receive buffer
 #define NNG_FLAG_NONBLOCK 2u // Non-blocking operations
 #define NNG_MAJOR_VERSION 1
-#define NNG_MINOR_VERSION 4
+#define NNG_MINOR_VERSION 6
 #define NNG_PATCH_VERSION 0
