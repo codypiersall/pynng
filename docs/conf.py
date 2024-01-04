@@ -17,7 +17,7 @@
 # -- Project information -----------------------------------------------------
 
 project = "pynng"
-copyright = "2018, 2019 Cody Piersall"
+copyright = "2018 - 2024 Cody Piersall"
 author = "Cody Piersall"
 
 # The short X.Y version
