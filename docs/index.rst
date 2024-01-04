@@ -76,7 +76,7 @@ On Linux, Windows, and macOS, a quick
 
    pip3 install pynng
 
-should do the trick.  pynng works on Python 3.5+.
+should do the trick.  pynng works on Python 3.6+.
 
 
 Getting Started
