@@ -1,2 +1,0 @@
-cmake==3.13.3
-sphinxcontrib-trio==1.0.2
