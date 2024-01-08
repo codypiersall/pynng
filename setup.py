@@ -9,6 +9,8 @@ from distutils.command.build import build as dbuild
 
 WINDOWS = sys.platform == "win32"
 
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+
 
 def maybe_copy(src, dst):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -24,11 +26,9 @@ class BuilderBase(Command):
         ("rev=", None, "GitHub repository revision."),
     ]
 
-    windows = sys.platform == "win32"
-
     flags = ["-DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true"]
     is_64bit = sys.maxsize > 2**32
-    if windows:
+    if WINDOWS:
         if is_64bit:
             flags += ["-A", "x64"]
         else:
@@ -72,14 +72,16 @@ class BuildNng(BuilderBase):
     description = "build the nng library"
     git_dir = "nng"
     build_dir = "nng/build"
-    this_dir = os.path.abspath(os.path.dirname(__file__))
-    cmake_extra_args = [
-        "-DNNG_ENABLE_TLS=ON",
-        "-DNNG_TESTS=OFF",
-        "-DNNG_TOOLS=OFF",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DMBEDTLS_ROOT_DIR={}/mbedtls/prefix/".format(this_dir),
-    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cmake_extra_args = [
+            "-DNNG_ENABLE_TLS=ON",
+            "-DNNG_TESTS=OFF",
+            "-DNNG_TOOLS=OFF",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DMBEDTLS_ROOT_DIR={}/mbedtls/prefix/".format(THIS_DIR),
+        ]
 
     def finalize_build(self):
         check_call(
@@ -97,12 +99,15 @@ class BuildMbedTls(BuilderBase):
     description = "build the mbedtls library"
     git_dir = "mbedtls"
     build_dir = "mbedtls/build"
-    cmake_extra_args = [
-        "-DENABLE_PROGRAMS=OFF",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_INSTALL_PREFIX=../prefix",
-        "-DENABLE_TESTING=OFF",
-    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cmake_extra_args = [
+            "-DENABLE_PROGRAMS=OFF",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_INSTALL_PREFIX=../prefix",
+            "-DENABLE_TESTING=OFF",
+        ]
 
     def finalize_build(self):
         check_call(
