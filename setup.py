@@ -60,10 +60,9 @@ class BuilderBase(Command):
         if not os.path.exists(self.build_dir):
             os.mkdir(self.build_dir)
 
-        self.cmake_cmd += self.cmake_extra_args
-        self.cmake_cmd.append("..")
-        print(f"building {self.git_dir} with:", self.cmake_cmd)
-        check_call(self.cmake_cmd, cwd=self.build_dir)
+        cmake_cmd = [*self.cmake_cmd, *self.cmake_extra_args, ".."]
+        print(f"building {self.git_dir} with:", cmake_cmd)
+        check_call(cmake_cmd, cwd=self.build_dir)
 
         self.finalize_build()
 
