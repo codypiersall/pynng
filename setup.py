@@ -61,7 +61,7 @@ class BuilderBase(Command):
             os.mkdir(self.build_dir)
 
         cmake_cmd = [*self.cmake_cmd, *self.cmake_extra_args, ".."]
-        print(f"building {self.git_dir} with:", cmake_cmd)
+        print(f"building {self.git_dir} with:", cmake_cmd, flush=True)
         check_call(cmake_cmd, cwd=self.build_dir)
 
         self.finalize_build()
@@ -69,11 +69,11 @@ class BuilderBase(Command):
 
 class BuildNng(BuilderBase):
     description = "build the nng library"
-    git_dir = "nng"
     build_dir = "nng/build"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.git_dir = "nng"
         self.cmake_extra_args = [
             "-DNNG_ENABLE_TLS=ON",
             "-DNNG_TESTS=OFF",
@@ -96,11 +96,11 @@ class BuildNng(BuilderBase):
 
 class BuildMbedTls(BuilderBase):
     description = "build the mbedtls library"
-    git_dir = "mbedtls"
     build_dir = "mbedtls/build"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.git_dir = "mbedtls"
         self.cmake_extra_args = [
             "-DENABLE_PROGRAMS=OFF",
             "-DCMAKE_BUILD_TYPE=Release",
@@ -122,6 +122,16 @@ class BuildMbedTls(BuilderBase):
             maybe_copy(src + "mbedtls.lib", dst + "mbedtls.lib")
             maybe_copy(src + "mbedx509.lib", dst + "mbedx509.lib")
             maybe_copy(src + "mbedcrypto.lib", dst + "mbedcrypto.lib")
+        else:
+            # kinda hacky...
+            # In CI, mbedtls installs its libraries into mbedtls/prefix/lib64.
+            # Not totally sure when this happened, but something in mbedtls changed,
+            # likely commit 0f2e87bdf534a967937882e7381e067d9b1cb135, when they started
+            # using GnuInstallDirs. Couldn't build to verify but likely enough.
+            src = f"{THIS_DIR}/mbedtls/prefix/lib64"
+            dst = f"{THIS_DIR}/mbedtls/prefix/lib"
+            if os.path.exists(src):
+                shutil.move(src, dst)
 
 
 class BuildBuild(build_ext):
