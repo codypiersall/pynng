@@ -130,8 +130,8 @@ class BuildMbedTls(BuilderBase):
             # using GnuInstallDirs. Couldn't build to verify but likely enough.
             src = f"{THIS_DIR}/mbedtls/prefix/lib64"
             dst = f"{THIS_DIR}/mbedtls/prefix/lib"
-            if os.path.exists(src):
-                shutil.move(src, dst)
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copytree(src, dst)
 
 
 class BuildBuild(build_ext):
