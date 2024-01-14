@@ -99,6 +99,11 @@ test-skip = "cp312*"
 # architectures, and that's no good.
 before-build = "bash .github/rmstuff.sh"
 
+[tool.cibuildwheel.macos]
+# Specify universal2 building for macOS
+archs = ["universal2"]
+environment = { CMAKE_OSX_ARCHITECTURES="x86_64;arm64" }
+
 [tool.black]
 # Just a placeholder because I have a plugin that won't run without a section in
 # pyproject.toml
