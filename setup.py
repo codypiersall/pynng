@@ -1,8 +1,15 @@
 import os
 from subprocess import check_call
+import platform
 import shutil
 import sys
 
+if platform.machine() == "i686" and platform.system() == "Linux":
+    # mbedtls v3.5.1 will not build without these flags on 32-bit linux.
+    # https://github.com/Mbed-TLS/mbedtls/issues/8334
+    # this is hopefully going to be fixed in another release.
+    # There is probably a better way to do this...
+    os.environ["CFLAGS"] = "-mpclmul -msse2 -maes"
 from setuptools import Command, setup, find_packages
 from setuptools.command.build_ext import build_ext
 from distutils.command.build import build as dbuild
