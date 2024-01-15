@@ -20,7 +20,7 @@ if sys.platform == "win32":
     ]
 
     # system libraries determined to be necessary through trial and error
-    libraries = ["Ws2_32", "Advapi32"]
+    libraries = ["Ws2_32", "Advapi32", "Bcrypt"]
 # comment out this block if you want to build this with you own libraries
 # e.g.: python setup.py build_ext -I<inc_path> -L<lib_path> -l<lib>
 # elif True:

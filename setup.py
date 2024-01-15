@@ -1,13 +1,22 @@
 import os
 from subprocess import check_call
+import platform
 import shutil
 import sys
 
+if platform.machine() == "i686" and platform.system() == "Linux":
+    # mbedtls v3.5.1 will not build without these flags on 32-bit linux.
+    # https://github.com/Mbed-TLS/mbedtls/issues/8334
+    # this is hopefully going to be fixed in another release.
+    # There is probably a better way to do this...
+    os.environ["CFLAGS"] = "-mpclmul -msse2 -maes"
 from setuptools import Command, setup, find_packages
 from setuptools.command.build_ext import build_ext
 from distutils.command.build import build as dbuild
 
 WINDOWS = sys.platform == "win32"
+
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 def maybe_copy(src, dst):
@@ -24,11 +33,9 @@ class BuilderBase(Command):
         ("rev=", None, "GitHub repository revision."),
     ]
 
-    windows = sys.platform == "win32"
-
     flags = ["-DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true"]
     is_64bit = sys.maxsize > 2**32
-    if windows:
+    if WINDOWS:
         if is_64bit:
             flags += ["-A", "x64"]
         else:
@@ -60,26 +67,27 @@ class BuilderBase(Command):
         if not os.path.exists(self.build_dir):
             os.mkdir(self.build_dir)
 
-        self.cmake_cmd += self.cmake_extra_args
-        self.cmake_cmd.append("..")
-        print(f"building {self.git_dir} with:", self.cmake_cmd)
-        check_call(self.cmake_cmd, cwd=self.build_dir)
+        cmake_cmd = [*self.cmake_cmd, *self.cmake_extra_args, ".."]
+        print(f"building {self.git_dir} with:", cmake_cmd, flush=True)
+        check_call(cmake_cmd, cwd=self.build_dir)
 
         self.finalize_build()
 
 
 class BuildNng(BuilderBase):
     description = "build the nng library"
-    git_dir = "nng"
     build_dir = "nng/build"
-    this_dir = os.path.abspath(os.path.dirname(__file__))
-    cmake_extra_args = [
-        "-DNNG_ENABLE_TLS=ON",
-        "-DNNG_TESTS=OFF",
-        "-DNNG_TOOLS=OFF",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DMBEDTLS_ROOT_DIR={}/mbedtls/prefix/".format(this_dir),
-    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.git_dir = "nng"
+        self.cmake_extra_args = [
+            "-DNNG_ENABLE_TLS=ON",
+            "-DNNG_TESTS=OFF",
+            "-DNNG_TOOLS=OFF",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DMBEDTLS_ROOT_DIR={}/mbedtls/prefix/".format(THIS_DIR),
+        ]
 
     def finalize_build(self):
         check_call(
@@ -95,14 +103,17 @@ class BuildNng(BuilderBase):
 
 class BuildMbedTls(BuilderBase):
     description = "build the mbedtls library"
-    git_dir = "mbedtls"
     build_dir = "mbedtls/build"
-    cmake_extra_args = [
-        "-DENABLE_PROGRAMS=OFF",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_INSTALL_PREFIX=../prefix",
-        "-DENABLE_TESTING=OFF",
-    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.git_dir = "mbedtls"
+        self.cmake_extra_args = [
+            "-DENABLE_PROGRAMS=OFF",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_INSTALL_PREFIX=../prefix",
+            "-DENABLE_TESTING=OFF",
+        ]
 
     def finalize_build(self):
         check_call(
@@ -118,6 +129,16 @@ class BuildMbedTls(BuilderBase):
             maybe_copy(src + "mbedtls.lib", dst + "mbedtls.lib")
             maybe_copy(src + "mbedx509.lib", dst + "mbedx509.lib")
             maybe_copy(src + "mbedcrypto.lib", dst + "mbedcrypto.lib")
+        else:
+            # kinda hacky...
+            # In CI, mbedtls installs its libraries into mbedtls/prefix/lib64.
+            # Not totally sure when this happened, but something in mbedtls changed,
+            # likely commit 0f2e87bdf534a967937882e7381e067d9b1cb135, when they started
+            # using GnuInstallDirs. Couldn't build to verify but likely enough.
+            src = f"{THIS_DIR}/mbedtls/prefix/lib64"
+            dst = f"{THIS_DIR}/mbedtls/prefix/lib"
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copytree(src, dst)
 
 
 class BuildBuild(build_ext):
