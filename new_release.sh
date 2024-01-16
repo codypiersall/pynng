@@ -31,7 +31,7 @@ fi
 echo "__version__ = \"$new_version\"" > $VERSION_FILE
 git add $VERSION_FILE
 git commit -m "Version bump to v$new_version"
-git tag -a v"$new_version" -m "Release version $new_version"
+git tag -a v"$new_version" -m "Release version $new_version."
 echo "__version__ = \"$new_version+dev\"" > $VERSION_FILE
 git add $VERSION_FILE
 git commit -a -m "Add +dev to version ($new_version+dev)"
