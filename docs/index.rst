@@ -87,6 +87,7 @@ Getting Started
 
    core
    exceptions
+   developing
 
 
 Indices and tables
