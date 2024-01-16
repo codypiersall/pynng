@@ -13,4 +13,5 @@ prune mbedtls/build
 prune mbedtls/.git
 prune mbedtls/.github
 prune mbedtls/.travis.yml
+prune mbedtls/prefix
 exclude mbedtls/.gitignore
