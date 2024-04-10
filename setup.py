@@ -12,7 +12,6 @@ if platform.machine() == "i686" and platform.system() == "Linux":
     os.environ["CFLAGS"] = "-mpclmul -msse2 -maes"
 from setuptools import Command, setup, find_packages
 from setuptools.command.build_ext import build_ext
-from distutils.command.build import build as dbuild
 
 WINDOWS = sys.platform == "win32"
 
@@ -146,16 +145,11 @@ class BuildBuild(build_ext):
     Custom build command
     """
 
-    # dbuild.user_options += [
-    #    ('build-deps', None, 'build nng and mbedtls before building the module')
-    # ]
-
     def initialize_options(self):
         """
         Set default values for options
         Each user option must be listed here with their default value.
         """
-        # dbuild.initialize_options(self)
         build_ext.initialize_options(self)
 
     def run(self):
@@ -165,7 +159,6 @@ class BuildBuild(build_ext):
         self.run_command("build_mbedtls")
         self.run_command("build_nng")
 
-        # dbuild.run(self) # proceed with "normal" build steps
         build_ext.run(self)  # proceed with "normal" build steps
 
 
