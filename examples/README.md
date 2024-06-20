@@ -22,6 +22,16 @@ This directory contains examples on using pynng for different tasks.
 
 
 
+Several more examples are described in [pynng.ReadTheDocs](https://pynng.readthedocs.io/en/latest/core.html#available-protocols)
+  and implemented here
+
+* [`pair1_PolyAsync.py`](./pair1_PolyAsync.py): More elaborate demo of 
+  polyamorous pair1 
+* [`pubsub_1SingleApp.py`](./pubsub_1SingleApp.py): single app showing publish and subscribe
+* [`pubsub_2publishAsync.py`](./pubsub_2publishAsync.py): pub/sub publisher side using Trio async
+* [`pubsub_2subscribe.py`](./pubsub_2subscribe.py): pub/sub subscriber side, no threading
+* [`pubsub_2subscribeAsync.py`](./pubsub_2subscribeAsync.py): pub/sub subscriber using Trio async
+
 Adding an Example
 -----------------
 
