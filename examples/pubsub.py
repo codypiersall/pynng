@@ -2,9 +2,10 @@
 This pattern is used to allow a single broadcaster to publish messages to many subscribers,
 which may choose to limit which messages they receive.
 """
+
 import datetime
 import pynng
-import curio
+import trio
 
 address = "ipc:///tmp/pubsub.ipc"
 
@@ -14,15 +15,11 @@ def get_current_date():
 
 
 async def server(sock):
-    async def publish_eternally():
-        while True:
-            date = get_current_date()
-            print(f"SERVER: PUBLISHING DATE  {date}")
-            await sock.asend(date.encode())
-            await curio.sleep(1)
-
-    sock.listen(address)
-    return await curio.spawn(publish_eternally)
+    while True:
+        date = get_current_date()
+        print(f"SERVER: PUBLISHING DATE  {date}")
+        await sock.asend(date.encode())
+        await trio.sleep(1)
 
 
 async def client(name, max_msg=2):
@@ -37,19 +34,19 @@ async def client(name, max_msg=2):
 
 
 async def main():
-    with pynng.Pub0() as pub:
-        n0 = await server(pub)
-        async with curio.TaskGroup(wait=all) as g:
-            await g.spawn(client, "client0", 2)
-            await g.spawn(client, "client1", 3)
-            await g.spawn(client, "client2", 4)
-
-        await n0.cancel()
+    # publisher publishes the date forever, once per second, and clients print as they
+    # receive the date
+    with pynng.Pub0(listen=address) as pub:
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(server, pub)
+            nursery.start_soon(client, "client0", 2)
+            nursery.start_soon(client, "client1", 3)
+            nursery.start_soon(client, "client2", 4)
 
 
 if __name__ == "__main__":
     try:
-        curio.run(main)
+        trio.run(main)
     except KeyboardInterrupt:
         # that's the way the program *should* end
         pass
