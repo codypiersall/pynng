@@ -1,23 +1,12 @@
 import asyncio
 import itertools
-import time
 
 import pytest
 import trio
-import curio
 
 import pynng
 
 addr = "inproc://test-addr"
-
-
-@pytest.mark.curio
-async def test_arecv_asend_curio():
-    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, pynng.Pair0(
-        dial=addr
-    ) as dialer:
-        await dialer.asend(b"hello there buddy")
-        assert (await listener.arecv()) == b"hello there buddy"
 
 
 @pytest.mark.trio
@@ -36,14 +25,6 @@ async def test_asend_arecv_trio():
     ) as dialer:
         await dialer.asend(b"hello there")
         assert (await listener.arecv()) == b"hello there"
-
-
-@pytest.mark.curio
-async def test_arecv_curio_cancel():
-    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
-        with pytest.raises(curio.CancelledError):
-            async with curio.timeout_after(0.001):
-                await p0.arecv()
 
 
 @pytest.mark.trio
@@ -67,13 +48,6 @@ async def test_arecv_asyncio_cancel():
         fut = asyncio.ensure_future(arecv)
         with pytest.raises(asyncio.CancelledError):
             await asyncio.gather(fut, cancel_soon(fut))
-
-
-@pytest.mark.curio
-async def test_asend_curio_send_timeout():
-    with pytest.raises(pynng.exceptions.Timeout):
-        with pynng.Pair0(listen=addr, send_timeout=1) as p0:
-            await p0.asend(b"foo")
 
 
 @pytest.mark.asyncio
