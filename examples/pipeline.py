@@ -1,13 +1,14 @@
 """
 Demonstrate how to use a pipeline socket.
 
-This pattern is useful for solving producer/consumer problems, including load-balancing. 
+This pattern is useful for solving producer/consumer problems, including load-balancing.
 Messages flow from the push side to the pull side.
 If multiple peers are connected, the pattern attempts to distribute fairly.
 
 """
+
 import pynng
-import curio
+import trio
 
 address = "ipc:///tmp/pipeline.ipc"
 
@@ -15,12 +16,14 @@ address = "ipc:///tmp/pipeline.ipc"
 async def node0(sock):
     async def recv_eternally():
         while True:
-            msg = await sock.arecv_msg()
+            try:
+                msg = await sock.arecv_msg()
+            except pynng.Timeout:
+                break
             content = msg.bytes.decode()
             print(f'NODE0: RECEIVED "{content}"')
 
-    sock.listen(address)
-    return await curio.spawn(recv_eternally)
+    return await recv_eternally()
 
 
 async def node1(message):
@@ -28,28 +31,21 @@ async def node1(message):
         sock.dial(address)
         print(f'NODE1: SENDING "{message}"')
         await sock.asend(message.encode())
-        await curio.sleep(1)  # wait for messages to flush before shutting down
+        await trio.sleep(1)  # wait for messages to flush before shutting down
 
 
 async def main():
-    with pynng.Pull0() as pull:
-        n0 = await node0(pull)
-        await curio.sleep(1)
-
-        await node1("Hello, World!")
-        await node1("Goodbye.")
-
-        # another way to send
-        async with curio.TaskGroup(wait=all) as g:
+    # open a pull socket, and then open multiple Push sockets to push to them.
+    with pynng.Pull0(listen=address, recv_timeout=200) as pull:
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(node0, pull)
             for msg in ["A", "B", "C", "D"]:
-                await g.spawn(node1, msg)
-
-        await n0.cancel()
+                nursery.start_soon(node1, msg)
 
 
 if __name__ == "__main__":
     try:
-        curio.run(main)
+        trio.run(main)
     except KeyboardInterrupt:
         # that's the way the program *should* end
         pass
