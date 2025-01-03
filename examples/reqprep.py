@@ -5,9 +5,10 @@ Like Pipeline, it also can perform load-balancing.
 This is the only reliable messaging pattern in the suite, as it automatically will retry if a request is not matched with a response.
 
 """
+
 import datetime
 import pynng
-import curio
+import trio
 
 DATE = "DATE"
 
@@ -15,17 +16,16 @@ address = "ipc:///tmp/reqrep.ipc"
 
 
 async def node0(sock):
-    async def response_eternally():
-        while True:
+    while True:
+        try:
             msg = await sock.arecv_msg()
-            content = msg.bytes.decode()
-            if DATE == content:
-                print("NODE0: RECEIVED DATE REQUEST")
-                date = str(datetime.datetime.now())
-                await sock.asend(date.encode())
-
-    sock.listen(address)
-    return await curio.spawn(response_eternally)
+        except pynng.Timeout:
+            break
+        content = msg.bytes.decode()
+        if DATE == content:
+            print("NODE0: RECEIVED DATE REQUEST")
+            date = str(datetime.datetime.now())
+            await sock.asend(date.encode())
 
 
 async def node1():
@@ -38,17 +38,15 @@ async def node1():
 
 
 async def main():
-    with pynng.Rep0() as rep:
-        n0 = await node0(rep)
-        await curio.sleep(1)
-        await node1()
-
-        await n0.cancel()
+    with pynng.Rep0(listen=address, recv_timeout=300) as rep:
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(node0, rep)
+            nursery.start_soon(node1)
 
 
 if __name__ == "__main__":
     try:
-        curio.run(main)
+        trio.run(main)
     except KeyboardInterrupt:
         # that's the way the program *should* end
         pass
