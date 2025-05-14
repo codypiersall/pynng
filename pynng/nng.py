@@ -765,21 +765,11 @@ class Pair1(Socket):
     """
 
     def __init__(self, *, polyamorous=False, **kwargs):
-        # make sure we don't listen/dial before setting polyamorous, so we pop
-        # them out of kwargs, then do the dial/listen below.
-        # It's not beautiful, but it will work.
-        dial_addr = kwargs.pop("dial", None)
-        listen_addr = kwargs.pop("listen", None)
         if polyamorous:
-            opener = lib.nng_pair1_open_poly
+            kwargs["opener"] = lib.nng_pair1_open_poly
         else:
-            opener = lib.nng_pair1_open
-        super().__init__(opener=opener, **kwargs)
-        # now we can do the listen/dial
-        if dial_addr is not None:
-            self.dial(dial_addr, block=kwargs.get("block_on_dial"))
-        if listen_addr is not None:
-            self.listen(listen_addr)
+            kwargs["opener"] = lib.nng_pair1_open
+        super().__init__(**kwargs)
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
