@@ -92,3 +92,63 @@ TLS addresses:
 
 
 .. autoclass:: pynng.TLSConfig(...)
+
+-----------------
+Abstract Sockets
+-----------------
+
+Abstract sockets are a Linux-specific feature that allows for socket communication
+without creating files in the filesystem. They are identified by names in an
+abstract namespace and are automatically freed by the system when no longer in use.
+
+Abstract sockets use the ``abstract://`` URL scheme. For example:
+
+* ``"abstract://my_socket"`` - a simple abstract socket name
+* ``"abstract://test%00socket"`` - a socket name with a NUL byte (URI-encoded)
+* ``"abstract://"`` - an empty name for auto-bind (system assigns a name)
+
+**Important:** Abstract sockets are only available on Linux systems. Attempting to use
+them on other platforms will result in an error.
+
+Abstract sockets have the following characteristics:
+
+* They do not have any representation in the file system
+* They are automatically freed by the system when no longer in use
+* They ignore socket permissions
+* They support arbitrary values in the path, including embedded NUL bytes
+* The name does not include the leading NUL byte used in the low-level socket address
+
+**URI Encoding:** Abstract socket names can contain arbitrary bytes, including NUL
+bytes. These are represented using URI encoding. For example, the name ``"a\0b"``
+would be represented as ``"abstract://a%00b"``.
+
+**Auto-bind:** An empty name may be used with a listener to request "auto bind"
+be used to select a name. In this case, the system will allocate a free name.
+The name assigned can be retrieved using the ``NNG_OPT_LOCADDR`` option.
+
+**Example:**
+
+.. code-block:: python
+
+    import pynng
+    import platform
+
+    # Check if we're on Linux
+    if platform.system() != "Linux":
+        print("Abstract sockets are only supported on Linux")
+        exit(1)
+
+    # Create a socket with abstract address
+    with pynng.Pair0() as sock:
+        # Listen on an abstract socket
+        listener = sock.listen("abstract://my_test_socket")
+
+        # Get the local address
+        local_addr = listener.local_address
+        print(f"Address family: {local_addr.family_as_str}")
+        print(f"Address name: {local_addr.name}")
+
+        # The address can be used for dialing from another process
+        # dialer = sock.dial("abstract://my_test_socket")
+
+For a complete example, see :doc:`../examples/abstract`.
