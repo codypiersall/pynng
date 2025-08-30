@@ -16,7 +16,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           path: ./wheelhouse/*.whl
   # create the source distribution
@@ -35,6 +35,6 @@ jobs:
         pip install -e .
         python -m build --sdist
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         path: dist/*.tar.gz
