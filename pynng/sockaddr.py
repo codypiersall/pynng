@@ -17,6 +17,7 @@ class SockAddr:
         pynng.lib.NNG_AF_INET: "inet",
         pynng.lib.NNG_AF_INET6: "inetv6",
         pynng.lib.NNG_AF_ZT: "zerotier",
+        pynng.lib.NNG_AF_ABSTRACT: "abstract",
     }
 
     def __init__(self, ffi_sock_addr):
@@ -143,6 +144,47 @@ class ZTAddr(SockAddr):
         return self._mem.as_port
 
 
+class AbstractAddr(SockAddr):
+    def __init__(self, ffi_sock_addr):
+        super().__init__(ffi_sock_addr)
+        # union member
+        self._mem = self.sock_addr.s_abstract
+
+    @property
+    def name_bytes(self):
+        # Get the length of the name from sa_len
+        name_len = self._mem.sa_len
+        # Return the raw bytes of the name (up to name_len)
+        return bytes(self._mem.sa_name[0:name_len])
+
+    @property
+    def name(self):
+        # Decode the name bytes, handling any URI encoding
+        import urllib.parse
+        name_bytes = self.name_bytes
+        try:
+            # Try to decode as UTF-8 first
+            name_str = name_bytes.decode('utf-8')
+            # Unescape any URI-encoded characters
+            return urllib.parse.unquote(name_str)
+        except UnicodeDecodeError:
+            # If UTF-8 decoding fails, return a representation of the bytes
+            return repr(name_bytes)
+
+    def __str__(self):
+        # Return the abstract socket URI format
+        import urllib.parse
+        try:
+            # Try to encode as UTF-8 and URI-encode
+            name_str = self.name_bytes.decode('utf-8')
+            encoded_name = urllib.parse.quote(name_str)
+            return f"abstract://{encoded_name}"
+        except UnicodeDecodeError:
+            # If UTF-8 encoding fails, use a hex representation
+            hex_name = self.name_bytes.hex()
+            return f"abstract://{hex_name}"
+
+
 def _nng_sockaddr(sa):
     # ensures the correct class gets instantiated based on s_family
     lookup = {
@@ -151,6 +193,7 @@ def _nng_sockaddr(sa):
         pynng.lib.NNG_AF_INET: InAddr,
         pynng.lib.NNG_AF_INET6: In6Addr,
         pynng.lib.NNG_AF_ZT: ZTAddr,
+        pynng.lib.NNG_AF_ABSTRACT: AbstractAddr,
     }
     # fall through to SockAddr, e.g. if it's unspecified
     cls = lookup.get(sa[0].s_family, SockAddr)
