@@ -481,9 +481,9 @@ class Socket:
           data: either ``bytes`` or ``bytearray``
 
           block: If block is True (the default), the function will
-          not return until the operation is completed or times out.
-          If block is False, the function will raise ``pynng.TryAgain``
-          immediately if no data was sent.
+            not return until the operation is completed or times out.
+            If block is False, the function will raise ``pynng.TryAgain``
+            immediately if no data was sent.
         """
         _ensure_can_send(data)
         flags = 0
