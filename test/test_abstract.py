@@ -45,10 +45,9 @@ def test_abstract_socket_connection():
     # Test with a simple abstract socket name
     abstract_addr = "abstract://test_socket"
 
-    with (
-        pynng.Pair0(recv_timeout=1000) as sock1,
-        pynng.Pair0(recv_timeout=1000) as sock2,
-    ):
+    with pynng.Pair0(recv_timeout=1000) as sock1, pynng.Pair0(
+        recv_timeout=1000
+    ) as sock2:
         # Test listening on abstract socket
         listener = sock1.listen(abstract_addr)
         assert len(sock1.listeners) == 1
@@ -142,10 +141,9 @@ def test_abstract_socket_with_different_protocols():
         max_retries = 5
         for retry in range(max_retries):
             try:
-                with (
-                    server_proto(recv_timeout=100) as server,
-                    client_proto(recv_timeout=100) as client,
-                ):
+                with server_proto(recv_timeout=100) as server, client_proto(
+                    recv_timeout=100
+                ) as client:
                     if server_proto == pynng.Pub0 and client_proto == pynng.Sub0:
                         # Special handling for pub/sub
                         server.listen(abstract_addr)

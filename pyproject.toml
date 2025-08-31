@@ -102,6 +102,7 @@ environment = { CMAKE_OSX_ARCHITECTURES="x86_64;arm64" }
 [tool.black]
 # Just a placeholder because I have a plugin that won't run without a section in
 # pyproject.toml
+target-version = ["py38"]
 
 # pytest configuration
 [tool.pytest.ini_options]
