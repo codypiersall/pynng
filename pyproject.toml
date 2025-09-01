@@ -23,7 +23,11 @@ dependencies = [
     "sniffio",
 ]
 description = "Networking made simply using nng"
-license-files = ["LICENSE.txt"]
+# Note: when we drop Python 3.8 we can use the new license version and CI won't yell at
+# setuptools 3.8 requires this version.
+# uncomment when dropping python3.8
+# license = "MIT"
+license = {file = "LICENSE.txt"}
 dynamic = ["version"]
 keywords = [
     "networking",
