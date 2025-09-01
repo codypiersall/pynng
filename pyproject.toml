@@ -23,7 +23,7 @@ dependencies = [
     "sniffio",
 ]
 description = "Networking made simply using nng"
-license = {file = "LICENSE.txt"}
+license-files = ["LICENSE.txt"]
 dynamic = ["version"]
 keywords = [
     "networking",
@@ -82,10 +82,8 @@ test-requires = [
 
 test-command = "pytest {project}/test"
 
-# wheels aren't built correctly for Python 3.6; seems like setuptools doesn't like
-# pyproject.toml for that old Python.
-# pypy3.9 fails on Windows for some reason
-skip = "cp36-* pp39-win_amd64 pp310-win_amd64 cp314*"
+# 3.14 does not have cffi support yet (Sep. 2025)
+skip = "cp314*"
 
 build-verbosity = 1
 
