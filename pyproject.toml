@@ -23,6 +23,10 @@ dependencies = [
     "sniffio",
 ]
 description = "Networking made simply using nng"
+# Note: when we drop Python 3.8 we can use the new license version and CI won't yell at
+# setuptools 3.8 requires this version.
+# uncomment when dropping python3.8
+# license = "MIT"
 license = {file = "LICENSE.txt"}
 dynamic = ["version"]
 keywords = [
@@ -64,7 +68,7 @@ include = ["pynng"]
 [build-system]
 build-backend = "setuptools.build_meta"
 requires = [
-    "setuptools",
+    "setuptools==75.3.2",
     "setuptools-scm",
     "cffi",
     "cmake",
@@ -82,10 +86,8 @@ test-requires = [
 
 test-command = "pytest {project}/test"
 
-# wheels aren't built correctly for Python 3.6; seems like setuptools doesn't like
-# pyproject.toml for that old Python.
-# pypy3.9 fails on Windows for some reason
-skip = "cp36-* pp39-win_amd64 pp310-win_amd64"
+# 3.14 does not have cffi support yet (Sep. 2025)
+skip = "cp314*"
 
 build-verbosity = 1
 
@@ -102,6 +104,7 @@ environment = { CMAKE_OSX_ARCHITECTURES="x86_64;arm64" }
 [tool.black]
 # Just a placeholder because I have a plugin that won't run without a section in
 # pyproject.toml
+target-version = ["py38"]
 
 # pytest configuration
 [tool.pytest.ini_options]
