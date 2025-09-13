@@ -15,7 +15,8 @@ jobs:
           windows-2025,
           macos-15,
         ]
-
+      # don't let one failing job cancel all the others.
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v5

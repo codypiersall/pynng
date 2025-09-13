@@ -37,15 +37,12 @@ else:
     ]
     libraries = ["pthread"]
     machine = os.uname().machine
-    # this is a pretty heuristic... but let's go with it anyway.
+    # this is a pretty gross heuristic... but let's go with it anyway.
     # it would be better to get linker information from cmake somehow.
     # Building process will be broken if add -latomic in Mac with clang. https://github.com/nodejs/node/pull/30099
-    clang = False
-    try:
-        if os.environ["CC"] == "clang":
-            clang = True
-    except KeyError:
-        clang = False
+    clang = (os.environ.get("CC") == "clang") or (
+        sysconfig.get_config_var("CC") == "clang"
+    )
     print("~~~~~~~~~~~~~~~~~")
     print(f"{machine=}")
     print(f"{machine=}")
@@ -61,14 +58,11 @@ else:
     print(f"{os.uname().sysname=}")
     print(f"{os.uname().sysname=}")
     print(f"{os.uname().sysname=}")
-    if sysconfig.get_config_var("CC") == "clang":
-        clang = True
-    if not (
-        "x86" in machine
-        or "i386" in machine
-        or "i686" in machine
-        or (clang and "Darwin" in os.uname().sysname)
-    ):
+
+    if os.uname().sysname == "Darwin":
+        # don't link libatomic on Mac
+        pass
+    elif machine == "aarch64":
         libraries.append("atomic")
 
 
