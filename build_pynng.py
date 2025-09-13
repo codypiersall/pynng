@@ -46,6 +46,21 @@ else:
             clang = True
     except KeyError:
         clang = False
+    print("~~~~~~~~~~~~~~~~~")
+    print(f"{machine=}")
+    print(f"{machine=}")
+    print(f"{machine=}")
+    print(f"{machine=}")
+    print(f"{clang=}")
+    print(f"{clang=}")
+    print(f"{clang=}")
+    print(f"{clang=}")
+    print(f"{clang=}")
+    print(f"{os.uname().sysname=}")
+    print(f"{os.uname().sysname=}")
+    print(f"{os.uname().sysname=}")
+    print(f"{os.uname().sysname=}")
+    print(f"{os.uname().sysname=}")
     if sysconfig.get_config_var("CC") == "clang":
         clang = True
     if not (
