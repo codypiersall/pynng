@@ -43,22 +43,6 @@ else:
     clang = (os.environ.get("CC") == "clang") or (
         sysconfig.get_config_var("CC") == "clang"
     )
-    print("~~~~~~~~~~~~~~~~~")
-    print(f"{machine=}")
-    print(f"{machine=}")
-    print(f"{machine=}")
-    print(f"{machine=}")
-    print(f"{clang=}")
-    print(f"{clang=}")
-    print(f"{clang=}")
-    print(f"{clang=}")
-    print(f"{clang=}")
-    print(f"{os.uname().sysname=}")
-    print(f"{os.uname().sysname=}")
-    print(f"{os.uname().sysname=}")
-    print(f"{os.uname().sysname=}")
-    print(f"{os.uname().sysname=}")
-
     if os.uname().sysname == "Darwin":
         # don't link libatomic on Mac
         pass
