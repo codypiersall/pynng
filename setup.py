@@ -113,8 +113,9 @@ class BuildMbedTls(BuilderBase):
             "-DCMAKE_INSTALL_PREFIX=../prefix",
             "-DCMAKE_INSTALL_LIBDIR=lib",
             "-DENABLE_TESTING=OFF",
-            "-DCMAKE_C_FLAGS=-Wno-error=array-bounds",
         ]
+        if not WINDOWS:
+            self.cmake_extra_args.append("-DCMAKE_C_FLAGS=-Wno-error=array-bounds")
 
     def finalize_build(self):
         check_call(
