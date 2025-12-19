@@ -563,3 +563,13 @@ int nng_tls_register(void);
 #define NNG_MAJOR_VERSION 1
 #define NNG_MINOR_VERSION 11
 #define NNG_PATCH_VERSION 0
+typedef int nng_init_parameter;
+extern void nng_init_set_parameter(nng_init_parameter, uint64_t);
+#define NNG_INIT_PARAMETER_NONE         0
+#define NNG_INIT_NUM_TASK_THREADS       1
+#define NNG_INIT_NUM_EXPIRE_THREADS     2
+#define NNG_INIT_NUM_POLLER_THREADS     3
+#define NNG_INIT_NUM_RESOLVER_THREADS   4
+#define NNG_INIT_MAX_TASK_THREADS       5
+#define NNG_INIT_MAX_EXPIRE_THREADS     6
+#define NNG_INIT_MAX_POLLER_THREADS     7

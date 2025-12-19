@@ -35,3 +35,17 @@ process_header nng/include/nng/transport/tls/tls.h >> nng_api.h
 
 grep '^#define NNG_FLAG' nng/include/nng/nng.h >> nng_api.h
 grep '^#define NNG_.*_VERSION' nng/include/nng/nng.h >> nng_api.h
+
+# nng_init_set_parameter for thread pool configuration
+cat >> nng_api.h << 'EOF'
+typedef int nng_init_parameter;
+extern void nng_init_set_parameter(nng_init_parameter, uint64_t);
+#define NNG_INIT_PARAMETER_NONE         0
+#define NNG_INIT_NUM_TASK_THREADS       1
+#define NNG_INIT_NUM_EXPIRE_THREADS     2
+#define NNG_INIT_NUM_POLLER_THREADS     3
+#define NNG_INIT_NUM_RESOLVER_THREADS   4
+#define NNG_INIT_MAX_TASK_THREADS       5
+#define NNG_INIT_MAX_EXPIRE_THREADS     6
+#define NNG_INIT_MAX_POLLER_THREADS     7
+EOF
