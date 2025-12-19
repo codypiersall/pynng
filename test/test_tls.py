@@ -71,9 +71,10 @@ def test_config_string():
             TLSConfig.MODE_SERVER,
             own_key_string=SERVER_KEY,
             own_cert_string=SERVER_CERT,
+            server_name="localhost",
         )
         server.tls_config = c_server
-        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_string=CA_CERT)
+        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_string=CA_CERT, server_name="localhost")
         client.tls_config = c_client
 
         server.listen(URL)
@@ -94,9 +95,9 @@ def test_config_file(tmp_path):
     with Pair0(recv_timeout=1000, send_timeout=1000) as server, Pair0(
         recv_timeout=1000, send_timeout=1000
     ) as client:
-        c_server = TLSConfig(TLSConfig.MODE_SERVER, cert_key_file=str(key_pair_file))
+        c_server = TLSConfig(TLSConfig.MODE_SERVER, cert_key_file=str(key_pair_file), server_name="localhost")
         server.tls_config = c_server
-        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_files=[str(ca_crt_file)])
+        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_files=[str(ca_crt_file)], server_name="localhost")
         client.tls_config = c_client
 
         server.listen(URL)

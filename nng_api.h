@@ -15,6 +15,7 @@ typedef struct nng_socket_s {
  uint32_t id;
 } nng_socket;
 typedef int32_t nng_duration;
+typedef uint64_t nng_time;
 typedef struct nng_msg nng_msg;
 typedef struct nng_stat nng_stat;
 typedef struct nng_aio nng_aio;
@@ -80,11 +81,12 @@ enum nng_sockaddr_family {
  NNG_AF_ABSTRACT = 6
 };
 typedef struct nng_iov {
- void * iov_buf;
+ void *iov_buf;
  size_t iov_len;
 } nng_iov;
 extern void nng_fini(void);
 extern int nng_close(nng_socket);
+extern int nng_socket_close(nng_socket);
 extern int nng_socket_id(nng_socket);
 extern int nng_socket_set(nng_socket, const char *, const void *, size_t);
 extern int nng_socket_set_bool(nng_socket, const char *, bool);
@@ -105,6 +107,13 @@ extern int nng_socket_get_string(nng_socket, const char *, char **);
 extern int nng_socket_get_ptr(nng_socket, const char *, void **);
 extern int nng_socket_get_ms(nng_socket, const char *, nng_duration *);
 extern int nng_socket_get_addr(nng_socket, const char *, nng_sockaddr *);
+extern int nng_socket_proto_id(nng_socket id, uint16_t *);
+extern int nng_socket_peer_id(nng_socket id, uint16_t *);
+extern int nng_socket_proto_name(nng_socket id, const char **);
+extern int nng_socket_peer_name(nng_socket id, const char **);
+extern int nng_socket_raw(nng_socket, bool *);
+extern const char *nng_str_sockaddr(
+    const nng_sockaddr *sa, char *buf, size_t bufsz);
 typedef enum {
  NNG_PIPE_EV_ADD_PRE,
  NNG_PIPE_EV_ADD_POST,
@@ -167,7 +176,9 @@ extern int nng_send(nng_socket, void *, size_t, int);
 extern int nng_recv(nng_socket, void *, size_t *, int);
 extern int nng_sendmsg(nng_socket, nng_msg *, int);
 extern int nng_recvmsg(nng_socket, nng_msg **, int);
+extern void nng_sock_send(nng_socket, nng_aio *);
 extern void nng_send_aio(nng_socket, nng_aio *);
+extern void nng_sock_recv(nng_socket, nng_aio *);
 extern void nng_recv_aio(nng_socket, nng_aio *);
 extern int nng_ctx_open(nng_ctx *, nng_socket);
 extern int nng_ctx_close(nng_ctx);
@@ -184,7 +195,6 @@ extern int nng_ctx_get_uint64(nng_ctx, const char *, uint64_t *);
 extern int nng_ctx_get_string(nng_ctx, const char *, char **);
 extern int nng_ctx_get_ptr(nng_ctx, const char *, void **);
 extern int nng_ctx_get_ms(nng_ctx, const char *, nng_duration *);
-extern int nng_ctx_get_addr(nng_ctx, const char *, nng_sockaddr *);
 extern int nng_ctx_set(nng_ctx, const char *, const void *, size_t);
 extern int nng_ctx_set_bool(nng_ctx, const char *, bool);
 extern int nng_ctx_set_int(nng_ctx, const char *, int);
@@ -193,7 +203,6 @@ extern int nng_ctx_set_uint64(nng_ctx, const char *, uint64_t);
 extern int nng_ctx_set_string(nng_ctx, const char *, const char *);
 extern int nng_ctx_set_ptr(nng_ctx, const char *, void *);
 extern int nng_ctx_set_ms(nng_ctx, const char *, nng_duration);
-extern int nng_ctx_set_addr(nng_ctx, const char *, const nng_sockaddr *);
 extern void *nng_alloc(size_t);
 extern void nng_free(void *, size_t);
 extern char *nng_strdup(const char *);
@@ -215,6 +224,7 @@ extern void *nng_aio_get_input(nng_aio *, unsigned);
 extern int nng_aio_set_output(nng_aio *, unsigned, void *);
 extern void *nng_aio_get_output(nng_aio *, unsigned);
 extern void nng_aio_set_timeout(nng_aio *, nng_duration);
+extern void nng_aio_set_expire(nng_aio *, nng_time);
 extern int nng_aio_set_iov(nng_aio *, unsigned, const nng_iov *);
 extern bool nng_aio_begin(nng_aio *);
 extern void nng_aio_finish(nng_aio *, int);
@@ -226,9 +236,9 @@ extern void nng_msg_free(nng_msg *);
 extern int nng_msg_realloc(nng_msg *, size_t);
 extern int nng_msg_reserve(nng_msg *, size_t);
 extern size_t nng_msg_capacity(nng_msg *);
-extern void * nng_msg_header(nng_msg *);
+extern void *nng_msg_header(nng_msg *);
 extern size_t nng_msg_header_len(const nng_msg *);
-extern void * nng_msg_body(nng_msg *);
+extern void *nng_msg_body(nng_msg *);
 extern size_t nng_msg_len(const nng_msg *);
 extern int nng_msg_append(nng_msg *, const void *, size_t);
 extern int nng_msg_insert(nng_msg *, const void *, size_t);
@@ -391,8 +401,6 @@ extern int nng_stream_set_size(nng_stream *, const char *, size_t);
 extern int nng_stream_set_uint64(nng_stream *, const char *, uint64_t);
 extern int nng_stream_set_string(nng_stream *, const char *, const char *);
 extern int nng_stream_set_ptr(nng_stream *, const char *, void *);
-extern int nng_stream_set_addr(
-     nng_stream *, const char *, const nng_sockaddr *);
 extern int nng_stream_dialer_alloc(nng_stream_dialer **, const char *);
 extern int nng_stream_dialer_alloc_url(
     nng_stream_dialer **, const nng_url *);
@@ -477,6 +485,14 @@ extern int nng_stream_listener_set_ptr(
     nng_stream_listener *, const char *, void *);
 extern int nng_stream_listener_set_addr(
     nng_stream_listener *, const char *, const nng_sockaddr *);
+typedef struct nng_udp nng_udp;
+extern int nng_udp_open(nng_udp **udpp, nng_sockaddr *sa);
+extern void nng_udp_close(nng_udp *udp);
+extern int nng_udp_sockname(nng_udp *udp, nng_sockaddr *sa);
+extern void nng_udp_send(nng_udp *udp, nng_aio *aio);
+extern void nng_udp_recv(nng_udp *udp, nng_aio *aio);
+extern int nng_udp_multicast_membership(
+    nng_udp *udp, nng_sockaddr *sa, bool join);
 int nng_bus0_open(nng_socket *);
 int nng_bus0_open_raw(nng_socket *);
 int nng_pair0_open(nng_socket *);
@@ -492,6 +508,12 @@ int nng_pub0_open(nng_socket *);
 int nng_pub0_open_raw(nng_socket *);
 int nng_sub0_open(nng_socket *);
 int nng_sub0_open_raw(nng_socket *);
+int nng_sub0_socket_subscribe(
+    nng_socket id, const void *buf, size_t sz);
+int nng_sub0_socket_unsubscribe(
+    nng_socket id, const void *buf, size_t sz);
+int nng_sub0_ctx_subscribe(nng_ctx id, const void *buf, size_t sz);
+int nng_sub0_ctx_unsubscribe(nng_ctx id, const void *buf, size_t sz);
 int nng_req0_open(nng_socket *);
 int nng_req0_open_raw(nng_socket *);
 int nng_rep0_open(nng_socket *);
@@ -528,14 +550,26 @@ int nng_tls_config_auth_mode(nng_tls_config *, nng_tls_auth_mode);
 int nng_tls_config_ca_file(nng_tls_config *, const char *);
 int nng_tls_config_cert_key_file(
     nng_tls_config *, const char *, const char *);
+int nng_tls_config_psk(
+    nng_tls_config *, const char *, const uint8_t *, size_t);
 int nng_tls_config_version(
     nng_tls_config *, nng_tls_version, nng_tls_version);
 const char *nng_tls_engine_name(void);
 const char *nng_tls_engine_description(void);
 bool nng_tls_engine_fips_mode(void);
 int nng_tls_register(void);
-#define NNG_FLAG_ALLOC 1u // Recv to allocate receive buffer
+#define NNG_FLAG_ALLOC 1u    // Recv to allocate receive buffer
 #define NNG_FLAG_NONBLOCK 2u // Non-blocking operations
 #define NNG_MAJOR_VERSION 1
-#define NNG_MINOR_VERSION 6
+#define NNG_MINOR_VERSION 11
 #define NNG_PATCH_VERSION 0
+typedef int nng_init_parameter;
+extern void nng_init_set_parameter(nng_init_parameter, uint64_t);
+#define NNG_INIT_PARAMETER_NONE         0
+#define NNG_INIT_NUM_TASK_THREADS       1
+#define NNG_INIT_NUM_EXPIRE_THREADS     2
+#define NNG_INIT_NUM_POLLER_THREADS     3
+#define NNG_INIT_NUM_RESOLVER_THREADS   4
+#define NNG_INIT_MAX_TASK_THREADS       5
+#define NNG_INIT_MAX_EXPIRE_THREADS     6
+#define NNG_INIT_MAX_POLLER_THREADS     7
