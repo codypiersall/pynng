@@ -60,8 +60,8 @@ Homepage = "https://github.com/codypiersall/pynng"
 Source = "https://github.com/codypiersall/pynng"
 Documentation = "https://pynng.readthedocs.io/en/latest/"
 
-[tool.setuptools.dynamic]
-version = {attr = "pynng._version.__version__"}
+[tool.setuptools_scm]
+version_file = "pynng/_version.py"
 [tool.setuptools.packages.find]
 include = ["pynng"]
 

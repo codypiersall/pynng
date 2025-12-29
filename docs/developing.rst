@@ -70,16 +70,23 @@ the built artifacts afterwards.
 Making a new release
 --------------------
 
-Making a new release is a potentially error-prone process; the file
-``pynng/_version.py`` must be increased, the change must be committed, the commit must
-be tagged, and the following commit should append "+dev" to the version. CI should run,
-then the artifacts need to be collected and pushed to PyPI. The ``sdist`` is built
-manually.
+We use setuptools_scm to properly version the project, and GitHub Actions to build
+wheels.
 
-Anyway, there is a script to automate this:
+1. Tag the commit locally, and push
 
-.. literalinclude:: ../new_release.sh
-   :language: bash
+   .. code-block:: bash
+
+       git tag vx.y.z -m "Release version x.y.z."
+       git push --tags
+
+2. Navigate to the job through GitHub
+3. Download the artifacts, and unzip them all to a directory ``pynng-x.y.z``
+4. Use twine to push all the artifacts
+
+   .. code-block:: bash
+
+       twine upload -r pypi pynng-x.y.z/*
 
 .. _cibuildwheel options: https://cibuildwheel.readthedocs.io/en/stable/options/
 .. _mbedtls: https://github.com/Mbed-TLS/mbedtls
