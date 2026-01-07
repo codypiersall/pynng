@@ -35,7 +35,9 @@ class BuilderBase(Command):
     flags = ["-DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true"]
     is_64bit = sys.maxsize > 2**32
     if WINDOWS:
-        if is_64bit:
+        if platform.machine() == 'ARM64':
+            flags += ["-A", "ARM64"]
+        elif is_64bit:
             flags += ["-A", "x64"]
         else:
             flags += ["-A", "win32"]
