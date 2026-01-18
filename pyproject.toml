@@ -86,6 +86,9 @@ test-requires = [
 
 test-command = "pytest {project}/test"
 
+# https://github.com/python/cpython/issues/127294
+skip = "cp314t-win*"
+
 build-verbosity = 1
 
 [tool.cibuildwheel.windows]
