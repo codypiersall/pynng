@@ -86,9 +86,6 @@ test-requires = [
 
 test-command = "pytest {project}/test"
 
-# 3.14 does not have cffi support yet (Sep. 2025)
-skip = "cp314*"
-
 build-verbosity = 1
 
 [tool.cibuildwheel.windows]
