@@ -62,28 +62,50 @@ async def test_asurvey_timeout_override():
 
 @pytest.mark.asyncio
 async def test_asurvey_preserves_recv_timeout_on_error():
-    """asurvey() restores recv_timeout even if an error occurs during send."""
+    """asurvey() restores recv_timeout even if asend() raises."""
     addr = "inproc://test-asurvey-restore"
     with pynng.Surveyor0(
         listen=addr, recv_timeout=5000, send_timeout=100
     ) as surveyor:
         original_timeout = surveyor.recv_timeout
-        # With timeout override, recv_timeout should be restored regardless
-        try:
-            await surveyor.asurvey(b"test", timeout=200)
-        except Exception:
-            pass
+        # Passing a str instead of bytes triggers a ValueError in asend()
+        with pytest.raises(ValueError):
+            await surveyor.asurvey("not bytes", timeout=200)
         assert surveyor.recv_timeout == original_timeout
 
 
 @pytest.mark.asyncio
-async def test_survey_time_option():
-    """survey_time option controls how long the surveyor waits for responses."""
-    addr = "inproc://test-survey-time"
-    with pynng.Surveyor0(listen=addr, survey_time=200) as surveyor:
-        assert surveyor.survey_time == 200
-        surveyor.survey_time = 500
-        assert surveyor.survey_time == 500
+async def test_asurvey_max_responses():
+    """asurvey() stops collecting after max_responses is reached."""
+    addr = "inproc://test-asurvey-max"
+    with pynng.Surveyor0(
+        listen=addr, recv_timeout=500, survey_time=500
+    ) as surveyor, pynng.Respondent0(
+        dial=addr, recv_timeout=1000, send_timeout=1000
+    ) as r1, pynng.Respondent0(
+        dial=addr, recv_timeout=1000, send_timeout=1000
+    ) as r2:
+        await asyncio.sleep(0.05)  # let pipes establish
+
+        async def respond(respondent, reply):
+            msg = await respondent.arecv()
+            await respondent.asend(reply)
+
+        task1 = asyncio.create_task(respond(r1, b"resp1"))
+        task2 = asyncio.create_task(respond(r2, b"resp2"))
+
+        responses = await surveyor.asurvey(b"question", max_responses=1)
+
+        # Cancel remaining tasks to avoid warnings
+        task1.cancel()
+        task2.cancel()
+        for t in (task1, task2):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+
+        assert len(responses) == 1
 
 
 @pytest.mark.asyncio

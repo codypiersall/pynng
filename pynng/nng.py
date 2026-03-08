@@ -1274,25 +1274,40 @@ class Surveyor0(Socket):
         if survey_time is not None:
             self.survey_time = survey_time
 
-    async def asurvey(self, data, *, timeout=None):
+    async def asurvey(self, data, *, timeout=None, max_responses=None):
         """Send a survey and collect all responses until timeout.
 
         Args:
             data: Survey message to send (bytes).
             timeout: Response collection timeout in ms. If None, uses
                 the socket's recv_timeout.
+            max_responses: Maximum number of responses to collect. If
+                None (the default), collects all responses until timeout.
+                Useful for bounding memory usage when the number of
+                respondents is unknown.
 
         Returns:
-            list[bytes]: All responses received before timeout.
+            list[bytes]: All responses received before timeout or
+            max_responses limit.
+
+        Note:
+            The survey protocol does not support nng contexts, so when a
+            ``timeout`` is provided this method temporarily modifies the
+            socket-level ``recv_timeout``. A try/finally block ensures the
+            original value is restored, but callers sharing the socket
+            across concurrent tasks should be aware this is not task-safe.
+            If task-safety is required, use a dedicated socket per task.
         """
+        old_timeout = self.recv_timeout
         if timeout is not None:
-            old_timeout = self.recv_timeout
             self.recv_timeout = timeout
 
         try:
             await self.asend(data)
             responses = []
             while True:
+                if max_responses is not None and len(responses) >= max_responses:
+                    break
                 try:
                     response = await self.arecv()
                     responses.append(response)
@@ -1300,8 +1315,7 @@ class Surveyor0(Socket):
                     break
             return responses
         finally:
-            if timeout is not None:
-                self.recv_timeout = old_timeout
+            self.recv_timeout = old_timeout
 
 
 class Respondent0(Socket):
