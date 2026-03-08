@@ -6,6 +6,7 @@ Provides a Pythonic interface to cffi nng bindings
 import asyncio
 import collections
 import logging
+import math
 import threading
 import weakref
 import atexit
@@ -60,7 +61,7 @@ class PipeEventStream:
             self._loop = asyncio.get_running_loop()
         elif self._backend == "trio":
             import trio
-            self._send_channel, self._receive_channel = trio.open_memory_channel(128)
+            self._send_channel, self._receive_channel = trio.open_memory_channel(math.inf)
             self._trio_token = trio.lowlevel.current_trio_token()
         else:
             raise ValueError(
@@ -79,14 +80,21 @@ class PipeEventStream:
         if self._backend == "asyncio":
             self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
         elif self._backend == "trio":
-            import trio
-            try:
-                trio.from_thread.run_sync(
-                    self._send_channel.send_nowait, event,
-                    trio_token=self._trio_token,
-                )
-            except (trio.ClosedResourceError, trio.WouldBlock):
-                pass
+            self._trio_token.run_sync_soon(
+                self._trio_send_nowait, event,
+            )
+
+    def _trio_send_nowait(self, event):
+        """Wrapper for send_nowait that suppresses ClosedResourceError.
+
+        Called via ``run_sync_soon`` from a foreign thread, so any exception
+        raised here would crash the Trio event loop.
+        """
+        import trio
+        try:
+            self._send_channel.send_nowait(event)
+        except trio.ClosedResourceError:
+            pass
 
     def _on_pre_add(self, pipe):
         self._put_event(PipeEvent(pipe=pipe, event_type="pre_add"))

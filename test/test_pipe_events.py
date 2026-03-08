@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+import trio
 
 import pynng
 from pynng import PipeEvent, PipeEventStream
@@ -179,3 +180,75 @@ async def test_pipe_events_multiple_streams():
         finally:
             stream1.close()
             stream2.close()
+
+
+# --- Trio variants ---
+
+
+@pytest.mark.trio
+async def test_trio_pipe_events_post_add_on_connect():
+    """Connecting a dialer produces a post_add event on the listener (trio)."""
+    addr = "inproc://test-trio-pipe-events-post-add"
+    with pynng.Pair0(listen=addr) as s0:
+        stream = s0.pipe_events()
+        try:
+            with pynng.Pair0(dial=addr) as s1:
+                events = []
+                with trio.fail_after(5):
+                    while not any(e.event_type == "post_add" for e in events):
+                        event = await stream.__anext__()
+                        events.append(event)
+
+                post_add_events = [e for e in events if e.event_type == "post_add"]
+                assert len(post_add_events) >= 1
+                assert isinstance(post_add_events[0], PipeEvent)
+                assert isinstance(post_add_events[0].pipe, pynng.Pipe)
+        finally:
+            stream.close()
+
+
+@pytest.mark.trio
+async def test_trio_pipe_events_remove_on_disconnect():
+    """Closing a dialer socket produces a remove event on the listener (trio)."""
+    addr = "inproc://test-trio-pipe-events-remove"
+    with pynng.Pair0(listen=addr) as s0:
+        stream = s0.pipe_events()
+        try:
+            s1 = pynng.Pair0(dial=addr)
+            # Wait for post_add
+            events = []
+            with trio.fail_after(5):
+                while not any(e.event_type == "post_add" for e in events):
+                    event = await stream.__anext__()
+                    events.append(event)
+
+            # Close dialer to trigger remove
+            s1.close()
+
+            # Collect until we see remove
+            with trio.fail_after(5):
+                while not any(e.event_type == "remove" for e in events):
+                    event = await stream.__anext__()
+                    events.append(event)
+
+            remove_events = [e for e in events if e.event_type == "remove"]
+            assert len(remove_events) >= 1
+            assert isinstance(remove_events[0].pipe, pynng.Pipe)
+        finally:
+            stream.close()
+
+
+@pytest.mark.trio
+async def test_trio_pipe_events_async_context_manager():
+    """PipeEventStream works as an async context manager (trio)."""
+    addr = "inproc://test-trio-pipe-events-ctx-mgr"
+    with pynng.Pair0(listen=addr) as s0:
+        async with s0.pipe_events() as stream:
+            assert isinstance(stream, PipeEventStream)
+            with pynng.Pair0(dial=addr) as s1:
+                with trio.fail_after(5):
+                    event = await stream.__anext__()
+                assert event.event_type in ("pre_add", "post_add", "remove")
+
+        # After exiting async with, callbacks should be unregistered
+        assert stream._closed
