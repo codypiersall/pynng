@@ -32,6 +32,7 @@ from .nng import (
     Message,
 )
 
+from .service import Rep0Service, Request  # noqa: F401
 from .tls import TLSConfig
 
 from .exceptions import (
