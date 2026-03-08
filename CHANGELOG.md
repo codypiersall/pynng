@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Surveyor0.asurvey()` method for ergonomic async survey/collect pattern (sends survey, collects all responses until timeout, returns list)
 - `async with` context manager support for sockets (`async with pynng.Pair0() as sock:`)
 - `async for` iteration over received messages (`async for msg in sock:`)
 - `aclose()` method for explicit async socket cleanup

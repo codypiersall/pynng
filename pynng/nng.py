@@ -1274,6 +1274,35 @@ class Surveyor0(Socket):
         if survey_time is not None:
             self.survey_time = survey_time
 
+    async def asurvey(self, data, *, timeout=None):
+        """Send a survey and collect all responses until timeout.
+
+        Args:
+            data: Survey message to send (bytes).
+            timeout: Response collection timeout in ms. If None, uses
+                the socket's recv_timeout.
+
+        Returns:
+            list[bytes]: All responses received before timeout.
+        """
+        if timeout is not None:
+            old_timeout = self.recv_timeout
+            self.recv_timeout = timeout
+
+        try:
+            await self.asend(data)
+            responses = []
+            while True:
+                try:
+                    response = await self.arecv()
+                    responses.append(response)
+                except pynng.Timeout:
+                    break
+            return responses
+        finally:
+            if timeout is not None:
+                self.recv_timeout = old_timeout
+
 
 class Respondent0(Socket):
     """A respondent0 socket.
