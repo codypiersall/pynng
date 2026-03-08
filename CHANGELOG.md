@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Sub0.subscribe_all(topics)` for batch subscription to multiple topics
 - `Sub0.unsubscribe_all()` to clear all current subscriptions
 - Local subscription tracking in `Sub0` (NNG has no API to query subscriptions)
+- `socket.pipe_events()` returns an async iterator of `PipeEvent` objects for consuming pipe connect/disconnect events (`async for event in socket.pipe_events()`)
 
 ### Changed
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads

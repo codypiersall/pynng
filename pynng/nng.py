@@ -3,10 +3,14 @@ Provides a Pythonic interface to cffi nng bindings
 """
 
 
+import asyncio
+import collections
 import logging
 import threading
 import weakref
 import atexit
+
+import sniffio
 
 import pynng
 from ._nng import ffi, lib
@@ -17,6 +21,141 @@ from . import _aio
 # Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
 _active_handles_lock = threading.Lock()
+
+
+PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
+"""A pipe event with the pipe and the event type.
+
+Attributes:
+    pipe: The :class:`Pipe` associated with the event.
+    event_type: One of ``"pre_add"``, ``"post_add"``, or ``"remove"``.
+"""
+
+
+_SENTINEL = object()
+
+
+class PipeEventStream:
+    """Async iterator that yields :class:`PipeEvent` objects.
+
+    Returned by :meth:`Socket.pipe_events`.  Use it with ``async for``::
+
+        async for event in socket.pipe_events():
+            print(f"Pipe {event.pipe} {event.event_type}")
+
+    Call :meth:`close` or use ``async with`` to stop receiving events and
+    unregister the internal callbacks.
+    """
+
+    def __init__(self, socket):
+        self._socket = socket
+        self._closed = False
+        backend = socket._async_backend
+        if backend is None:
+            backend = sniffio.current_async_library()
+        self._backend = backend
+
+        if self._backend == "asyncio":
+            self._queue = asyncio.Queue()
+            self._loop = asyncio.get_running_loop()
+        elif self._backend == "trio":
+            import trio
+            self._send_channel, self._receive_channel = trio.open_memory_channel(128)
+            self._trio_token = trio.lowlevel.current_trio_token()
+        else:
+            raise ValueError(
+                "The async backend {} is not currently supported.".format(backend)
+            )
+
+        # Register callbacks
+        self._socket.add_pre_pipe_connect_cb(self._on_pre_add)
+        self._socket.add_post_pipe_connect_cb(self._on_post_add)
+        self._socket.add_post_pipe_remove_cb(self._on_remove)
+
+    def _put_event(self, event):
+        """Thread-safe put of an event into the async queue."""
+        if self._closed:
+            return
+        if self._backend == "asyncio":
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+        elif self._backend == "trio":
+            import trio
+            try:
+                trio.from_thread.run_sync(
+                    self._send_channel.send_nowait, event,
+                    trio_token=self._trio_token,
+                )
+            except (trio.ClosedResourceError, trio.WouldBlock):
+                pass
+
+    def _on_pre_add(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="pre_add"))
+
+    def _on_post_add(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="post_add"))
+
+    def _on_remove(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="remove"))
+
+    def close(self):
+        """Stop receiving events and unregister callbacks."""
+        if self._closed:
+            return
+        self._closed = True
+
+        # Unregister callbacks
+        try:
+            self._socket.remove_pre_pipe_connect_cb(self._on_pre_add)
+        except ValueError:
+            pass
+        try:
+            self._socket.remove_post_pipe_connect_cb(self._on_post_add)
+        except ValueError:
+            pass
+        try:
+            self._socket.remove_post_pipe_remove_cb(self._on_remove)
+        except ValueError:
+            pass
+
+        # Signal the iterator to stop
+        if self._backend == "asyncio":
+            try:
+                self._loop.call_soon_threadsafe(
+                    self._queue.put_nowait, _SENTINEL
+                )
+            except RuntimeError:
+                # Loop may be closed already
+                pass
+        elif self._backend == "trio":
+            import trio
+            try:
+                self._send_channel.close()
+            except trio.ClosedResourceError:
+                pass
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._closed:
+            raise StopAsyncIteration
+        if self._backend == "asyncio":
+            item = await self._queue.get()
+            if item is _SENTINEL:
+                raise StopAsyncIteration
+            return item
+        elif self._backend == "trio":
+            import trio
+            try:
+                return await self._receive_channel.receive()
+            except trio.EndOfChannel:
+                raise StopAsyncIteration
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        self.close()
 
 
 logger = logging.getLogger(__name__)
@@ -658,6 +797,30 @@ class Socket:
         """
         with self._pipe_notify_lock:
             self._on_post_pipe_remove.remove(callback)
+
+    def pipe_events(self):
+        """Return an async iterator of :class:`PipeEvent` objects.
+
+        Each event has a ``pipe`` attribute (the :class:`Pipe`) and an
+        ``event_type`` attribute (one of ``"pre_add"``, ``"post_add"``, or
+        ``"remove"``).
+
+        Example::
+
+            async for event in socket.pipe_events():
+                print(f"Pipe {event.pipe} {event.event_type}")
+
+        The returned :class:`PipeEventStream` can also be used as an async
+        context manager::
+
+            async with socket.pipe_events() as events:
+                async for event in events:
+                    ...
+
+        Call ``close()`` on the stream (or exit the ``async with`` block) to
+        stop receiving events and unregister the internal callbacks.
+        """
+        return PipeEventStream(self)
 
     def _try_associate_msg_with_pipe(self, msg):
         """Looks up the nng_msg associated with the ``msg`` and attempts to
