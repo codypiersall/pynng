@@ -88,7 +88,7 @@ before-build = "uv run --no-project --with 'headerkit>=0.7.1' python -m headerki
 [tool.cibuildwheel.windows]
 # Windows builds fail because they try to use the same directory for different
 # architectures, and that's no good.
-before-build = "uv run --no-project --with \"headerkit>=0.7.1\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
+before-build = "uv run --no-project --with \"headerkit>=0.7.1\" python -m headerkit.install_libclang --skip-verify && bash .github/rmstuff.sh"
 environment = { PATH = "C:\\Program Files\\LLVM\\bin;$PATH" }
 
 [tool.cibuildwheel.macos]
