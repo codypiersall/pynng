@@ -1,0 +1,20 @@
+default_language_version:
+  python: python3.10
+
+exclude: ^(build/|nng/|mbedtls/|docs/_build/)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.4
+    hooks:
+      - id: ruff
+        args: [--target-version, py310]
+      - id: ruff-format

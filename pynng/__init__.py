@@ -1,5 +1,10 @@
 # provide the API
-from ._version import __version__
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("pynng")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 from ._nng import lib, ffi
 from .nng import (
     Bus0,

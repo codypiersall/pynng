@@ -1,0 +1,170 @@
+# Check for Python version support updates
+#
+# Runs weekly to detect:
+# - New stable Python releases that should be added to the test matrix
+# - Python versions reaching end-of-life that should be dropped
+#
+# Creates GitHub issues when action is needed.
+#
+# Manual trigger:
+#   Go to Actions -> Check Python Versions -> Run workflow
+
+name: Check Python Versions
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * 1'  # Weekly on Monday
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Check Python versions
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Extract supported versions from pyproject.toml
+          supported=$(grep 'Programming Language :: Python :: 3\.' pyproject.toml \
+            | sed 's/.*Python :: //' | sed 's/".*//' | tr '\n' ' ')
+          min_python=$(grep 'requires-python' pyproject.toml \
+            | sed 's/.*>=\([0-9.]*\).*/\1/')
+          echo "supported=$supported" >> $GITHUB_OUTPUT
+          echo "min_python=$min_python" >> $GITHUB_OUTPUT
+          echo "Currently supported: $supported"
+          echo "Minimum Python: $min_python"
+
+          # Fetch Python release cycle data from endoflife.date API
+          curl -s https://endoflife.date/api/python.json > /tmp/python_versions.json
+
+          # Find stable versions we DON'T support yet
+          new_versions=""
+          export SUPPORTED="$supported"
+          export MIN_PYTHON="$min_python"
+          export TODAY="$(date +%Y-%m-%d)"
+          python3 -c "
+          import json, os, sys
+          with open('/tmp/python_versions.json') as f:
+              versions = json.load(f)
+          supported = os.environ['SUPPORTED'].split()
+          for v in versions:
+              cycle = v['cycle']
+              # Only consider 3.x versions
+              if not cycle.startswith('3.'):
+                  continue
+              minor = int(cycle.split('.')[1])
+              # Only consider versions >= our minimum
+              min_minor = int(os.environ['MIN_PYTHON'].split('.')[1])
+              if minor < min_minor:
+                  continue
+              # Check if this is a stable release (not pre-release)
+              if v.get('lts', False) or v.get('latest', ''):
+                  if cycle not in supported:
+                      print(f'NEW:{cycle}')
+              # Check for EOL versions we still support
+              eol = v.get('eol', '')
+              if eol and eol != 'false' and eol <= os.environ['TODAY']:
+                  if cycle in supported:
+                      print(f'EOL:{cycle}:{eol}')
+          " > /tmp/version_actions.txt
+
+          cat /tmp/version_actions.txt
+
+          new=$(grep '^NEW:' /tmp/version_actions.txt | sed 's/NEW://' | tr '\n' ' ' || true)
+          eol=$(grep '^EOL:' /tmp/version_actions.txt || true)
+
+          echo "new_versions=$new" >> $GITHUB_OUTPUT
+          echo "eol_versions=$eol" >> $GITHUB_OUTPUT
+
+      - name: Create issue for new Python versions
+        if: steps.check.outputs.new_versions != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSIONS: ${{ steps.check.outputs.new_versions }}
+          SUPPORTED: ${{ steps.check.outputs.supported }}
+        run: |
+          for version in $NEW_VERSIONS; do
+            title="Add Python $version to test matrix"
+
+            # Check if issue already exists
+            existing=$(gh issue list --state open --search "$title" --json number,title \
+              --jq ".[] | select(.title == \"$title\") | .number")
+            if [ -n "$existing" ]; then
+              echo "Issue #$existing already open for Python $version, skipping"
+              continue
+            fi
+
+            run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+            body=$(cat <<EOF
+          Python $version is now available as a stable release but is not in our test matrix.
+
+          ## Currently Supported
+          $SUPPORTED
+
+          ## Action Required
+          1. Add \`"Programming Language :: Python :: $version"\` to \`pyproject.toml\` classifiers
+          2. Add \`'$version'\` to smoketest matrix in \`.github/workflows/smoketest.yml\`
+          3. Verify all tests pass on Python $version
+          4. Update \`cibuildwheel\` config if needed
+
+          **Workflow run:** $run_url
+          EOF
+          )
+
+            gh issue create --title "$title" --body "$body" --label "dependencies"
+          done
+
+      - name: Create issue for EOL Python versions
+        if: steps.check.outputs.eol_versions != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EOL_VERSIONS: ${{ steps.check.outputs.eol_versions }}
+          SUPPORTED: ${{ steps.check.outputs.supported }}
+        run: |
+          echo "$EOL_VERSIONS" | grep '^EOL:' | while IFS=: read -r _ version eol_date; do
+            title="Drop Python $version (EOL $eol_date)"
+
+            # Check if issue already exists
+            existing=$(gh issue list --state open --search "$title" --json number,title \
+              --jq ".[] | select(.title == \"$title\") | .number")
+            if [ -n "$existing" ]; then
+              echo "Issue #$existing already open for Python $version EOL, skipping"
+              continue
+            fi
+
+            run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+            body=$(cat <<EOF
+          Python $version reached end-of-life on $eol_date and no longer receives security patches.
+
+          ## Currently Supported
+          $SUPPORTED
+
+          ## Action Required
+          1. Remove \`"Programming Language :: Python :: $version"\` from \`pyproject.toml\` classifiers
+          2. Remove \`'$version'\` from smoketest matrix in \`.github/workflows/smoketest.yml\`
+          3. Update \`requires-python\` in \`pyproject.toml\` if this was the minimum version
+          4. Remove any version-specific workarounds for Python $version
+
+          **Workflow run:** $run_url
+          EOF
+          )
+
+            gh issue create --title "$title" --body "$body" --label "dependencies"
+          done

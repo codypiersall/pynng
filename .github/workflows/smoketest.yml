@@ -2,20 +2,30 @@ name: smoketest
 
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [ '3.8' ]
+        python-version: [ '3.10', '3.11', '3.12', '3.13', '3.14' ]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - name: Setup python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
       - run: sudo apt update
-      - run: sudo apt install -y ninja-build
-      - run: pip install -v -e '.[dev]'
-      - run: pytest -v test
+      - run: sudo apt install -y ninja-build libclang-dev
+      - run: uv pip install --system -v -e '.[dev]'
+      - run: uv run --no-project pytest -v test
