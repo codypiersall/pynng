@@ -1,33 +1,24 @@
 [project]
 name = "pynng"
-authors = [
-    {name = "Cody Piersall", email = "cody.piersall@gmail.com"},
-]
+authors = [{ name = "Cody Piersall", email = "cody.piersall@gmail.com" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: AsyncIO",
     "Framework :: Trio",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
     "Topic :: System :: Networking",
 ]
-dependencies = [
-    "cffi",
-    "sniffio",
-]
+dependencies = ["cffi>=1.15.0", "sniffio>=1.3.0"]
 description = "Networking made simply using nng"
-# Note: when we drop Python 3.8 we can use the new license version and CI won't yell at
-# setuptools 3.8 requires this version.
-# uncomment when dropping python3.8
-# license = "MIT"
-license = {file = "LICENSE.txt"}
+license = { text = "MIT" }
 dynamic = ["version"]
 keywords = [
     "networking",
@@ -40,73 +31,73 @@ keywords = [
     "asyncio",
 ]
 readme = "README.md"
+requires-python = ">=3.10"
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-asyncio",
-    "pytest-trio",
-    "trio",
-]
-
-docs = [
-    "sphinx",
-    "sphinx-rtd-theme",
-    "sphinxcontrib-trio",
-]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit>=0.7.1"]
+docs = ["sphinx", "sphinx-rtd-theme", "sphinxcontrib-trio"]
 
 [project.urls]
 Homepage = "https://github.com/codypiersall/pynng"
 Source = "https://github.com/codypiersall/pynng"
 Documentation = "https://pynng.readthedocs.io/en/latest/"
 
+[build-system]
+build-backend = "scikit_build_core.build"
+requires = [
+    "scikit-build-core>=0.8.0",
+    "cffi",
+    "cffi_buildtool",
+    "headerkit>=0.7.1",
+    "setuptools-scm",
+]
+
+[tool.scikit-build]
+wheel.packages = ["pynng"]
+wheel.py-api = "cp310"
+cmake.version = ">=3.26"
+cmake.verbose = true
+minimum-version = "0.8.0"
+build-dir = "./build/{cache_tag}"
+cmake.define = { "CMAKE_POSITION_INDEPENDENT_CODE" = "ON" }
+cmake.build-type = "Release"
+
 [tool.setuptools_scm]
 version_file = "pynng/_version.py"
-[tool.setuptools.packages.find]
-include = ["pynng"]
-
-[build-system]
-build-backend = "setuptools.build_meta"
-requires = [
-    "setuptools==75.3.2",
-    "setuptools-scm",
-    "cffi",
-    "cmake",
-    "build",
-    "wheel",
-]
 
 [tool.cibuildwheel]
-test-requires = [
-    "pytest",
-    "pytest-asyncio",
-    "pytest-trio",
-    "trio",
-]
+build-frontend = "build[uv]"
+test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio", "headerkit>=0.7.1"]
+# test_build.py tests the build system (header parsing via libclang), not the installed wheel.
+# It runs in smoketest (source checkout with build deps); cibuildwheel tests the installed wheel.
+test-command = "pytest {project}/test --ignore={project}/test/test_build.py"
 
-test-command = "pytest {project}/test"
-
-# https://github.com/python/cpython/issues/127294
-skip = "cp314t-win*"
+# cp314t-win*: https://github.com/python/cpython/issues/127294
+# *-win32: 32-bit Python can't load 64-bit libclang during build
+# *i686: 32-bit manylinux containers lack package managers for libclang
+# pp*: headerkit's vendored cindex uses c_char_p subclassing incompatible with PyPy's ctypes
+skip = "cp314t-win* *-win32 *i686 pp*"
 
 build-verbosity = 1
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+before-build = "uv run --no-project --with 'headerkit>=0.7.1' python -m headerkit.install_libclang --skip-verify"
 
 [tool.cibuildwheel.windows]
 # Windows builds fail because they try to use the same directory for different
 # architectures, and that's no good.
-before-build = "bash .github/rmstuff.sh"
+before-build = "uv run --no-project --with \"headerkit>=0.7.1\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
+environment = { PATH = "C:\\Program Files\\LLVM\\bin;$PATH" }
 
 [tool.cibuildwheel.macos]
 # Specify universal2 building for macOS
 archs = ["universal2"]
-environment = { CMAKE_OSX_ARCHITECTURES="x86_64;arm64" }
+before-build = "uv run --no-project --with 'headerkit>=0.7.1' python -m headerkit.install_libclang --skip-verify"
 
-[tool.black]
-# Just a placeholder because I have a plugin that won't run without a section in
-# pyproject.toml
-target-version = ["py38"]
+environment = { CMAKE_OSX_ARCHITECTURES = "x86_64;arm64" }
 
-# pytest configuration
 [tool.pytest.ini_options]
 addopts = "--capture=no --verbose"
-testpaths = "test"
+testpaths = ["test"]
