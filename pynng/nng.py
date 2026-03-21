@@ -509,6 +509,28 @@ class Socket:
     def __exit__(self, *tb_info):
         self.close()
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *tb_info):
+        """Close the socket. Delegates to synchronous close() since the
+        underlying NNG close operation is non-blocking."""
+        self.close()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return await self.arecv()
+        except pynng.Closed:
+            raise StopAsyncIteration
+
+    async def aclose(self):
+        """Asynchronous close. Delegates to the synchronous :meth:`close`
+        since the underlying NNG close operation is non-blocking."""
+        self.close()
+
     @property
     def dialers(self):
         """A list of the active dialers"""
@@ -1100,6 +1122,19 @@ class Dialer:
     def id(self):
         return lib.nng_dialer_id(self.dialer)
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        if self.id in self.socket._dialers:
+            self.close()
+
+    async def aclose(self):
+        """Asynchronous close. Delegates to the synchronous :meth:`close`
+        since the underlying NNG close operation is non-blocking."""
+        if self.id in self.socket._dialers:
+            self.close()
+
 
 class Listener:
     """The Python version of `nng_listener
@@ -1157,6 +1192,19 @@ class Listener:
     def id(self):
         return lib.nng_listener_id(self.listener)
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        if self.id in self.socket._listeners:
+            self.close()
+
+    async def aclose(self):
+        """Asynchronous close. Delegates to the synchronous :meth:`close`
+        since the underlying NNG close operation is non-blocking."""
+        if self.id in self.socket._listeners:
+            self.close()
+
 
 class Context:
     """
@@ -1207,6 +1255,9 @@ class Context:
     :class:`Socket`, and call the :meth:`~Socket.new_context` method.
 
     """
+
+    recv_timeout = MsOption("recv-timeout")
+    send_timeout = MsOption("send-timeout")
 
     def __init__(self, socket):
         # need to set attributes first, so that if anything goes wrong,
@@ -1291,6 +1342,28 @@ class Context:
         return self
 
     def __exit__(self, *exc_info):
+        self.close()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        """Close the context. Delegates to synchronous close() since the
+        underlying NNG close operation is non-blocking."""
+        self.close()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return await self.arecv()
+        except pynng.Closed:
+            raise StopAsyncIteration
+
+    async def aclose(self):
+        """Asynchronous close. Delegates to the synchronous :meth:`close`
+        since the underlying NNG close operation is non-blocking."""
         self.close()
 
     @property
