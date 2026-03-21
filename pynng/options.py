@@ -102,7 +102,8 @@ def _setopt_size(py_obj, option, value):
         raise ValueError(msg)
     value = int(value)
     obj, lib_func = _get_inst_and_func(py_obj, "size", "set")
-    lib_func(obj, opt_as_char, value)
+    err = lib_func(obj, opt_as_char, value)
+    pynng.check_err(err)
 
 
 def _getopt_ms(py_obj, option):
@@ -126,7 +127,8 @@ def _setopt_ms(py_obj, option, value):
         raise ValueError(msg)
     value = int(value)
     obj, lib_func = _get_inst_and_func(py_obj, "ms", "set")
-    lib_func(obj, opt_as_char, value)
+    err = lib_func(obj, opt_as_char, value)
+    pynng.check_err(err)
 
 
 def _getopt_string(py_obj, option):

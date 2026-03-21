@@ -50,6 +50,7 @@ class TLSConfig:
         cert_key_file=None,
         passwd=None,
     ):
+        self._tls_config = None
         if ca_string and ca_files:
             raise ValueError("Cannot set both ca_string and ca_files!")
 
@@ -69,7 +70,7 @@ class TLSConfig:
         pynng.check_err(pynng.lib.nng_tls_config_alloc(tls_config_p, mode))
         self._tls_config = tls_config_p[0]
 
-        if server_name:
+        if server_name is not None:
             self.set_server_name(server_name)
 
         if ca_string:
@@ -78,7 +79,7 @@ class TLSConfig:
         if own_key_string and own_cert_string:
             self.set_own_cert(own_cert_string, own_key_string, passwd)
 
-        if auth_mode:
+        if auth_mode is not None:
             self.set_auth_mode(auth_mode)
 
         if ca_files:
@@ -89,12 +90,18 @@ class TLSConfig:
             self.set_cert_key_file(cert_key_file, passwd)
 
     def __del__(self):
-        pynng.lib.nng_tls_config_free(self._tls_config)
+        try:
+            if self._tls_config is not None:
+                pynng.lib.nng_tls_config_free(self._tls_config)
+        except Exception:
+            pass
 
     def set_server_name(self, server_name):
         """
         Configure remote server name.
         """
+        if server_name is None:
+            raise ValueError("server_name cannot be None; pass an empty string to clear")
         server_name_char = pynng.nng.to_char(server_name)
         err = pynng.lib.nng_tls_config_server_name(self._tls_config, server_name_char)
         pynng.check_err(err)
