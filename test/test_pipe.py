@@ -3,6 +3,7 @@ Let's test up those pipes
 """
 
 
+import threading
 import time
 
 import pytest
@@ -14,14 +15,17 @@ addr = "inproc://test-addr"
 
 
 def test_pipe_gets_added_and_removed():
-    with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
-        assert len(s0.pipes) == 0
-        assert len(s1.pipes) == 0
-        s1.dial(addr)
-        wait_pipe_len(s0, 1)
-        wait_pipe_len(s1, 1)
+    s0 = pynng.Pair0(listen=addr)
+    s1 = pynng.Pair0()
+    assert len(s0.pipes) == 0
+    assert len(s1.pipes) == 0
+    s1.dial(addr)
+    wait_pipe_len(s0, 1)
+    wait_pipe_len(s1, 1)
+    # Close s1 first, then wait for s0 to see the pipe removed
+    s1.close()
     wait_pipe_len(s0, 0)
-    wait_pipe_len(s1, 0)
+    s0.close()
 
 
 def test_close_pipe_works():
@@ -200,3 +204,35 @@ def test_bad_callbacks_dont_cause_extra_failures():
                 if called_pre_connect:
                     break
             assert called_pre_connect
+
+
+def test_pipes_access_under_contention():
+    """Concurrent pipes access with connection churn does not crash."""
+    a = "inproc://test-pipe-contention-{}".format(id(object()))
+    listener = pynng.Pair0(listen=a)
+    errors = []
+
+    def access_pipes():
+        try:
+            for _ in range(100):
+                _ = listener.pipes
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=access_pipes) for _ in range(4)]
+    for t in threads:
+        t.start()
+
+    dialers = []
+    for _ in range(10):
+        d = pynng.Pair0(dial=a)
+        dialers.append(d)
+
+    for t in threads:
+        t.join()
+
+    for d in dialers:
+        d.close()
+    listener.close()
+
+    assert not errors, f"Thread errors: {errors}"

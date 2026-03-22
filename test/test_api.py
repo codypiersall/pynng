@@ -9,6 +9,10 @@ import pynng
 from _test_util import wait_pipe_len
 
 
+def _random_addr():
+    return "inproc://test-api-{}".format(id(object()))
+
+
 addr = "inproc://test-addr"
 addr2 = "inproc://test-addr2"
 
@@ -171,3 +175,61 @@ def test_sockets_get_garbage_collected():
     gc.collect()
     objs = [o for o in gc.get_objects() if isinstance(o, pynng.Pub0)]
     assert len(objs) == 0
+
+
+def test_socket_del_after_close():
+    """Socket.__del__ tolerates a previously closed socket."""
+    sock = pynng.Pair0(listen=_random_addr())
+    sock.close()
+    sock.__del__()
+
+
+def test_context_del_after_close():
+    """Context.__del__ tolerates a previously closed context."""
+    sock = pynng.Rep0(listen=_random_addr())
+    ctx = sock.new_context()
+    ctx.close()
+    ctx.__del__()
+    sock.close()
+
+
+def test_dialer_double_close():
+    """Closing a dialer twice does not raise."""
+    sock = pynng.Pair0(listen=_random_addr())
+    sock2 = pynng.Pair0(dial=sock.listeners[0].url)
+    dialer = sock2.dialers[0]
+    dialer.close()
+    dialer.close()
+    sock.close()
+    sock2.close()
+
+
+def test_listener_double_close():
+    """Closing a listener twice does not raise."""
+    sock = pynng.Pair0(listen=_random_addr())
+    listener = sock.listeners[0]
+    listener.close()
+    listener.close()
+    sock.close()
+
+
+def test_pair1_listen_dial():
+    """Pair1 supports listen and dial."""
+    a = _random_addr()
+    listener = pynng.Pair1(listen=a)
+    dialer = pynng.Pair1(dial=a)
+    dialer.send(b"hello")
+    assert listener.recv() == b"hello"
+    dialer.close()
+    listener.close()
+
+
+def test_pair1_polyamorous_send_recv():
+    """Pair1 polyamorous mode sends and receives."""
+    a = _random_addr()
+    listener = pynng.Pair1(polyamorous=True, listen=a)
+    dialer = pynng.Pair1(polyamorous=True, dial=a)
+    dialer.send(b"poly")
+    assert listener.recv() == b"poly"
+    dialer.close()
+    listener.close()
