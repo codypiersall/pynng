@@ -1,3 +1,4 @@
+import pynng
 import pynng.options
 import pytest
 from pathlib import Path
@@ -111,3 +112,25 @@ def test_resend_time():
         rep.recv()
         rep.send(b"well i have an answer")
         req.recv()
+
+
+def test_setopt_ms_invalid_option_raises():
+    """Setting an invalid ms option raises NNGException."""
+    with pynng.Pair0(listen=addr) as sock:
+        with pytest.raises(pynng.NNGException):
+            pynng.options._setopt_ms(sock, "not-a-real-option", 1000)
+
+
+def test_setopt_size_invalid_option_raises():
+    """Setting an invalid size option raises NNGException."""
+    with pynng.Pair0(listen=addr) as sock:
+        with pytest.raises(pynng.NNGException):
+            pynng.options._setopt_size(sock, "not-a-real-option", 1024)
+
+
+def test_write_only_option_error_message():
+    """Reading a write-only option says 'write-only' in the error."""
+    opt = pynng.nng._NNGOption("test-opt")
+    opt._getter = None
+    with pytest.raises(TypeError, match="write-only"):
+        opt.__get__(None, None)
