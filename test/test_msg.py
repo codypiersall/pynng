@@ -125,3 +125,16 @@ async def test_cannot_double_asend():
 
         # don't really need to receive, but linters hate not using s2
         await s2.arecv_msg()
+
+
+def test_buffer_after_send_raises():
+    """Accessing _buffer after send raises MessageStateError."""
+    with pynng.Pair0(listen=addr, recv_timeout=to) as sender, pynng.Pair0(
+        dial=addr, recv_timeout=to
+    ) as receiver:
+        msg = pynng.Message(b"hello")
+        sender.send_msg(msg)
+        with pytest.raises(pynng.MessageStateError):
+            _ = msg._buffer
+        received = receiver.recv()
+        assert received == b"hello"

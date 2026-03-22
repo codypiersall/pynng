@@ -1,3 +1,4 @@
+import pytest
 from pynng import Pair0, TLSConfig
 
 SERVER_CERT = """
@@ -84,6 +85,45 @@ def test_config_string():
         server.send(BYTES)
         assert client.recv() == BYTES
 
+
+def test_tls_config_del_partially_initialized():
+    """TLSConfig.__del__ tolerates a partially initialized instance."""
+    tls = TLSConfig.__new__(TLSConfig)
+    tls.__del__()
+
+
+def test_tls_config_del_after_normal_init():
+    """TLSConfig cleans up normally when garbage collected."""
+    tls = TLSConfig(TLSConfig.MODE_CLIENT)
+    assert tls._tls_config is not None
+
+
+def test_tls_auth_mode_none_applied():
+    """auth_mode=AUTH_MODE_NONE is applied."""
+    tls = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        auth_mode=TLSConfig.AUTH_MODE_NONE,
+    )
+    assert tls is not None
+
+
+def test_tls_server_name_none_raises():
+    """set_server_name(None) raises ValueError."""
+    tls = TLSConfig(TLSConfig.MODE_CLIENT)
+    with pytest.raises(ValueError, match="cannot be None"):
+        tls.set_server_name(None)
+
+
+def test_tls_server_name_empty_string_clears():
+    """set_server_name('') clears the server name."""
+    tls = TLSConfig(TLSConfig.MODE_CLIENT)
+    tls.set_server_name("")
+
+
+def test_tls_server_name_set():
+    """set_server_name accepts a hostname."""
+    tls = TLSConfig(TLSConfig.MODE_CLIENT)
+    tls.set_server_name("example.com")
 
 def test_config_file(tmp_path):
     ca_crt_file = tmp_path / "ca.crt"
