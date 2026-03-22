@@ -87,12 +87,12 @@ class _NNGOption:
     def __get__(self, instance, owner):
         # have to look up the getter on the class
         if self._getter is None:
-            raise TypeError("{} cannot be set".format(self.__class__))
+            raise TypeError(f"{self.__class__} is write-only")
         return self.__class__._getter(instance, self.option)
 
     def __set__(self, instance, value):
         if self._setter is None:
-            raise TypeError("{} is readonly".format(self.__class__))
+            raise TypeError(f"{self.__class__} is readonly")
         self.__class__._setter(instance, self.option, value)
 
 
@@ -439,7 +439,11 @@ class Socket:
             self._dialers = {}
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except (TypeError, AttributeError):
+            # During interpreter shutdown, globals (lib, ffi) may be None
+            pass
 
     @property
     def socket(self):
@@ -544,7 +548,8 @@ class Socket:
     @property
     def pipes(self):
         """A list of the active pipes"""
-        return tuple(self._pipes.values())
+        with self._pipe_notify_lock:
+            return tuple(self._pipes.values())
 
     def _add_pipe(self, lib_pipe):
         # this is only called inside the pipe callback.
@@ -787,21 +792,11 @@ class Pair1(Socket):
     """
 
     def __init__(self, *, polyamorous=False, **kwargs):
-        # make sure we don't listen/dial before setting polyamorous, so we pop
-        # them out of kwargs, then do the dial/listen below.
-        # It's not beautiful, but it will work.
-        dial_addr = kwargs.pop("dial", None)
-        listen_addr = kwargs.pop("listen", None)
         if polyamorous:
-            opener = lib.nng_pair1_open_poly
+            kwargs["opener"] = lib.nng_pair1_open_poly
         else:
-            opener = lib.nng_pair1_open
-        super().__init__(opener=opener, **kwargs)
-        # now we can do the listen/dial
-        if dial_addr is not None:
-            self.dial(dial_addr, block=kwargs.get("block_on_dial"))
-        if listen_addr is not None:
-            self.listen(listen_addr)
+            kwargs["opener"] = lib.nng_pair1_open
+        super().__init__(**kwargs)
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
@@ -1116,7 +1111,7 @@ class Dialer:
         Close the dialer.
         """
         lib.nng_dialer_close(self.dialer)
-        del self.socket._dialers[self.id]
+        self.socket._dialers.pop(self.id, None)
 
     @property
     def id(self):
@@ -1126,14 +1121,12 @@ class Dialer:
         return self
 
     async def __aexit__(self, *exc_info):
-        if self.id in self.socket._dialers:
-            self.close()
+        self.close()
 
     async def aclose(self):
         """Asynchronous close. Delegates to the synchronous :meth:`close`
         since the underlying NNG close operation is non-blocking."""
-        if self.id in self.socket._dialers:
-            self.close()
+        self.close()
 
 
 class Listener:
@@ -1186,7 +1179,7 @@ class Listener:
         Close the listener.
         """
         lib.nng_listener_close(self.listener)
-        del self.socket._listeners[self.id]
+        self.socket._listeners.pop(self.id, None)
 
     @property
     def id(self):
@@ -1196,14 +1189,12 @@ class Listener:
         return self
 
     async def __aexit__(self, *exc_info):
-        if self.id in self.socket._listeners:
-            self.close()
+        self.close()
 
     async def aclose(self):
         """Asynchronous close. Delegates to the synchronous :meth:`close`
         since the underlying NNG close operation is non-blocking."""
-        if self.id in self.socket._listeners:
-            self.close()
+        self.close()
 
 
 class Context:
@@ -1372,7 +1363,11 @@ class Context:
         return self._context[0]
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except (TypeError, AttributeError):
+            # During interpreter shutdown, globals (lib, ffi) may be None
+            pass
 
     async def asend_msg(self, msg):
         """
@@ -1647,10 +1642,13 @@ class Message:
 
         """
         with self._mem_freed_lock:
-            if not self._mem_freed:
-                size = lib.nng_msg_len(self._nng_msg)
-                data = ffi.cast("char *", lib.nng_msg_body(self._nng_msg))
-                return ffi.buffer(data[0:size])
+            if self._mem_freed:
+                raise pynng.MessageStateError(
+                    "Message buffer is no longer available after sending."
+                )
+            size = lib.nng_msg_len(self._nng_msg)
+            data = ffi.cast("char *", lib.nng_msg_body(self._nng_msg))
+            return ffi.buffer(data[0:size])
 
     @property
     def bytes(self):
