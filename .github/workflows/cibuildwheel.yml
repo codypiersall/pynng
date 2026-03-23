@@ -40,7 +40,7 @@ jobs:
           python-version: '3.13'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.3
@@ -63,7 +63,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Build SDist
         run: uv build --sdist
