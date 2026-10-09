@@ -109,7 +109,6 @@ class Rep0Service:
 
         self._socket = pynng.Rep0(listen=self._address, **kwargs)
 
-        # Detect async backend
         try:
             backend = sniffio.current_async_library()
         except sniffio.AsyncLibraryNotFoundError:
@@ -142,9 +141,7 @@ class Rep0Service:
                 replied_event = asyncio.Event()
                 request = Request(data, ctx, _replied_event=replied_event)
                 await self._queue.put(request)
-                # Wait for the reply to be sent before receiving the next
-                # request on this context (REP protocol requires recv-send
-                # alternation per context).
+                # REP protocol requires reply before next receive on this context.
                 await replied_event.wait()
             except Closed:
                 break
@@ -179,7 +176,6 @@ class Rep0Service:
                 replied_event = trio.Event()
                 request = Request(data, ctx, _replied_event=replied_event)
                 await self._trio_send_channel.send(request)
-                # Wait for the reply before receiving again on this context
                 await replied_event.wait()
             except Closed:
                 break
@@ -202,18 +198,15 @@ class Rep0Service:
             await self._stop_asyncio()
 
     async def _stop_asyncio(self):
-        # Close all contexts first to unblock recv calls
         for ctx in self._contexts:
             try:
                 ctx.close()
             except Exception:
                 logger.debug("Exception closing context during shutdown", exc_info=True)
 
-        # Cancel worker tasks
         for task in self._worker_tasks:
             task.cancel()
 
-        # Wait for workers to finish
         for task in self._worker_tasks:
             try:
                 await task
@@ -222,35 +215,29 @@ class Rep0Service:
             except Exception:
                 logger.debug("Exception in worker during shutdown", exc_info=True)
 
-        # Drain the queue
         await self._queue.put(self._sentinel)
 
         self._worker_tasks.clear()
         self._contexts.clear()
 
-        # Close the socket
         if self._socket is not None:
             self._socket.close()
             self._socket = None
 
     async def _stop_trio(self):
-        # Close all contexts to unblock recv calls
         for ctx in self._contexts:
             try:
                 ctx.close()
             except Exception:
                 logger.debug("Exception closing context during shutdown", exc_info=True)
 
-        # Close the send channel so workers know to stop
         await self._trio_send_channel.aclose()
 
-        # Cancel the nursery
         self._nursery.cancel_scope.cancel()
         await self._nursery_manager.__aexit__(None, None, None)
 
         self._contexts.clear()
 
-        # Close the socket
         if self._socket is not None:
             self._socket.close()
             self._socket = None

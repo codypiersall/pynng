@@ -68,7 +68,6 @@ class PipeEventStream:
                 "The async backend {} is not currently supported.".format(backend)
             )
 
-        # Register callbacks
         self._socket.add_pre_pipe_connect_cb(self._on_pre_add)
         self._socket.add_post_pipe_connect_cb(self._on_post_add)
         self._socket.add_post_pipe_remove_cb(self._on_remove)
@@ -111,7 +110,6 @@ class PipeEventStream:
             return
         self._closed = True
 
-        # Unregister callbacks
         try:
             self._socket.remove_pre_pipe_connect_cb(self._on_pre_add)
         except ValueError:
@@ -125,14 +123,12 @@ class PipeEventStream:
         except ValueError:
             pass
 
-        # Signal the iterator to stop
         if self._backend == "asyncio":
             try:
                 self._loop.call_soon_threadsafe(
                     self._queue.put_nowait, _SENTINEL
                 )
             except RuntimeError:
-                # Loop may be closed already
                 pass
         elif self._backend == "trio":
             import trio
