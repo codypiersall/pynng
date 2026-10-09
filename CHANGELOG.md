@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `async with` context manager support for `Dialer` and `Listener`
 - `aclose()` method for `Dialer` and `Listener`
 - `recv_timeout` and `send_timeout` option descriptors on `Context` for per-context timeout control
+- `Sub0.subscriptions` property to inspect current subscriptions as a frozenset
+- `Sub0.subscribe_all(topics)` for batch subscription to multiple topics
+- `Sub0.unsubscribe_all()` to clear all current subscriptions
+- Local subscription tracking in `Sub0` (NNG has no API to query subscriptions)
 
 ### Changed
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads

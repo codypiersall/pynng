@@ -936,6 +936,8 @@ class Sub0(Socket):
 
     def __init__(self, *, topics=None, **kwargs):
         super().__init__(**kwargs)
+        self._subscriptions = set()
+        self._sub_lock = threading.RLock()
         if topics is None:
             return
         # special-case str/bytes
@@ -943,6 +945,12 @@ class Sub0(Socket):
             topics = [topics]
         for topic in topics:
             self.subscribe(topic)
+
+    @property
+    def subscriptions(self):
+        """Return a frozenset of current subscriptions (as bytes)."""
+        with self._sub_lock:
+            return frozenset(self._subscriptions)
 
     def subscribe(self, topic):
         """Subscribe to the specified topic.
@@ -957,10 +965,14 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
+        if isinstance(topic, str):
+            topic = topic.encode()
         options._setopt_string_nonnull(self, b"sub:subscribe", topic)
+        with self._sub_lock:
+            self._subscriptions.add(topic)
 
     def unsubscribe(self, topic):
-        """Unsubscribe to the specified topic.
+        """Unsubscribe from the specified topic.
 
         .. Note::
 
@@ -969,7 +981,28 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
+        if isinstance(topic, str):
+            topic = topic.encode()
         options._setopt_string_nonnull(self, b"sub:unsubscribe", topic)
+        with self._sub_lock:
+            self._subscriptions.discard(topic)
+
+    def subscribe_all(self, topics):
+        """Subscribe to multiple topics at once.
+
+        Args:
+            topics: An iterable of :class:`str` or :class:`bytes` topics.
+
+        """
+        for topic in topics:
+            self.subscribe(topic)
+
+    def unsubscribe_all(self):
+        """Unsubscribe from all current subscriptions."""
+        with self._sub_lock:
+            current = list(self._subscriptions)
+        for topic in current:
+            self.unsubscribe(topic)
 
 
 class Req0(Socket):
