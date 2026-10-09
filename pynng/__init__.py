@@ -68,6 +68,7 @@ from .exceptions import (
     Ambiguous,
     BadType,
     Internal,
+    Stopped,
     check_err,
     MessageStateError,
 )
