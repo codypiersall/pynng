@@ -15,8 +15,6 @@ from .exceptions import check_err
 _aio_map = {}
 
 # Lock protecting _aio_map. Plain dict operations are atomic under the GIL,
-# but free-threaded Python (3.13t/3.14t) removes the GIL, so concurrent
-# access from NNG's callback thread and the Python thread would race.
 _aio_map_lock = threading.Lock()
 
 
@@ -201,14 +199,7 @@ class AIOHelper:
         Free resources allocated with nng
         """
         if self.aio is not None:
-            # Cancel any pending AIO operation before freeing. nng_aio_free()
-            # blocks until the callback completes, but the callback needs the
-            # GIL (to call Python code). If _free() is called from __del__
-            # during GC, the GIL is held, so nng_aio_free() would deadlock
-            # waiting for the callback while the callback waits for the GIL.
-            # Cancelling first tells NNG to abort the operation, so the
-            # callback fires quickly with NNG_ECANCELED and the free can
-            # proceed without blocking.
+            # Cancel in-flight AIO before freeing to prevent deadlock during GC.
             lib.nng_aio_cancel(self.aio)
             lib.nng_aio_free(self.aio)
             self.aio = None

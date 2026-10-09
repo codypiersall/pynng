@@ -13,9 +13,7 @@ from .exceptions import check_err, NNGException
 from . import options
 from . import _aio
 
-# Module-level registry of active socket handles. Prevents ffi.from_handle()
-# from dereferencing a dangling pointer when NNG fires a pipe callback after
-# a Socket has been garbage-collected. Keyed by nng_socket id.
+# Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
 _active_handles_lock = threading.Lock()
 
@@ -454,18 +452,7 @@ class Socket:
                 return
             self._socket_closed = True
         sock_id = lib.nng_socket_id(self.socket)
-        # Note: we do not explicitly cancel pending AIO operations here.
-        # nng_close() completes them with NNG_ECLOSED, and AIOHelper
-        # already handles that error correctly. Tracking which AIOHelpers
-        # are associated with this socket would add complexity without
-        # benefit, since the AIOHelper context manager calls _free()
-        # which handles cleanup.
         lib.nng_close(self.socket)
-        # Remove the handle from the module-level registry AFTER
-        # nng_close() completes, so no more pipe callbacks can fire.
-        # Verify the handle belongs to this socket before removing,
-        # in case a new socket reused the same ID between our check
-        # and the pop.
         with _active_handles_lock:
             if _active_handles.get(sock_id) is self._handle:
                 del _active_handles[sock_id]
@@ -1446,15 +1433,9 @@ def _do_callbacks(pipe, callbacks):
 def _nng_pipe_cb(lib_pipe, event, arg):
     logger.debug("Pipe callback event {}".format(event))
 
-    # Get the Socket from the handle passed through the callback arguments.
-    # If the Socket has been GC'd and the handle is invalid, from_handle()
-    # will crash. Guard against this by catching exceptions.
     try:
         sock = ffi.from_handle(arg)
     except Exception:
-        logger.warning(
-            "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
-        )
         return
 
     # exceptions don't propagate out of this function, so if any exception is
