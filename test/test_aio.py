@@ -141,3 +141,40 @@ async def test_pub_sub_trio():
 
         # head over to the pub
         await pub()
+
+
+@pytest.mark.asyncio
+async def test_aio_free_cancels_pending():
+    from pynng._aio import AIOHelper, _aio_map, _aio_map_lock
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0:
+        helper = AIOHelper(s0, "asyncio")
+        cb_id = id(helper.cb_arg)
+        with _aio_map_lock:
+            assert cb_id in _aio_map
+        # Explicit _free should cancel pending AIO and pop cb_arg
+        helper._free()
+        assert helper.aio is None
+        with _aio_map_lock:
+            assert cb_id not in _aio_map
+        helper.awaitable.close()
+
+
+def test_aio_map_multithreaded_access():
+    import concurrent.futures
+    from pynng._aio import _aio_map, _aio_map_lock, _async_complete
+    from pynng._nng import ffi
+
+    def churn_map(idx):
+        obj = object()
+        obj_id = id(obj)
+        with _aio_map_lock:
+            _aio_map[obj_id] = lambda: None
+        # Call completion
+        void_p = ffi.cast("void *", obj_id)
+        _async_complete(void_p)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(churn_map, i) for i in range(100)]
+        for f in futures:
+            f.result()

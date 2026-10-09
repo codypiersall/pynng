@@ -325,3 +325,80 @@ def test_pipes_access_under_contention():
 
     assert not errors, f"Thread errors: {errors}"
 
+
+def test_active_handles_registry():
+    from pynng.nng import _active_handles, _active_handles_lock, lib
+    addr = random_addr()
+    s0 = pynng.Pair0(listen=addr)
+    sock_id = lib.nng_socket_id(s0.socket)
+    with _active_handles_lock:
+        assert sock_id in _active_handles
+        assert _active_handles[sock_id] is s0._handle
+
+    s0.close()
+    with _active_handles_lock:
+        assert sock_id not in _active_handles
+
+
+def test_active_handles_reused_id_protection():
+    from pynng.nng import _active_handles, _active_handles_lock, lib, ffi
+    addr = random_addr()
+    s0 = pynng.Pair0(listen=addr)
+    sock_id = lib.nng_socket_id(s0.socket)
+
+    # Simulate another socket reusing sock_id
+    dummy_handle = ffi.new_handle(object())
+    with _active_handles_lock:
+        _active_handles[sock_id] = dummy_handle
+
+    # Closing s0 should not remove the dummy_handle because s0._handle != dummy_handle
+    s0.close()
+    with _active_handles_lock:
+        assert _active_handles.get(sock_id) is dummy_handle
+        del _active_handles[sock_id]
+
+
+def test_socket_close_idempotent_multithreaded():
+    import concurrent.futures
+    addr = random_addr()
+    s0 = pynng.Pair0(listen=addr)
+
+    def close_sock():
+        s0.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(close_sock) for _ in range(16)]
+        for f in futures:
+            f.result()
+
+    assert s0._socket_closed
+
+
+def test_pipe_callback_thread_safety():
+    import concurrent.futures
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0:
+        cbs = [lambda p: None for _ in range(20)]
+
+        def add_rem(cb):
+            s0.add_pre_pipe_connect_cb(cb)
+            s0.add_post_pipe_connect_cb(cb)
+            s0.add_post_pipe_remove_cb(cb)
+            s0.remove_pre_pipe_connect_cb(cb)
+            s0.remove_post_pipe_connect_cb(cb)
+            s0.remove_post_pipe_remove_cb(cb)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(add_rem, cb) for cb in cbs]
+            for f in futures:
+                f.result()
+
+        assert len(s0._on_pre_pipe_add) == 0
+        assert len(s0._on_post_pipe_add) == 0
+        assert len(s0._on_post_pipe_remove) == 0
+
+
+def test_nng_pipe_cb_invalid_handle_safe():
+    from pynng.nng import _nng_pipe_cb, ffi, lib
+    # Passing NULL or invalid pointer to _nng_pipe_cb should not raise or crash
+    _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
