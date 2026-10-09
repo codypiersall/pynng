@@ -67,6 +67,10 @@ NNG_HEADERS = NNG_V1_HEADERS
 
 EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)"]
 
+# Additional patterns to exclude when TLS is disabled (PYNNG_TLS_ENABLED=0).
+# nng_tls_config_psk exists only when a TLS engine is compiled in.
+EXCLUDE_PATTERNS_NO_TLS = [r"nng_tls_config_psk"]
+
 # v2 has additional opaque types (forward-declared structs with no public
 # definition) that CFFI cannot handle as concrete types. Exclude them and
 # all functions that reference them. Also exclude nng_id_map and related
@@ -396,9 +400,14 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
             headers = NNG_V1_HEADERS
     if exclude_patterns is None:
         if module_name == "pynng._nng_v2":
-            exclude_patterns = EXCLUDE_PATTERNS_V2
+            exclude_patterns = list(EXCLUDE_PATTERNS_V2)
         else:
-            exclude_patterns = EXCLUDE_PATTERNS
+            exclude_patterns = list(EXCLUDE_PATTERNS)
+
+    # When TLS is disabled, exclude additional symbols that only exist
+    # when a TLS engine is compiled in.
+    if os.environ.get("PYNNG_TLS_ENABLED") == "0":
+        exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
     nng_include_dir = _get_nng_include_dir()
 

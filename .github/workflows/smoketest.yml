@@ -82,3 +82,32 @@ jobs:
         run: uv pip install --system dist/*.whl pytest pytest-asyncio pytest-trio trio
       - name: Run tests
         run: pytest -v test
+
+  tls-engines:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tls-engine: [ wolf, none ]
+      fail-fast: false
+    name: "TLS engine: ${{ matrix.tls-engine }}"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+      - run: sudo apt update
+      - run: sudo apt install -y ninja-build libclang-dev
+      - name: "Build with PYNNG_TLS_ENGINE=${{ matrix.tls-engine }}"
+        run: >
+          uv pip install --system -v -e '.[dev]'
+          -C cmake.args="-DPYNNG_TLS_ENGINE=${{ matrix.tls-engine }}"
+      - name: Run TLS tests
+        run: uv run --no-project pytest -v -m requires_tls test

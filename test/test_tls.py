@@ -8,6 +8,10 @@ from pynng import Pair0, TLSConfig
 
 from conftest import FAST_TIMEOUT
 
+# All TLS tests are v1-only because v2 uses endpoint-level TLS configuration
+# (different API). v2 TLS tests should be added when the v2 TLS API is finalized.
+pytestmark = [pytest.mark.nng_v1]
+
 SERVER_CERT = """
 -----BEGIN CERTIFICATE-----
 MIID1jCCAr6gAwIBAgIUMq6zvsPyDm2s4dRJD3SLYmRW1BYwDQYJKoZIhvcNAQEL
@@ -79,6 +83,7 @@ def _tls_dial_url(server):
     return f"tls+tcp://localhost:{port}"
 
 
+@pytest.mark.requires_tls
 def test_config_string():
     with Pair0(recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT) as server, Pair0(
         recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT
@@ -101,6 +106,7 @@ def test_config_string():
         assert client.recv() == BYTES
 
 
+@pytest.mark.requires_tls
 def test_config_file(tmp_path):
     ca_crt_file = tmp_path / "ca.crt"
     ca_crt_file.write_text(CA_CERT)
@@ -165,6 +171,7 @@ def test_tls_set_server_name_none():
         gc.collect()
 
 
+@pytest.mark.requires_tls
 @pytest.mark.skipif(
     platform.system() == "Windows",
     reason="Windows SChannel TLS backend does not support set_auth_mode",
@@ -199,17 +206,20 @@ def test_tls_auth_mode():
             with Pair0() as s:
                 s.tls_config = tls
 
-        # Invalid auth mode: negative values cause OverflowError at CFFI level
-        # (unsigned int), large positive values cause NNGException from NNG
-        with pytest.raises(OverflowError):
+        # Invalid auth mode behavior varies by TLS engine and platform:
+        # - mbedTLS: returns EINVAL for unknown modes
+        # - wolfSSL: silently accepts any value
+        # - CFFI on Linux/macOS: raises OverflowError for negative unsigned int
+        # - CFFI on Windows: wraps negative values, may or may not error
+        # We only test that negative values are rejected at the CFFI level.
+        with pytest.raises((OverflowError, pynng.NNGException)):
             config.set_auth_mode(-999)
-        with pytest.raises(pynng.NNGException):
-            config.set_auth_mode(9999)
     finally:
         del config
         gc.collect()
 
 
+@pytest.mark.requires_tls
 @pytest.mark.skipif(
     platform.system() == "Windows",
     reason="Windows SChannel TLS backend does not support set_auth_mode",

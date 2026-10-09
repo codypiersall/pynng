@@ -55,4 +55,6 @@ _nng_cdef_cache.txt
 
 # Build directories we want to ignore
 _skbuild/
+
+# Vine strand metadata
 .vine.json
