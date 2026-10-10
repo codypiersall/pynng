@@ -48,30 +48,50 @@ async def test_asurvey_no_respondents():
 
 @pytest.mark.asyncio
 async def test_asurvey_timeout_override():
-    """asurvey() timeout parameter overrides recv_timeout for collection."""
+    """asurvey() timeout parameter overrides both recv_timeout and survey_time for collection."""
     addr = "inproc://test-asurvey-timeout"
     with pynng.Surveyor0(
-        listen=addr, recv_timeout=5000, survey_time=100
+        listen=addr, recv_timeout=5000, survey_time=3000
     ) as surveyor:
-        original_timeout = surveyor.recv_timeout
+        original_recv_timeout = surveyor.recv_timeout
+        original_survey_time = surveyor.survey_time
         responses = await surveyor.asurvey(b"quick?", timeout=100)
         assert responses == []
-        # recv_timeout should be restored
-        assert surveyor.recv_timeout == original_timeout
+        # Both recv_timeout and survey_time should be restored
+        assert surveyor.recv_timeout == original_recv_timeout
+        assert surveyor.survey_time == original_survey_time
 
 
 @pytest.mark.asyncio
 async def test_asurvey_preserves_recv_timeout_on_error():
-    """asurvey() restores recv_timeout even if asend() raises."""
+    """asurvey() restores recv_timeout and survey_time even if asend() raises."""
     addr = "inproc://test-asurvey-restore"
     with pynng.Surveyor0(
-        listen=addr, recv_timeout=5000, send_timeout=100
+        listen=addr, recv_timeout=5000, survey_time=3000, send_timeout=100
     ) as surveyor:
-        original_timeout = surveyor.recv_timeout
+        original_recv_timeout = surveyor.recv_timeout
+        original_survey_time = surveyor.survey_time
         # Passing a str instead of bytes triggers a ValueError in asend()
         with pytest.raises(ValueError):
             await surveyor.asurvey("not bytes", timeout=200)
-        assert surveyor.recv_timeout == original_timeout
+        assert surveyor.recv_timeout == original_recv_timeout
+        assert surveyor.survey_time == original_survey_time
+
+
+@pytest.mark.asyncio
+async def test_asurvey_closed_socket_in_finally():
+    """asurvey() catches pynng.Closed in finally if socket is closed during survey."""
+    addr = "inproc://test-asurvey-closed"
+    surveyor = pynng.Surveyor0(listen=addr, recv_timeout=5000, survey_time=5000)
+
+    async def close_soon():
+        await asyncio.sleep(0.02)
+        surveyor.close()
+
+    close_task = asyncio.create_task(close_soon())
+    with pytest.raises(pynng.Closed):
+        await surveyor.asurvey(b"question", timeout=2000)
+    await close_task
 
 
 @pytest.mark.asyncio

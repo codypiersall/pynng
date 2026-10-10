@@ -15,7 +15,7 @@ import sniffio
 
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, NNGException
+from .exceptions import check_err, NNGException, Closed, NoEntry
 from . import options
 from . import _aio
 
@@ -1168,8 +1168,11 @@ class Sub0(Socket):
         """Unsubscribe from all current subscriptions."""
         with self._sub_lock:
             current = list(self._subscriptions)
-        for topic in current:
-            self.unsubscribe(topic)
+            for topic in current:
+                try:
+                    self.unsubscribe(topic)
+                except NoEntry:
+                    pass
 
 
 class Req0(Socket):
@@ -1294,9 +1297,11 @@ class Surveyor0(Socket):
             across concurrent tasks should be aware this is not task-safe.
             If task-safety is required, use a dedicated socket per task.
         """
-        old_timeout = self.recv_timeout
+        old_recv_timeout = self.recv_timeout
+        old_survey_time = self.survey_time
         if timeout is not None:
             self.recv_timeout = timeout
+            self.survey_time = timeout
 
         try:
             await self.asend(data)
@@ -1311,7 +1316,12 @@ class Surveyor0(Socket):
                     break
             return responses
         finally:
-            self.recv_timeout = old_timeout
+            try:
+                if timeout is not None:
+                    self.recv_timeout = old_recv_timeout
+                    self.survey_time = old_survey_time
+            except Closed:
+                pass
 
 
 class Respondent0(Socket):

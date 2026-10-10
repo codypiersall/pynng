@@ -47,12 +47,30 @@ class Request:
         if self._replied:
             raise RuntimeError("This request has already been replied to")
         self._replied = True
-        await self.context.asend(data)
-        if self._replied_event is not None:
+        try:
+            await self.context.asend(data)
+        finally:
+            if self._replied_event is not None:
+                self._replied_event.set()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self._replied and self._replied_event is not None:
+            self._replied_event.set()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if not self._replied and self._replied_event is not None:
             self._replied_event.set()
 
     def __del__(self):
         if not self._replied:
+            if self._replied_event is not None:
+                self._replied_event.set()
             warnings.warn(
                 "Request with data {!r} was never replied to".format(
                     self.data[:64] if self.data else self.data
@@ -110,14 +128,20 @@ class Rep0Service:
         self._socket = pynng.Rep0(listen=self._address, **kwargs)
 
         try:
-            backend = sniffio.current_async_library()
-        except sniffio.AsyncLibraryNotFoundError:
-            backend = "asyncio"
+            try:
+                backend = sniffio.current_async_library()
+            except sniffio.AsyncLibraryNotFoundError:
+                backend = "asyncio"
 
-        if backend == "trio":
-            await self._start_trio()
-        else:
-            await self._start_asyncio()
+            if backend == "trio":
+                await self._start_trio()
+            else:
+                await self._start_asyncio()
+        except BaseException:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
+            raise
 
         return self
 
@@ -139,8 +163,7 @@ class Rep0Service:
             try:
                 data = await ctx.arecv()
                 replied_event = asyncio.Event()
-                request = Request(data, ctx, _replied_event=replied_event)
-                await self._queue.put(request)
+                await self._queue.put(Request(data, ctx, _replied_event=replied_event))
                 # REP protocol requires reply before next receive on this context.
                 await replied_event.wait()
             except Closed:
@@ -174,8 +197,7 @@ class Rep0Service:
             try:
                 data = await ctx.arecv()
                 replied_event = trio.Event()
-                request = Request(data, ctx, _replied_event=replied_event)
-                await self._trio_send_channel.send(request)
+                await self._trio_send_channel.send(Request(data, ctx, _replied_event=replied_event))
                 await replied_event.wait()
             except Closed:
                 break
