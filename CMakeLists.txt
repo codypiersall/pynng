@@ -232,8 +232,7 @@ endif()
 #      when skipping hostname verification (CVE-2025-27809)
 #   2. AIO task_abort race condition (upstream issue #2208)
 # Remove this patch when upgrading to an NNG release that includes both fixes.
-# The patch is only needed when building with mbedTLS.
-if(PYNNG_TLS_ENGINE STREQUAL "mbed" AND NNG_REV STREQUAL "v1.11")
+if(NNG_REV STREQUAL "v1.11")
   set(_NNG_V1_PATCH_ARGS
     PATCH_COMMAND ${CMAKE_COMMAND}
       -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/nng-mbedtls-hostname.patch
@@ -476,7 +475,9 @@ if(BUILD_NNG_V2)
 
   elseif(_V2_TLS_ENGINE STREQUAL "openssl")
     # OpenSSL is a system library; pass its location to ExternalProject.
-    list(APPEND _NNG_V2_CMAKE_ARGS -DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR})
+    if(OPENSSL_ROOT_DIR)
+      list(APPEND _NNG_V2_CMAKE_ARGS -DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR})
+    endif()
   endif()
 
   ExternalProject_Add(nng_v2_build

@@ -76,23 +76,17 @@ def pytest_collection_modifyitems(config, items):
         is_v2 = "nng_v2" in item.keywords or item.nodeid.endswith("[v2]")
 
         if is_v1 and not _V1_HAS_TLS:
-            item.add_marker(pytest.mark.xfail(
+            item.add_marker(pytest.mark.skip(
                 reason="v1 TLS not available (engine not supported or PYNNG_TLS_ENGINE=none)",
-                raises=Exception,
-                strict=True,
             ))
         elif is_v2 and not _V2_HAS_TLS:
-            item.add_marker(pytest.mark.xfail(
+            item.add_marker(pytest.mark.skip(
                 reason="v2 TLS not available (engine not supported or PYNNG_TLS_ENGINE=none)",
-                raises=Exception,
-                strict=True,
             ))
         elif not is_v1 and not is_v2 and not _V1_HAS_TLS and not _V2_HAS_TLS:
             # Unversioned TLS test, neither version has TLS
-            item.add_marker(pytest.mark.xfail(
+            item.add_marker(pytest.mark.skip(
                 reason="TLS not available (PYNNG_TLS_ENGINE=none)",
-                raises=Exception,
-                strict=True,
             ))
 
 

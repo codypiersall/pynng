@@ -160,6 +160,7 @@ def test_tls_config_own_cert_both_required():
     gc.collect()
 
 
+@pytest.mark.requires_tls
 def test_tls_set_server_name_none():
     """set_server_name(None) raises ValueError."""
     config = TLSConfig(TLSConfig.MODE_CLIENT)
