@@ -160,6 +160,24 @@ async def test_aio_free_cancels_pending():
         helper.awaitable.close()
 
 
+@pytest.mark.asyncio
+async def test_aio_free_cleans_map_when_aio_is_none():
+    from pynng._aio import AIOHelper, _aio_map, _aio_map_lock, lib
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0:
+        helper = AIOHelper(s0, "asyncio")
+        cb_id = id(helper.cb_arg)
+        with _aio_map_lock:
+            assert cb_id in _aio_map
+        # Simulate helper whose aio was freed or failed to allocate
+        lib.nng_aio_free(helper.aio)
+        helper.aio = None
+        helper._free()
+        with _aio_map_lock:
+            assert cb_id not in _aio_map
+        helper.awaitable.close()
+
+
 def test_aio_map_multithreaded_access():
     import concurrent.futures
     from pynng._aio import _aio_map, _aio_map_lock, _async_complete

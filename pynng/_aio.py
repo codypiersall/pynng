@@ -203,9 +203,9 @@ class AIOHelper:
             lib.nng_aio_cancel(self.aio)
             lib.nng_aio_free(self.aio)
             self.aio = None
-            if hasattr(self, "cb_arg"):
-                with _aio_map_lock:
-                    _aio_map.pop(id(self.cb_arg), None)
+        if hasattr(self, "cb_arg"):
+            with _aio_map_lock:
+                _aio_map.pop(id(self.cb_arg), None)
 
     def __enter__(self):
         return self

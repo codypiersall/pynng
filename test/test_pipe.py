@@ -333,7 +333,7 @@ def test_active_handles_registry():
     sock_id = lib.nng_socket_id(s0.socket)
     with _active_handles_lock:
         assert sock_id in _active_handles
-        assert _active_handles[sock_id] is s0._handle
+        assert _active_handles[sock_id]() is s0
 
     s0.close()
     with _active_handles_lock:
@@ -341,21 +341,64 @@ def test_active_handles_registry():
 
 
 def test_active_handles_reused_id_protection():
-    from pynng.nng import _active_handles, _active_handles_lock, lib, ffi
+    import weakref
+    from pynng.nng import _active_handles, _active_handles_lock, lib
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
 
     # Simulate another socket reusing sock_id
-    dummy_handle = ffi.new_handle(object())
-    with _active_handles_lock:
-        _active_handles[sock_id] = dummy_handle
+    class Dummy:
+        pass
 
-    # Closing s0 should not remove the dummy_handle because s0._handle != dummy_handle
+    dummy_obj = Dummy()
+    dummy_ref = weakref.ref(dummy_obj)
+    with _active_handles_lock:
+        _active_handles[sock_id] = dummy_ref
+
+    # Closing s0 should not remove the dummy_ref because ref() != s0
     s0.close()
     with _active_handles_lock:
-        assert _active_handles.get(sock_id) is dummy_handle
+        assert _active_handles.get(sock_id) is dummy_ref
         del _active_handles[sock_id]
+
+
+def test_unclosed_socket_garbage_collected():
+    import gc
+    import weakref
+    from pynng.nng import _active_handles, _active_handles_lock, lib
+    addr = random_addr()
+    s = pynng.Pair0(listen=addr)
+    sock_id = lib.nng_socket_id(s.socket)
+    with _active_handles_lock:
+        assert sock_id in _active_handles
+    wr = weakref.ref(s)
+    del s
+    gc.collect()
+    assert wr() is None, "Unclosed socket leaked and was not garbage-collected!"
+    with _active_handles_lock:
+        assert sock_id not in _active_handles
+
+
+def test_pipe_cb_does_not_deadlock_on_socket_operations():
+    addr = random_addr()
+    cb_called = False
+    with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
+        def cb(pipe):
+            nonlocal cb_called
+            cb_called = True
+            # Modifying callbacks or registering new ones from within callback
+            # must not deadlock (verifies lock was released before callback invocation)
+            s0.add_post_pipe_connect_cb(lambda p: None)
+
+        s0.add_post_pipe_connect_cb(cb)
+        s1.dial(addr)
+        later = time.time() + 5.0
+        while later > time.time():
+            if cb_called:
+                break
+            time.sleep(0.001)
+        assert cb_called
 
 
 def test_socket_close_idempotent_multithreaded():
