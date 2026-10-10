@@ -234,3 +234,74 @@ async def test_request_data_attribute():
     r = Request(b"payload", None)
     assert r.data == b"payload"
     r._replied = True  # suppress warning
+
+
+@pytest.mark.asyncio
+async def test_unreplied_request_unblocks_worker():
+    """Dropping a Request object unblocks the worker via __del__ or context manager fallback."""
+    addr = _unique_addr("unreplied-unblock")
+
+    async with Rep0Service(addr, workers=1, recv_timeout=3000, send_timeout=3000) as service:
+        req = pynng.Req0(dial=addr, recv_timeout=1000, send_timeout=1000)
+        wait_pipe_len(req, 1)
+
+        await req.asend(b"req1")
+        # Receive req1 and drop it without calling reply()
+        async for request in service:
+            with request:
+                assert request.data == b"req1"
+            break
+
+        # In REP/REQ, client req1 will time out because no reply was sent
+        with pytest.raises(pynng.Timeout):
+            await req.arecv()
+        req.close()
+
+        # Now send a second request from a new client to verify the single worker is not deadlocked
+        req2 = pynng.Req0(dial=addr, recv_timeout=3000, send_timeout=3000)
+        wait_pipe_len(req2, 1)
+        await req2.asend(b"req2")
+
+        async for request2 in service:
+            assert request2.data == b"req2"
+            await request2.reply(b"reply2")
+            break
+
+        assert await req2.arecv() == b"reply2"
+        req2.close()
+
+
+@pytest.mark.asyncio
+async def test_request_reply_exception_unblocks_worker():
+    """If request.reply() encounters an exception, finally ensures worker is unblocked."""
+    event = asyncio.Event()
+    # Fake context whose asend raises an exception
+    class FailingContext:
+        async def asend(self, data):
+            raise pynng.Closed("Simulated failure", 0)
+
+    r = Request(b"data", FailingContext(), _replied_event=event)
+    with pytest.raises(pynng.Closed):
+        await r.reply(b"resp")
+    # Event must be set even though asend failed
+    assert event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_aenter_initialization_failure_cleans_up_socket(monkeypatch):
+    """If initialization fails during __aenter__, underlying socket is closed."""
+    addr = _unique_addr("init-failure")
+    service = Rep0Service(addr, workers=1)
+
+    # Monkeypatch _start_asyncio to simulate an error
+    async def mock_start_asyncio():
+        raise RuntimeError("Initialization boom")
+
+    monkeypatch.setattr(service, "_start_asyncio", mock_start_asyncio)
+
+    with pytest.raises(RuntimeError, match="Initialization boom"):
+        async with service:
+            pass
+
+    assert service._socket is None
+
