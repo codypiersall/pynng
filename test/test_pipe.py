@@ -99,6 +99,11 @@ def test_pre_pipe_connect_cb_totally_works():
         s1.dial(addr)
         wait_pipe_len(s0, 1)
         wait_pipe_len(s1, 1)
+        later = time.monotonic() + 10
+        while later > time.monotonic():
+            if called:
+                break
+            time.sleep(0.0005)
         assert called
 
 
