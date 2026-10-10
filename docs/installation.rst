@@ -21,7 +21,7 @@ Build Requirements
 ------------------
 
 pynng uses `scikit-build-core <https://scikit-build-core.readthedocs.io>`_ and
-`headerkit <https://github.com/codypiersall/headerkit>`_ for building. The build
+`headerkit <https://github.com/axiomantic/headerkit>`_ for building. The build
 process parses NNG C headers to auto-generate CFFI bindings, which requires
 ``libclang`` at build time.
 

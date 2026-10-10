@@ -916,7 +916,7 @@ class Bus0(Socket):
 
     Here is a demonstration of using the bus protocol:
 
-    .. literalinclude:: snippets/bus0_sync.py
+    .. literalinclude:: /snippets/bus0_sync.py
         :language: python3
     """
 
@@ -934,13 +934,13 @@ class Pair0(Socket):
 
     This demonstrates the synchronous API:
 
-    .. literalinclude:: snippets/pair0_sync.py
+    .. literalinclude:: /snippets/pair0_sync.py
         :language: python3
 
     This demonstrates the asynchronous API using `Trio`_.  Remember that
     :mod:`asyncio` is also supported.
 
-    .. literalinclude:: snippets/pair0_async.py
+    .. literalinclude:: /snippets/pair0_async.py
         :language: python3
 
 
@@ -982,11 +982,11 @@ class Pair1(Socket):
     because it requires to use the :class:`Pipe` and :class:`Message`
     interfaces.
 
-    .. literalinclude:: snippets/pair1_sync.py
+    .. literalinclude:: /snippets/pair1_sync.py
 
     And here is an example using the async API, using `Trio`_.
 
-    .. literalinclude:: snippets/pair1_async.py
+    .. literalinclude:: /snippets/pair1_async.py
 
     """
 
@@ -1017,7 +1017,7 @@ class Push0(Socket):
     Here is an example of two :class:`Pull0` sockets connected to a
     :class:`Push0` socket.
 
-    .. literalinclude:: snippets/pushpull_sync.py
+    .. literalinclude:: /snippets/pushpull_sync.py
 
     """
 
@@ -1095,7 +1095,7 @@ class Sub0(Socket):
 
     The following example demonstrates a basic usage of pub/sub:
 
-    .. literalinclude:: snippets/pubsub_sync.py
+    .. literalinclude:: /snippets/pubsub_sync.py
 
     """
 
@@ -1202,7 +1202,7 @@ class Req0(Socket):
 
     Here is an example demonstrating the request/response pattern.
 
-    .. literalinclude:: snippets/reqrep_sync.py
+    .. literalinclude:: /snippets/reqrep_sync.py
 
     """
 
@@ -1261,7 +1261,7 @@ class Surveyor0(Socket):
 
     Here is an example:
 
-    .. literalinclude:: snippets/surveyor_sync.py
+    .. literalinclude:: /snippets/surveyor_sync.py
 
     """
 

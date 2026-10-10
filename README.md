@@ -24,12 +24,11 @@ restriction.
 Installation
 ------------
 
-On Windows, MacOS, and Linux, the usual
+On Windows, macOS, and Linux, the usual
 
     pip install pynng
 
-should suffice.  Note that on 32-bit Linux and on macOS no binary distributions
-are available, so [CMake](https://cmake.org/) is also required.
+should suffice. Pre-built binary wheels are available for Windows, Linux (x86_64, aarch64), and macOS (universal2). If building from source or on platforms without binary wheels, [CMake](https://cmake.org/) and a C compiler are required.
 
 Building from the GitHub repo works as well, natch:
 

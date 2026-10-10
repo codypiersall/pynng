@@ -31,6 +31,7 @@ pynng supports both synchronous and asynchronous usage with ``asyncio`` and
    api/sockets
    api/messaging
    api/networking
+   api/service
    api/tls
    api/sockaddr
    api/exceptions

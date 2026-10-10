@@ -21,3 +21,13 @@ Pipe
 .. autoclass:: pynng.Pipe
    :members:
    :undoc-members:
+
+Pipe Events
+-----------
+
+.. autoclass:: pynng.PipeEvent
+   :members:
+
+.. autoclass:: pynng.PipeEventStream
+   :members:
+   :undoc-members:
