@@ -15,6 +15,7 @@ import collections
 import logging
 import math
 import threading
+import weakref
 
 import sniffio
 
@@ -413,7 +414,7 @@ class Socket:
         version_tag = self._version_tag
         sock_id = _lib.nng_socket_id(self.socket)
         with _active_handles_lock:
-            _active_handles[(version_tag, sock_id)] = handle
+            _active_handles[(version_tag, sock_id)] = weakref.ref(self)
 
         for event in (
             _lib.NNG_PIPE_EV_ADD_PRE,
@@ -471,7 +472,8 @@ class Socket:
         check_err(ret)
         # we can only get here if check_err doesn't raise
         d_id = _lib.nng_dialer_id(dialer[0])
-        py_dialer = Dialer(dialer, self)
+        dialer_cls = self._dialer_class or Dialer
+        py_dialer = dialer_cls(dialer, self)
         self._dialers[d_id] = py_dialer
         return py_dialer
 
@@ -489,7 +491,8 @@ class Socket:
         check_err(ret)
         # we can only get here if check_err doesn't raise
         l_id = _lib.nng_listener_id(listener[0])
-        py_listener = Listener(listener, self)
+        listener_cls = self._listener_class or Listener
+        py_listener = listener_cls(listener, self)
         self._listeners[l_id] = py_listener
         return py_listener
 
@@ -512,7 +515,8 @@ class Socket:
         close_fn(self.socket)
         with _active_handles_lock:
             key = (version_tag, sock_id)
-            if _active_handles.get(key) is self._handle:
+            ref = _active_handles.get(key)
+            if ref is not None and (ref() is self or ref() is None):
                 del _active_handles[key]
         self._listeners = {}
         self._dialers = {}
@@ -642,6 +646,8 @@ class Socket:
     _context_class = None
     _pipe_class = None
     _message_class = None
+    _dialer_class = None
+    _listener_class = None
 
     def new_context(self):
         """Return a new :class:`Context` for this socket."""
@@ -793,7 +799,7 @@ class Dialer:
         Close the dialer.
         """
         self._lib.nng_dialer_close(self.dialer)
-        del self.socket._dialers[self.id]
+        self.socket._dialers.pop(self.id, None)
 
     @property
     def id(self):
@@ -852,7 +858,7 @@ class Listener:
         Close the listener.
         """
         self._lib.nng_listener_close(self.listener)
-        del self.socket._listeners[self.id]
+        self.socket._listeners.pop(self.id, None)
 
     @property
     def id(self):
@@ -1182,6 +1188,7 @@ class Message:
         self.__ffi = _ffi
         self._mem_freed = False
         self._mem_freed_lock = threading.Lock()
+        self._nng_msg = None
 
         from .exceptions import check_err
 
@@ -1191,7 +1198,11 @@ class Message:
             msg_p = _ffi.new("nng_msg **")
             check_err(_lib.nng_msg_alloc(msg_p, 0))
             msg = msg_p[0]
-            check_err(_lib.nng_msg_append(msg, data, len(data)))
+            try:
+                check_err(_lib.nng_msg_append(msg, data, len(data)))
+            except Exception:
+                _lib.nng_msg_free(msg)
+                raise
             self._nng_msg = msg
 
         if pipe is None:
@@ -1251,11 +1262,14 @@ class Message:
         return bytes(self._buffer)
 
     def __del__(self):
+        if not hasattr(self, "_mem_freed_lock"):
+            return
         with self._mem_freed_lock:
             if self._mem_freed:
                 return
             else:
-                self.__lib.nng_msg_free(self._nng_msg)
+                if getattr(self, "_nng_msg", None) is not None:
+                    self.__lib.nng_msg_free(self._nng_msg)
                 self._mem_freed = True
 
     def _ensure_can_send(self):

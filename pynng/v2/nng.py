@@ -8,6 +8,7 @@ Listener, Pipe, Context, and Message classes.
 """
 
 import logging
+import threading
 
 import pynng
 from pynng._nng_v2 import ffi, lib
@@ -195,6 +196,8 @@ class Pair1(Socket):
             kwargs["opener"] = lib.nng_pair1_open
         super().__init__(**kwargs)
 
+    polyamorous = BooleanOption("pair1:polyamorous")
+
 
 class Push0(Socket):
     """A v2 push0 socket.
@@ -233,12 +236,20 @@ class Sub0(Socket):
 
     def __init__(self, *, topics=None, **kwargs):
         super().__init__(**kwargs)
+        self._subscriptions = set()
+        self._sub_lock = threading.RLock()
         if topics is None:
             return
         if isinstance(topics, (str, bytes)):
             topics = [topics]
         for topic in topics:
             self.subscribe(topic)
+
+    @property
+    def subscriptions(self):
+        """Return a frozenset of current subscriptions (as bytes)."""
+        with self._sub_lock:
+            return frozenset(self._subscriptions)
 
     def subscribe(self, topic):
         """Subscribe to the specified topic.
@@ -252,6 +263,8 @@ class Sub0(Socket):
         if isinstance(topic, str):
             topic = topic.encode()
         check_err(lib.nng_sub0_socket_subscribe(self.socket, topic, len(topic)))
+        with self._sub_lock:
+            self._subscriptions.add(topic)
 
     def unsubscribe(self, topic):
         """Unsubscribe from the specified topic.
@@ -265,6 +278,24 @@ class Sub0(Socket):
         if isinstance(topic, str):
             topic = topic.encode()
         check_err(lib.nng_sub0_socket_unsubscribe(self.socket, topic, len(topic)))
+        with self._sub_lock:
+            self._subscriptions.discard(topic)
+
+    def subscribe_all(self, topics):
+        """Subscribe to multiple topics at once.
+
+        Args:
+            topics: An iterable of :class:`str` or :class:`bytes` topics.
+        """
+        for topic in topics:
+            self.subscribe(topic)
+
+    def unsubscribe_all(self):
+        """Unsubscribe from all current subscriptions."""
+        with self._sub_lock:
+            current = list(self._subscriptions)
+        for topic in current:
+            self.unsubscribe(topic)
 
 
 class Req0(Socket):
@@ -347,7 +378,28 @@ class Dialer(_base.Dialer):
 
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
-    pass
+
+    @property
+    def local_address(self):
+        """Local address for this dialer, if a connected pipe exists."""
+        for pipe in self.socket.pipes:
+            try:
+                if pipe.dialer == self:
+                    return pipe.local_address
+            except (TypeError, KeyError):
+                continue
+        return None
+
+    @property
+    def remote_address(self):
+        """Remote address for this dialer, if a connected pipe exists."""
+        for pipe in self.socket.pipes:
+            try:
+                if pipe.dialer == self:
+                    return pipe.remote_address
+            except (TypeError, KeyError):
+                continue
+        return None
 
 
 class Listener(_base.Listener):
@@ -355,7 +407,22 @@ class Listener(_base.Listener):
 
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
-    pass
+
+    @property
+    def local_address(self):
+        """Local address for this listener, if a connected pipe exists."""
+        for pipe in self.socket.pipes:
+            try:
+                if pipe.listener == self:
+                    return pipe.local_address
+            except (TypeError, KeyError):
+                continue
+        return None
+
+    @property
+    def remote_address(self):
+        """Remote address for this listener (not applicable)."""
+        return None
 
 
 class Context(_base.Context):
@@ -371,7 +438,20 @@ class Pipe(_base.Pipe):
 
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
-    pass
+
+    @property
+    def local_address(self):
+        """The local address for this pipe."""
+        sa = ffi.new("nng_sockaddr *")
+        check_err(lib.nng_pipe_self_addr(self.pipe, sa))
+        return pynng.sockaddr._nng_sockaddr(sa)
+
+    @property
+    def remote_address(self):
+        """The remote address for this pipe."""
+        sa = ffi.new("nng_sockaddr *")
+        check_err(lib.nng_pipe_peer_addr(self.pipe, sa))
+        return pynng.sockaddr._nng_sockaddr(sa)
 
 
 class Message(_base.Message):
@@ -391,4 +471,6 @@ class Message(_base.Message):
 # create v2 types instead of _base types.
 Socket._context_class = Context
 Socket._pipe_class = Pipe
+Socket._dialer_class = Dialer
+Socket._listener_class = Listener
 Socket._message_class = Message

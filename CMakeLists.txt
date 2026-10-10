@@ -265,9 +265,13 @@ if(BUILD_NNG_V2)
     GIT_TAG ${NNG_V2_REV}
     GIT_SHALLOW TRUE
   )
-  cmake_policy(SET CMP0169 OLD)
+  if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+  endif()
   FetchContent_Populate(nng_v2)
-  cmake_policy(SET CMP0169 NEW)
+  if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 NEW)
+  endif()
 
   # Determine the static library path based on platform
   if(WIN32)

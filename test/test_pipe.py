@@ -334,7 +334,7 @@ def test_active_handles_registry():
     key = (s0._version_tag, sock_id)
     with _active_handles_lock:
         assert key in _active_handles
-        assert _active_handles[key] is s0._handle
+        assert _active_handles[key]() is s0
 
     s0.close()
     with _active_handles_lock:
@@ -342,21 +342,26 @@ def test_active_handles_registry():
 
 
 def test_active_handles_reused_id_protection():
-    from pynng.nng import _active_handles, _active_handles_lock, lib, ffi
+    import weakref
+    from pynng.nng import _active_handles, _active_handles_lock, lib
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
     key = (s0._version_tag, sock_id)
 
     # Simulate another socket reusing sock_id
-    dummy_handle = ffi.new_handle(object())
-    with _active_handles_lock:
-        _active_handles[key] = dummy_handle
+    class Dummy:
+        pass
 
-    # Closing s0 should not remove the dummy_handle because s0._handle != dummy_handle
+    dummy = Dummy()
+    dummy_ref = weakref.ref(dummy)
+    with _active_handles_lock:
+        _active_handles[key] = dummy_ref
+
+    # Closing s0 should not remove the dummy_ref because s0 is not dummy
     s0.close()
     with _active_handles_lock:
-        assert _active_handles.get(key) is dummy_handle
+        assert _active_handles.get(key) is dummy_ref
         del _active_handles[key]
 
 
@@ -367,14 +372,16 @@ def test_unclosed_socket_garbage_collected():
     addr = random_addr()
     s = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s.socket)
+    vtag = getattr(s, "_version_tag", None)
+    key = (vtag, sock_id) if vtag else sock_id
     with _active_handles_lock:
-        assert sock_id in _active_handles
+        assert key in _active_handles
     wr = weakref.ref(s)
     del s
     gc.collect()
     assert wr() is None, "Unclosed socket leaked and was not garbage-collected!"
     with _active_handles_lock:
-        assert sock_id not in _active_handles
+        assert key not in _active_handles
 
 
 def test_pipe_cb_does_not_deadlock_on_socket_operations():

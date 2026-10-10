@@ -817,9 +817,11 @@ class Pipe(_base.Pipe):
 
 
 # Wire up the v1-specific subclasses so base class factory methods
-# create v1 types (Context, Pipe, Message) instead of _base types.
+# create v1 types (Context, Pipe, Dialer, Listener, Message) instead of _base types.
 Socket._context_class = Context
 Socket._pipe_class = Pipe
+Socket._dialer_class = Dialer
+Socket._listener_class = Listener
 
 
 class Message(_base.Message):
