@@ -1435,7 +1435,10 @@ def _nng_pipe_cb(lib_pipe, event, arg):
 
     try:
         sock = ffi.from_handle(arg)
-    except Exception:
+    except (RuntimeError, ValueError, ffi.error):
+        logger.info(
+            "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
+        )
         return
 
     # exceptions don't propagate out of this function, so if any exception is

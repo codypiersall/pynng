@@ -398,7 +398,11 @@ def test_pipe_callback_thread_safety():
         assert len(s0._on_post_pipe_remove) == 0
 
 
-def test_nng_pipe_cb_invalid_handle_safe():
+def test_nng_pipe_cb_invalid_handle_safe(caplog):
+    import logging
     from pynng.nng import _nng_pipe_cb, ffi, lib
-    # Passing NULL or invalid pointer to _nng_pipe_cb should not raise or crash
-    _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
+    # Passing NULL or invalid pointer to _nng_pipe_cb should not raise or crash,
+    # and should log an informational message that the event was ignored.
+    with caplog.at_level(logging.INFO):
+        _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
+    assert any("invalid handle" in record.message for record in caplog.records)
