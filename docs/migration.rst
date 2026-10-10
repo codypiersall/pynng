@@ -86,6 +86,40 @@ This delegates to the synchronous ``close()`` since NNG's close is
 non-blocking, but having ``aclose()`` available makes pynng compatible with
 protocols that expect async cleanup (e.g., ``aclose()`` on async generators).
 
+``Rep0Service`` (Concurrent Async Service)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pynng 1.0 introduces :class:`~pynng.Rep0Service` for high-level concurrent
+request/reply handling. Instead of manually creating sockets and multiplexing
+contexts across worker tasks, ``Rep0Service`` manages a worker context pool behind
+a simple ``async for`` loop:
+
+.. code-block:: python
+
+    async with pynng.Rep0Service("tcp://0.0.0.0:5555", workers=4) as service:
+        async for request in service:
+            await request.reply(b"echo: " + request.data)
+
+Pipe Event Streaming (``pipe_events()``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Monitor connections and disconnections asynchronously using
+:meth:`Socket.pipe_events() <pynng.Socket.pipe_events>`:
+
+.. code-block:: python
+
+    async for event in socket.pipe_events():
+        print(f"Pipe {event.pipe} event: {event.event_type}")
+
+Batch Subscriptions (``Sub0``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:class:`~pynng.Sub0` now supports batch topic subscription and inspection:
+
+- :meth:`~pynng.Sub0.subscribe_all`: Subscribe to multiple topics at once.
+- :meth:`~pynng.Sub0.unsubscribe_all`: Clear all active subscriptions.
+- :attr:`~pynng.Sub0.subscriptions`: Read active subscriptions as a ``frozenset``.
+
 Safety Improvements
 -------------------
 
@@ -152,6 +186,9 @@ New Features Summary
   :class:`~pynng.Context`
 - ``async for`` iteration over received messages
 - ``aclose()`` method for async resource cleanup
+- High-level concurrent service: :class:`~pynng.Rep0Service` and :class:`~pynng.Request`
+- Async pipe event streaming: :meth:`~pynng.Socket.pipe_events` and :class:`~pynng.PipeEventStream`
+- Batch Pub/Sub topic management: :meth:`~pynng.Sub0.subscribe_all`, :meth:`~pynng.Sub0.unsubscribe_all`, and :attr:`~pynng.Sub0.subscriptions`
 - Abstract socket transport (``abstract://``) for Linux
 - Improved TLS configuration with proper ``AUTH_MODE_NONE`` handling
 - Better error messages throughout

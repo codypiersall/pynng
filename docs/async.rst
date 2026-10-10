@@ -66,7 +66,7 @@ Sockets and Contexts can be used as async context managers, mirroring the
 synchronous ``with`` statement. The socket or context is automatically closed
 when the block exits:
 
-.. literalinclude:: snippets/async_with_example.py
+.. literalinclude:: /snippets/async_with_example.py
    :language: python
 
 This is equivalent to the synchronous ``with pynng.Pair0(...) as s:`` pattern,
@@ -82,12 +82,12 @@ raising ``StopAsyncIteration``):
 
 Using Trio:
 
-.. literalinclude:: snippets/async_for_example.py
+.. literalinclude:: /snippets/async_for_example.py
    :language: python
 
 Using asyncio:
 
-.. literalinclude:: snippets/async_for_asyncio_example.py
+.. literalinclude:: /snippets/async_for_asyncio_example.py
    :language: python
 
 .. note::
@@ -288,9 +288,27 @@ interfering with each other.
 
 - Contexts support the same ``async with``, ``async for``, and ``aclose()``
   patterns as sockets.
-- Only :class:`~pynng.Req0` and :class:`~pynng.Rep0` support contexts.
-  Other protocols raise an error when you call ``new_context()``.
+- Contexts are supported on :class:`~pynng.Req0`, :class:`~pynng.Rep0`,
+  :class:`~pynng.Surveyor0`, and :class:`~pynng.Respondent0`. Calling
+  ``new_context()`` on other protocols (e.g. Pub0, Sub0, Pair0, Push0, Pull0, Bus0)
+  raises :class:`~pynng.NotSupported`.
 - Always close contexts when you are done with them, either explicitly or
-  via a context manager.
+  via an async context manager.
+
+High-Level Alternative: Rep0Service
+------------------------------------
+
+For server applications implementing the request/reply pattern, manually managing
+contexts and worker coroutines can be verbose. :class:`~pynng.Rep0Service`
+(see :doc:`api/service`) automates this pattern by spawning a configurable pool
+of context workers behind a simple ``async for`` interface:
+
+.. code-block:: python
+
+    import pynng
+
+    async with pynng.Rep0Service("tcp://0.0.0.0:5555", workers=4) as service:
+        async for request in service:
+            await request.reply(b"echo: " + request.data)
 
 .. _Trio: https://trio.readthedocs.io

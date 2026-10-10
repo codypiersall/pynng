@@ -1,15 +1,21 @@
 Exceptions
 ==========
 
-pynng translates all NNG error codes into Python exceptions. The root
-exception of the hierarchy is :class:`~pynng.NNGException`, which inherits
-from :class:`Exception`. All other exceptions defined in pynng inherit from
-``NNGException``.
+pynng translates all NNG error codes into Python exceptions. All exceptions
+representing NNG C error codes inherit from :class:`~pynng.NNGException`, which
+inherits from :class:`Exception` and carries an :attr:`~pynng.NNGException.errno`
+attribute.
+
+In addition, :class:`~pynng.MessageStateError` inherits directly from
+:class:`Exception` (not ``NNGException``) to indicate misuse of the
+:class:`~pynng.Message` lifecycle (e.g. accessing a message buffer after it
+has already been sent).
 
 .. automodule:: pynng.exceptions
    :members:
    :undoc-members:
    :show-inheritance:
+   :exclude-members: EXCEPTION_MAP, check_err
 
 Exception Reference Table
 -------------------------

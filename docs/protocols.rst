@@ -22,7 +22,7 @@ Pair0
 :class:`~pynng.Pair0` connects two sockets for one-to-one, bidirectional
 communication. Each side can send and receive.
 
-.. literalinclude:: snippets/pair0_sync.py
+.. literalinclude:: /snippets/pair0_sync.py
    :language: python
 
 Pair0 is the simplest protocol and a good starting point. It does not support
@@ -46,7 +46,7 @@ In polyamorous mode, you must use :meth:`~pynng.Socket.recv_msg` (which
 returns a :class:`~pynng.Message` with a :attr:`~pynng.Message.pipe`
 attribute) and :meth:`~pynng.Pipe.send` (to reply to a specific peer):
 
-.. literalinclude:: snippets/pair1_sync.py
+.. literalinclude:: /snippets/pair1_sync.py
    :language: python
 
 **Key options:**
@@ -70,17 +70,23 @@ with optional topic-based filtering.
 A subscriber must call :meth:`~pynng.Sub0.subscribe` to set which message
 prefixes it wants to receive.
 
-.. literalinclude:: snippets/pubsub_sync.py
+.. literalinclude:: /snippets/pubsub_sync.py
    :language: python
 
 **Key options and methods:**
 
 - :meth:`Sub0.subscribe(topic) <pynng.Sub0.subscribe>`: Subscribe to messages
-  starting with ``topic``. Pass ``b""`` to receive all messages.
+  starting with ``topic`` (str or bytes). Pass ``b""`` to receive all messages.
 - :meth:`Sub0.unsubscribe(topic) <pynng.Sub0.unsubscribe>`: Remove a
   subscription.
+- :meth:`Sub0.subscribe_all(topics) <pynng.Sub0.subscribe_all>`: Subscribe to
+  an iterable of topics in a single call.
+- :meth:`Sub0.unsubscribe_all() <pynng.Sub0.unsubscribe_all>`: Unsubscribe
+  from all current subscriptions atomically.
+- :attr:`Sub0.subscriptions <pynng.Sub0.subscriptions>`: Return a ``frozenset``
+  of current active subscriptions (as bytes).
 - The ``topics`` keyword argument in the Sub0 constructor accepts a string,
-  bytes, or list to subscribe to at creation time::
+  bytes, or iterable to subscribe to at creation time::
 
       sub = Sub0(dial=address, topics=[b"weather:", b"sports:"])
 
@@ -102,7 +108,7 @@ Req/Rep (Request-Reply)
 :class:`~pynng.Rep0` receives a request and sends a reply. The protocol
 enforces strict send/receive alternation.
 
-.. literalinclude:: snippets/reqrep_sync.py
+.. literalinclude:: /snippets/reqrep_sync.py
    :language: python
 
 **Key options:**
@@ -157,8 +163,12 @@ For concurrent requests, use :class:`~pynng.Context`:
   :class:`~pynng.BadState`.
 - Calling ``send()`` on a Rep0 before ``recv()`` raises
   :class:`~pynng.BadState`.
-- Only Req0 and Rep0 support :class:`~pynng.Context`. Other protocols raise
-  an error.
+- :class:`~pynng.Context` is supported on :class:`~pynng.Req0`,
+  :class:`~pynng.Rep0`, :class:`~pynng.Surveyor0`, and
+  :class:`~pynng.Respondent0`. Other protocols raise
+  :class:`~pynng.NotSupported`.
+- For an asynchronous Rep0 server, consider :class:`~pynng.Rep0Service`
+  (see :doc:`api/service`), which handles context pooling automatically.
 
 Push/Pull (Pipeline)
 --------------------
@@ -170,7 +180,7 @@ fan-in result collection (many producers, one collector).
 connected :class:`~pynng.Pull0` sockets. Each message goes to exactly one
 puller.
 
-.. literalinclude:: snippets/pushpull_sync.py
+.. literalinclude:: /snippets/pushpull_sync.py
    :language: python
 
 **Gotchas:**
@@ -192,7 +202,7 @@ window. Think "asking a question to a room" rather than a single peer.
 :class:`~pynng.Respondent0` sockets and collects responses until the survey
 expires.
 
-.. literalinclude:: snippets/surveyor_sync.py
+.. literalinclude:: /snippets/surveyor_sync.py
    :language: python
 
 **Key options:**
@@ -218,7 +228,7 @@ every other node.
 :class:`~pynng.Bus0` sends a message to all *directly connected* peers. To
 build a full mesh, every node must connect to every other node.
 
-.. literalinclude:: snippets/bus0_sync.py
+.. literalinclude:: /snippets/bus0_sync.py
    :language: python
 
 **Gotchas:**
