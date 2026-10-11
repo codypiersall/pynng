@@ -3,13 +3,13 @@ Provides a Pythonic interface to cffi nng bindings
 """
 
 
-import atexit
 import logging
+import atexit
 import threading
 
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, NNGException, Closed, NoEntry
+from .exceptions import check_err, Closed, NoEntry
 from . import options
 from . import _aio
 from . import _base
@@ -192,14 +192,25 @@ class Socket(_base.Socket):
         *,
         name=None,
         tls_config=None,
+        listen=None,
+        dial=None,
+        block_on_dial=None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(
+            listen=None,
+            dial=None,
+            block_on_dial=block_on_dial,
+            **kwargs,
+        )
         if tls_config is not None:
             self.tls_config = tls_config
         if name is not None:
             self.name = name
-
+        if listen is not None:
+            self.listen(listen)
+        if dial is not None:
+            self.dial(dial, block=block_on_dial)
     def close(self):
         """Close the socket, freeing all system resources.
 

@@ -413,9 +413,6 @@ class Socket:
         self._handle = handle
         version_tag = self._version_tag
         sock_id = _lib.nng_socket_id(self.socket)
-        # Store weak reference to self in the active handles registry so pipe
-        # callbacks can verify the socket is alive without preventing garbage
-        # collection. The CFFI handle itself is held in self._handle.
         with _active_handles_lock:
             _active_handles[(version_tag, sock_id)] = weakref.ref(self)
 
@@ -643,7 +640,7 @@ class Socket:
     def _remove_pipe(self, lib_pipe):
         _lib = self._lib
         pipe_id = _lib.nng_pipe_id(lib_pipe)
-        del self._pipes[pipe_id]
+        self._pipes.pop(pipe_id, None)
 
     # Subclasses can override these to return version-specific classes.
     _context_class = None

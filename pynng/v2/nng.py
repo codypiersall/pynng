@@ -453,6 +453,14 @@ class Pipe(_base.Pipe):
         check_err(lib.nng_pipe_peer_addr(self.pipe, sa))
         return pynng.sockaddr._nng_sockaddr(sa)
 
+    @property
+    def scheme(self):
+        """The transport scheme for this pipe (e.g. 'tcp', 'ipc')."""
+        scheme_p = ffi.new("char **")
+        check_err(lib.nng_pipe_get_scheme(self.pipe, scheme_p))
+        return ffi.string(scheme_p[0]).decode()
+
+
 
 class Message(_base.Message):
     """v2 message.

@@ -284,3 +284,33 @@ def test_tls_server_name_set():
     tls = TLSConfig(TLSConfig.MODE_CLIENT)
     tls.set_server_name("example.com")
 
+
+def test_socket_init_with_tls_config_and_listen():
+    """Socket.__init__ properly configures tls_config before listening/dialing."""
+    c_server = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_key_string=SERVER_KEY,
+        own_cert_string=SERVER_CERT,
+        server_name="localhost",
+    )
+    with Pair0(
+        listen=LISTEN_URL,
+        tls_config=c_server,
+        recv_timeout=FAST_TIMEOUT,
+        send_timeout=FAST_TIMEOUT,
+    ) as server:
+        c_client = TLSConfig(
+            TLSConfig.MODE_CLIENT,
+            ca_string=CA_CERT,
+            server_name="localhost",
+        )
+        with Pair0(
+            dial=_tls_dial_url(server),
+            tls_config=c_client,
+            recv_timeout=FAST_TIMEOUT,
+            send_timeout=FAST_TIMEOUT,
+        ) as client:
+            client.send(BYTES)
+            assert server.recv() == BYTES
+
+

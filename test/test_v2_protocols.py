@@ -289,3 +289,16 @@ def test_v2_message_memory_safety():
     assert msg.bytes == b"test data"
     del msg
     gc.collect()
+
+
+def test_v2_pipe_scheme():
+    """Verify Pipe.scheme returns the transport scheme in v2."""
+    addr = random_addr()
+    with v2.Pair0(listen=addr) as s0, v2.Pair0(dial=addr) as s1:
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
+        p0 = s0.pipes[0]
+        p1 = s1.pipes[0]
+        assert p0.scheme == "inproc"
+        assert p1.scheme == "inproc"
+
