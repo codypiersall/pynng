@@ -147,7 +147,8 @@ WebSocket (``ws://``, ``wss://``)
 **Address format:** ``ws://host:port/path`` or ``wss://host:port/path``
 
 The WebSocket transport allows NNG sockets to communicate over WebSockets.
-The ``wss://`` scheme uses TLS-encrypted WebSockets (see :doc:`tls`).
+The ``ws://`` scheme provides unencrypted WebSocket transport, while the
+``wss://`` scheme provides TLS-encrypted WebSocket communication (see :doc:`tls`).
 
 **Examples:**
 
@@ -158,26 +159,54 @@ The ``wss://`` scheme uses TLS-encrypted WebSockets (see :doc:`tls`).
     # Plain WebSocket
     with pynng.Pair0(listen="ws://127.0.0.1:8080/api") as server, \
          pynng.Pair0(dial="ws://127.0.0.1:8080/api") as client:
-        client.send(b"hello via WebSocket")
+        client.send(b"hello via plain WebSocket")
         print(server.recv())
+
+    # Secure WebSocket (wss://) with TLSConfig
+    from pynng import Pair0, TLSConfig
+
+    server_tls = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        cert_key_file="/path/to/server_cert_key.pem",
+        server_name="localhost",
+    )
+    client_tls = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        ca_files=["/path/to/ca.crt"],
+        server_name="localhost",
+    )
+
+    with Pair0(listen="wss://127.0.0.1:8443/api", tls_config=server_tls) as server, \
+         Pair0(dial="wss://127.0.0.1:8443/api", tls_config=client_tls) as client:
+        client.send(b"hello via secure WebSocket")
+        print(server.recv())  # b'hello via secure WebSocket'
 
 **When to use:**
 
 - Communication with browser-based clients (using a JavaScript WebSocket
   client).
-- Traversing firewalls and proxies that allow HTTP/WebSocket traffic but
-  block raw TCP.
+- Traversing firewalls, corporate proxies, and reverse proxies (e.g. Nginx,
+  Envoy, Cloudflare) that permit HTTP/HTTPS/WebSocket traffic but filter raw
+  TCP.
+- End-to-end encryption for WebSocket streams using standard TLS certificates
+  and authentication.
 
 **Platform notes:**
 
-- Works on all platforms.
+- Works on all platforms (Linux, macOS, Windows).
 - The path component (``/api`` in the example) must match between listener
   and dialer.
-- For TLS-encrypted WebSockets (``wss://``), configure TLS as described in
-  :doc:`tls`.
+- For TLS-encrypted WebSockets (``wss://``), sockets require a valid
+  :class:`~pynng.TLSConfig`. You can pass ``tls_config`` directly to the socket
+  constructor along with ``listen`` or ``dial``, or assign it to the
+  ``tls_config`` attribute before listening/dialing.
+- Certificate hostname verification follows RFC-6455 and standard TLS rules:
+  the client's ``server_name`` in :class:`~pynng.TLSConfig` must match the
+  Common Name (CN) or Subject Alternative Name (SAN) of the server certificate.
 
 **Performance:** Slightly more overhead than raw TCP due to the WebSocket
 framing layer, but comparable for most workloads.
+
 
 Abstract Sockets (``abstract://``)
 ----------------------------------

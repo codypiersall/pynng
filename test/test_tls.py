@@ -296,6 +296,7 @@ def test_tls_server_name_set():
     tls.set_server_name("example.com")
 
 
+@pytest.mark.requires_tls
 def test_socket_init_with_tls_config_and_listen():
     """Socket.__init__ properly configures tls_config before listening/dialing."""
     c_server = TLSConfig(
@@ -323,5 +324,77 @@ def test_socket_init_with_tls_config_and_listen():
         ) as client:
             client.send(BYTES)
             assert server.recv() == BYTES
+
+
+@pytest.mark.requires_tls
+def test_wss_roundtrip():
+    """Verify bidirectional message transfer over WebSocket Secure (wss://)."""
+    import socket
+
+    c_server = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_key_string=SERVER_KEY,
+        own_cert_string=SERVER_CERT,
+        server_name="localhost",
+    )
+    c_client = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        ca_string=CA_CERT,
+        server_name="localhost",
+    )
+    with Pair0(recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT) as server, Pair0(
+        recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT
+    ) as client:
+        server.tls_config = c_server
+        client.tls_config = c_client
+
+        server.listen("wss://127.0.0.1:0/ws_path")
+        sa = server.listeners[0].local_address
+        port = socket.ntohs(sa.port)
+
+        client.dial(f"wss://127.0.0.1:{port}/ws_path")
+
+        client.send(BYTES)
+        assert server.recv() == BYTES
+        server.send(BYTES)
+        assert client.recv() == BYTES
+
+
+@pytest.mark.requires_tls
+def test_wss_constructor_init():
+    """Verify Pair0 constructor properly applies tls_config when using listen/dial kwargs on wss://."""
+    import socket
+
+    c_server = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_key_string=SERVER_KEY,
+        own_cert_string=SERVER_CERT,
+        server_name="localhost",
+    )
+    c_client = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        ca_string=CA_CERT,
+        server_name="localhost",
+    )
+    with Pair0(
+        listen="wss://127.0.0.1:0/test_init",
+        tls_config=c_server,
+        recv_timeout=FAST_TIMEOUT,
+        send_timeout=FAST_TIMEOUT,
+    ) as server:
+        sa = server.listeners[0].local_address
+        port = socket.ntohs(sa.port)
+
+        with Pair0(
+            dial=f"wss://127.0.0.1:{port}/test_init",
+            tls_config=c_client,
+            recv_timeout=FAST_TIMEOUT,
+            send_timeout=FAST_TIMEOUT,
+        ) as client:
+            client.send(BYTES)
+            assert server.recv() == BYTES
+            server.send(BYTES)
+            assert client.recv() == BYTES
+
 
 
