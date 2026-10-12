@@ -119,7 +119,7 @@ if(NNG_REV STREQUAL "v1.11")
     GIT_REPOSITORY ${NNG_REPO}
     GIT_TAG ${NNG_REV}
     GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/nng-mbedtls-hostname.patch
+    PATCH_COMMAND git apply --check ${CMAKE_CURRENT_SOURCE_DIR}/patches/nng-mbedtls-hostname.patch && git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/nng-mbedtls-hostname.patch || true
   )
 else()
   FetchContent_Declare(

@@ -24,7 +24,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           architecture: x64
       - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
       - run: sudo apt update
       - run: sudo apt install -y ninja-build libclang-dev
       - run: uv pip install --system -v -e '.[dev]'

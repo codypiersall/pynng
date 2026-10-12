@@ -151,4 +151,4 @@ The name assigned can be retrieved using the ``NNG_OPT_LOCADDR`` option.
         # The address can be used for dialing from another process
         # dialer = sock.dial("abstract://my_test_socket")
 
-For a complete example, see :doc:`../examples/abstract`.
+For a complete example, see `examples/abstract.py <https://github.com/codypiersall/pynng/blob/master/examples/abstract.py>`_.

@@ -11,7 +11,8 @@ Ergonomic bindings for [nanomsg next generation] \(nng), in Python.
 pynng provides a nice interface on top of the full power of nng.  nng, and
 therefore pynng, make it easy to communicate between processes on a single
 computer or computers across a network.  This library is compatible with Python
-≥ 3.6.  nng is the [rewriting](https://nanomsg.github.io/nng/RATIONALE.html) of
+≥ 3.10 (Python 3.10 is deprecated following its October 2026 EOL; Python 3.11+
+is recommended).  nng is the [rewriting](https://nanomsg.github.io/nng/RATIONALE.html) of
 [Nanomsg](https://nanomsg.org/), which is the spiritual successor to [ZeroMQ](http://zeromq.org/).
 
 Goals
@@ -113,6 +114,14 @@ Examples
 Some examples (okay, just two examples) are available in the
 [examples](https://github.com/codypiersall/pynng/tree/master/examples)
 directory.
+
+Python Version Support & Deprecation Policy
+------------------------------------------
+
+`pynng` supports Python 3.10, 3.11, 3.12, 3.13, and 3.14. Following the official Python release lifecycle:
+
+* **Python 3.10**: Reached end-of-life (EOL) in October 2026. Support for Python 3.10 is now deprecated and will be removed in a future release. Users are strongly encouraged to upgrade to Python 3.11 or newer.
+* **Python 3.11–3.14**: Fully supported and tested across Linux, macOS, and Windows.
 
 Git Branch Policy
 -----------------

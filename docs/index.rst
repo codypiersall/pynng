@@ -76,7 +76,8 @@ On Linux, Windows, and macOS, a quick
 
    pip3 install pynng
 
-should do the trick.  pynng works on Python 3.6+.
+should do the trick.  pynng works on Python 3.10+ (Python 3.10 is deprecated following
+its October 2026 EOL; Python 3.11+ is recommended).
 
 
 Getting Started

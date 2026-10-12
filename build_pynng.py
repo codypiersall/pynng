@@ -71,6 +71,9 @@ def generate_cdef() -> tuple[str, list[str]]:
 
     # Convert IR to CFFI cdef string
     cdef = header_to_cffi(header, exclude_patterns=EXCLUDE_PATTERNS)
+    # Fix anonymous enum: nng.h defines `typedef enum { ... } nng_pipe_ev;`
+    # without a tag name, so `enum nng_pipe_ev` is an incomplete type in C.
+    cdef = re.sub(r"\benum\s+nng_pipe_ev\b", "nng_pipe_ev", cdef)
 
     # Extract additional #define constants from nng.h via regex
     # (libclang can miss macro values that involve expressions)
