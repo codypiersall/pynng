@@ -16,8 +16,9 @@ import sniffio
 import pynng
 from ._nng import ffi, lib
 from .exceptions import check_err, NNGException, Closed, NoEntry
-from . import options
 from . import _aio
+from . import options
+from .stats import stats, socket_stats, Stat
 
 # Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
@@ -174,6 +175,21 @@ Pub0 Sub0
 Req0 Rep0
 Socket
 Surveyor0 Respondent0
+RawBus0
+RawPair0
+RawPair1
+RawPush0
+RawPull0
+RawPub0
+RawSub0
+RawReq0
+RawRep0
+RawSurveyor0
+RawRespondent0
+device
+adevice
+stats
+Stat
 """.split()
 
 # Register an atexit handler to call the nng_fini() cleanup function.
@@ -195,13 +211,16 @@ def _ensure_can_send(thing):
     It's easy to accidentally pass in a str instead of bytes when send()ing.
     This gives a more informative message if a ``str`` was accidentally passed
     to a send method.
-
     """
-    # at some point it might be nice to check for the specific types we **can**
-    # send...
     if isinstance(thing, str):
         raise ValueError(
             "Cannot send type str. " 'Maybe you left out a ".encode()" somewhere?'
+        )
+    try:
+        memoryview(thing)
+    except TypeError:
+        raise TypeError(
+            f"Cannot send object of type {type(thing).__name__}; must support the buffer protocol"
         )
 
 
@@ -359,12 +378,9 @@ class Socket:
           ``NNG_OPT_SOCKNAME``.  This is useful for debugging purposes.
         * **raw** (bool): A boolean, indicating whether the socket is raw or cooked.
           Returns ``True`` if the socket is raw, else ``False``.  This property
-          is read-only.  Corresponds to library option ``NNG_OPT_RAW``.  For
-          more information see `nng's documentation.
-          <https://nanomsg.github.io/nng/man/v1.0.1/nng.7.html#raw_mode>`_
-          Note that currently, pynng does not support ``raw`` mode sockets, but
-          we intend to `in the future
-          <https://github.com/codypiersall/pynng/issues/35>`_:
+          is read-only.  Corresponds to library option ``NNG_OPT_RAW``.
+        * **ttl_max** (int): The maximum time-to-live / hop count for forwarded
+          messages through devices. Corresponds to library option ``NNG_OPT_MAXTTL``.
         * **protocol** (int): Read-only option which returns the 16-bit number
           of the socket's protocol.
         * **protocol_name** (str): Read-only option which returns the name of the
@@ -415,9 +431,6 @@ class Socket:
 
     """
 
-    # TODO: Do we need to document ttl_max?  We're not supporting nng_device
-    # yet, so I guess not?
-
     # the following options correspond to nng options documented at
     # https://nanomsg.github.io/nng/man/v1.0.1/nng_options.5.html
     name = StringOption("socket-name")
@@ -454,6 +467,7 @@ class Socket:
         reconnect_time_min=None,
         reconnect_time_max=None,
         opener=None,
+        raw=False,
         block_on_dial=None,
         name=None,
         tls_config=None,
@@ -475,7 +489,9 @@ class Socket:
         )
         if opener is not None:
             self._opener = opener
-        if opener is None and not hasattr(self, "_opener"):
+        elif raw and hasattr(self, "_raw_opener"):
+            self._opener = self._raw_opener
+        elif not hasattr(self, "_opener"):
             raise TypeError("Cannot directly instantiate a Socket.  Try a subclass.")
         check_err(self._opener(self._socket))
         if tls_config is not None:
@@ -633,8 +649,6 @@ class Socket:
             the socket, the function will raise ``pynng.TryAgain``.
 
         """
-        # TODO: someday we should support some kind of recv_into() operation
-        # where the user provides the data buffer.
         flags = lib.NNG_FLAG_ALLOC
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
@@ -646,12 +660,34 @@ class Socket:
         lib.nng_free(data[0], size_t[0])
         return recvd
 
+    def recv_into(self, buffer, block=True):
+        """Receive data directly into the provided writable buffer.
+
+        Args:
+            buffer: A writable buffer object (e.g. bytearray, memoryview).
+            block: If False, raises pynng.TryAgain immediately if no data is available.
+
+        Returns:
+            int: The number of bytes written to buffer.
+        """
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = self.recv_msg(block=block)
+        with msg._mem_freed_lock:
+            body = lib.nng_msg_body(msg._nng_msg)
+            msg_len = lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = ffi.from_buffer(m)
+            ffi.memmove(c_buf, body, nbytes)
+        return nbytes
+
     def send(self, data, block=True):
         """Sends ``data`` on socket.
 
         Args:
 
-          data: either ``bytes`` or ``bytearray``
+          data: bytes, bytearray, memoryview, or any buffer-protocol object.
 
           block: If block is True (the default), the function will
             not return until the operation is completed or times out.
@@ -662,13 +698,42 @@ class Socket:
         flags = 0
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
-        err = lib.nng_send(self.socket, data, len(data), flags)
+        if isinstance(data, bytes):
+            c_buf = data
+        else:
+            c_buf = ffi.from_buffer(data)
+        err = lib.nng_send(self.socket, c_buf, len(data), flags)
         check_err(err)
 
     async def arecv(self):
         """The asynchronous version of :meth:`~Socket.recv`"""
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.arecv()
+
+    async def arecv_into(self, buffer):
+        """Asynchronously receive data directly into the provided writable buffer.
+
+        Args:
+            buffer: A writable buffer object (e.g. bytearray, memoryview).
+
+        Returns:
+            int: The number of bytes written to buffer.
+        """
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = await self.arecv_msg()
+        with msg._mem_freed_lock:
+            body = lib.nng_msg_body(msg._nng_msg)
+            msg_len = lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = ffi.from_buffer(m)
+            ffi.memmove(c_buf, body, nbytes)
+        return nbytes
+
+    def stats(self):
+        """Return runtime statistics for this socket."""
+        return socket_stats(self)
 
     async def asend(self, data):
         """Asynchronous version of :meth:`~Socket.send`."""
@@ -921,6 +986,10 @@ class Bus0(Socket):
     """
 
     _opener = lib.nng_bus0_open
+    _raw_opener = lib.nng_bus0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pair0(Socket):
@@ -947,6 +1016,10 @@ class Pair0(Socket):
     """
 
     _opener = lib.nng_pair0_open
+    _raw_opener = lib.nng_pair0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pair1(Socket):
@@ -990,12 +1063,18 @@ class Pair1(Socket):
 
     """
 
-    def __init__(self, *, polyamorous=False, **kwargs):
-        if polyamorous:
-            kwargs["opener"] = lib.nng_pair1_open_poly
-        else:
-            kwargs["opener"] = lib.nng_pair1_open
-        super().__init__(**kwargs)
+    _opener = lib.nng_pair1_open
+    _raw_opener = lib.nng_pair1_open_raw
+
+    def __init__(self, *, polyamorous=False, raw=False, **kwargs):
+        if "opener" not in kwargs:
+            if raw:
+                kwargs["opener"] = self._raw_opener
+            elif polyamorous:
+                kwargs["opener"] = lib.nng_pair1_open_poly
+            else:
+                kwargs["opener"] = self._opener
+        super().__init__(raw=raw, **kwargs)
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
@@ -1022,6 +1101,10 @@ class Push0(Socket):
     """
 
     _opener = lib.nng_push0_open
+    _raw_opener = lib.nng_push0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pull0(Socket):
@@ -1042,6 +1125,10 @@ class Pull0(Socket):
     """
 
     _opener = lib.nng_pull0_open
+    _raw_opener = lib.nng_pull0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pub0(Socket):
@@ -1062,6 +1149,10 @@ class Pub0(Socket):
     """
 
     _opener = lib.nng_pub0_open
+    _raw_opener = lib.nng_pub0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Sub0(Socket):
@@ -1100,9 +1191,10 @@ class Sub0(Socket):
     """
 
     _opener = lib.nng_sub0_open
+    _raw_opener = lib.nng_sub0_open_raw
 
-    def __init__(self, *, topics=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, topics=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         self._subscriptions = set()
         self._sub_lock = threading.RLock()
         if topics is None:
@@ -1208,9 +1300,10 @@ class Req0(Socket):
 
     resend_time = MsOption("req:resend-time")
     _opener = lib.nng_req0_open
+    _raw_opener = lib.nng_req0_open_raw
 
-    def __init__(self, *, resend_time=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, resend_time=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         if resend_time is not None:
             self.resend_time = resend_time
 
@@ -1241,6 +1334,10 @@ class Rep0(Socket):
     """
 
     _opener = lib.nng_rep0_open
+    _raw_opener = lib.nng_rep0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Surveyor0(Socket):
@@ -1266,10 +1363,11 @@ class Surveyor0(Socket):
     """
 
     _opener = lib.nng_surveyor0_open
+    _raw_opener = lib.nng_surveyor0_open_raw
     survey_time = MsOption("surveyor:survey-time")
 
-    def __init__(self, *, survey_time=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, survey_time=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         if survey_time is not None:
             self.survey_time = survey_time
 
@@ -1344,6 +1442,98 @@ class Respondent0(Socket):
     """
 
     _opener = lib.nng_respondent0_open
+    _raw_opener = lib.nng_respondent0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
+
+
+class RawBus0(Bus0):
+    """A raw bus0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPair0(Pair0):
+    """A raw pair0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPair1(Pair1):
+    """A raw pair1 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPush0(Push0):
+    """A raw push0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPull0(Pull0):
+    """A raw pull0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPub0(Pub0):
+    """A raw pub0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawSub0(Sub0):
+    """A raw sub0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawReq0(Req0):
+    """A raw req0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawRep0(Rep0):
+    """A raw rep0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawSurveyor0(Surveyor0):
+    """A raw surveyor0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawRespondent0(Respondent0):
+    """A raw respondent0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
 
 
 class Dialer:
@@ -1578,6 +1768,34 @@ class Context:
 
         msg = self.recv_msg()
         return msg.bytes
+
+    def recv_into(self, buffer):
+        """Receive data directly into the provided writable buffer."""
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = self.recv_msg()
+        with msg._mem_freed_lock:
+            body = lib.nng_msg_body(msg._nng_msg)
+            msg_len = lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = ffi.from_buffer(m)
+            ffi.memmove(c_buf, body, nbytes)
+        return nbytes
+
+    async def arecv_into(self, buffer):
+        """Asynchronously receive data directly into the provided writable buffer."""
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = await self.arecv_msg()
+        with msg._mem_freed_lock:
+            body = lib.nng_msg_body(msg._nng_msg)
+            msg_len = lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = ffi.from_buffer(m)
+            ffi.memmove(c_buf, body, nbytes)
+        return nbytes
 
     def send_msg(self, msg):
         """Synchronously send the :class:`Message` ``msg`` on the context."""
@@ -1896,14 +2114,25 @@ class Message:
         # `_mem_freed` is set to True.
         self._mem_freed = False
         self._mem_freed_lock = threading.Lock()
+        self._nng_msg = None
 
         if isinstance(data, ffi.CData) and ffi.typeof(data).cname == "struct nng_msg *":
             self._nng_msg = data
         else:
+            _ensure_can_send(data)
+            m = memoryview(data)
+            if isinstance(data, bytes):
+                c_buf = data
+            else:
+                c_buf = ffi.from_buffer(m)
             msg_p = ffi.new("nng_msg **")
             check_err(lib.nng_msg_alloc(msg_p, 0))
             msg = msg_p[0]
-            check_err(lib.nng_msg_append(msg, data, len(data)))
+            try:
+                check_err(lib.nng_msg_append(msg, c_buf, len(m)))
+            except Exception:
+                lib.nng_msg_free(msg)
+                raise
             self._nng_msg = msg
 
         # We may not have been given a pipe, in which case the pipe is None.
@@ -1951,9 +2180,71 @@ class Message:
         """
         return bytes(self._buffer)
 
-    def __del__(self):
+    @property
+    def header(self):
+        """Return the bytes from the message header."""
         with self._mem_freed_lock:
             if self._mem_freed:
+                raise pynng.MessageStateError(
+                    "Message header is no longer available after sending."
+                )
+            size = lib.nng_msg_header_len(self._nng_msg)
+            if size == 0:
+                return b""
+            data = ffi.cast("char *", lib.nng_msg_header(self._nng_msg))
+            return bytes(ffi.buffer(data[0:size]))
+
+    def header_append(self, data):
+        """Append data to the message header.
+
+        Args:
+            data: Any buffer-protocol object (e.g. bytes, bytearray, memoryview).
+        """
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            m = memoryview(data)
+            if isinstance(data, bytes):
+                c_buf = data
+            else:
+                c_buf = ffi.from_buffer(m)
+            check_err(lib.nng_msg_header_append(self._nng_msg, c_buf, len(m)))
+
+    def header_trim(self, sz):
+        """Trim sz bytes from the start of the message header."""
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            check_err(lib.nng_msg_header_trim(self._nng_msg, sz))
+
+    def header_chop(self, sz):
+        """Chop sz bytes from the end of the message header."""
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            check_err(lib.nng_msg_header_chop(self._nng_msg, sz))
+
+    def header_clear(self):
+        """Clear all data from the message header."""
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            lib.nng_msg_header_clear(self._nng_msg)
+
+    def copy(self):
+        """Create a duplicate copy of this message."""
+        with self._mem_freed_lock:
+            if self._mem_freed:
+                raise pynng.MessageStateError(
+                    "Cannot copy a message that has already been sent."
+                )
+            dup_p = ffi.new("nng_msg **")
+            check_err(lib.nng_msg_dup(dup_p, self._nng_msg))
+            return Message(dup_p[0], pipe=self._pipe)
+
+    def dup(self):
+        """Alias for :meth:`copy`."""
+        return self.copy()
+
+    def __del__(self):
+        with self._mem_freed_lock:
+            if self._mem_freed or getattr(self, "_nng_msg", None) is None:
                 return
             else:
                 lib.nng_msg_free(self._nng_msg)
@@ -1971,3 +2262,45 @@ class Message:
         if self._mem_freed:
             msg = "Attempted to send the same message more than once."
             raise pynng.MessageStateError(msg)
+
+
+def device(s1, s2=None):
+    """Forward messages between socket s1 and socket s2 synchronously.
+
+    If s2 is None, messages are forwarded in only one direction (from s1, which
+    must be able to receive, to whatever destination). This function blocks
+    until an error occurs or one of the sockets is closed.
+
+    Args:
+        s1: A :class:`Socket` instance.
+        s2: A :class:`Socket` instance or None.
+
+    Raises:
+        Closed: When one of the sockets is closed.
+        NNGException: If an NNG error occurs.
+    """
+    s1_raw = s1.socket if isinstance(s1, Socket) else s1
+    if s2 is not None:
+        s2_raw = s2.socket if isinstance(s2, Socket) else s2
+    else:
+        s2_raw = ffi.new("nng_socket *", {"id": 0})[0]
+    check_err(lib.nng_device(s1_raw, s2_raw))
+
+
+async def adevice(s1, s2=None, *, async_backend=None):
+    """Forward messages between socket s1 and socket s2 asynchronously.
+
+    Can be cancelled cleanly in asyncio and trio tasks.
+
+    Args:
+        s1: A :class:`Socket` instance.
+        s2: A :class:`Socket` instance or None.
+        async_backend: Async backend name ("asyncio" or "trio"), or None to auto-detect.
+
+    Raises:
+        Closed: When one of the sockets is closed.
+        NNGException: If an NNG error occurs.
+    """
+    with _aio.DeviceAIO(s1, s2, async_backend=async_backend) as dev:
+        await dev.run()
+
