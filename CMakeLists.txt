@@ -55,7 +55,7 @@ set(MBEDTLS_REV "v3.6.5" CACHE STRING "Revision of mbedTLS to use")
 
 # v2-specific repository settings
 set(NNG_V2_REPO "https://github.com/nanomsg/nng" CACHE STRING "URL of the NNG v2 repository")
-set(NNG_V2_REV "v2.0.0-beta.2" CACHE STRING "Revision of NNG v2 to use")
+set(NNG_V2_REV "v2.0.0" CACHE STRING "Revision of NNG v2 to use")
 
 # Function to download and build dependencies
 include(FetchContent)
