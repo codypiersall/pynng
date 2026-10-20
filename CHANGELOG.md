@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
 
 ### Fixed
+- `ffi.from_handle` dangling pointer in pipe callbacks: module-level `_active_handles` registry keeps handles alive until `Socket.close()` completes, with try/except guard in `_nng_pipe_cb`
+- `_aio_map` thread safety for free-threaded Python (3.13t/3.14t): all accesses protected by `_aio_map_lock`
+- `AIOHelper._free()` potential deadlock during GC: cancel pending AIO operations before calling `nng_aio_free()` to prevent callback/GIL deadlock
+- Pipe callback list mutations now protected by `_pipe_notify_lock` for thread safety under free-threaded Python
+- Make `Socket.close()` idempotent and thread-safe with `_close_lock` and `_socket_closed` flag
 - `_setopt_size` and `_setopt_ms` now check error returns from NNG C library instead of silently swallowing failures
 - `Message._buffer` raises `MessageStateError` after send instead of returning `None` (which caused confusing `TypeError`)
 - `_NNGOption.__get__` error message corrected from "cannot be set" to "is write-only"
