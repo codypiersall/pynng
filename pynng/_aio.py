@@ -275,16 +275,16 @@ class DeviceAIO:
         self.aio = None
         self.s1 = s1
         self.s2 = s2
-        sock1 = s1.socket if isinstance(s1, pynng.Socket) else s1
+        sock1 = s1.socket if hasattr(s1, "socket") else s1
         if s2 is None:
             sock2 = ffi.new("nng_socket *")[0]
         else:
-            sock2 = s2.socket if isinstance(s2, pynng.Socket) else s2
+            sock2 = s2.socket if hasattr(s2, "socket") else s2
         self._sock1 = sock1
         self._sock2 = sock2
 
         if async_backend is None:
-            if isinstance(s1, pynng.Socket) and s1._async_backend is not None:
+            if hasattr(s1, "_async_backend") and s1._async_backend is not None:
                 async_backend = s1._async_backend
             else:
                 async_backend = sniffio.current_async_library()

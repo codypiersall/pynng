@@ -791,45 +791,89 @@ class Respondent0(Socket):
 class RawBus0(Bus0):
     """A raw bus0 socket."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
 
 class RawPair0(Pair0):
     """A raw pair0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
 
 
 class RawPair1(Pair1):
     """A raw pair1 socket."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
 
 class RawPush0(Push0):
     """A raw push0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
 
 
 class RawPull0(Pull0):
     """A raw pull0 socket."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
 
 class RawPub0(Pub0):
     """A raw pub0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
 
 
 class RawSub0(Sub0):
     """A raw sub0 socket."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
 
 class RawReq0(Req0):
     """A raw req0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
 
 
 class RawRep0(Rep0):
     """A raw rep0 socket."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
 
 class RawSurveyor0(Surveyor0):
     """A raw surveyor0 socket."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
 
 class RawRespondent0(Respondent0):
     """A raw respondent0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
 
 
 class Dialer(_base.Dialer):
