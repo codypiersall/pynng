@@ -4,15 +4,34 @@ Provides a Pythonic interface to cffi nng bindings
 
 
 import logging
-import threading
 import atexit
+import threading
 
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err
+from .exceptions import check_err, NNGException, Closed, NoEntry
 from . import options
+from .stats import stats, socket_stats, Stat
 from . import _aio
-
+from . import _base
+from ._base import (
+    _active_handles,
+    _active_handles_lock,
+    _ensure_can_send,
+    _do_callbacks,
+    to_char,
+    PipeEvent,
+    PipeEventStream,
+    _NNGOption,
+    IntOption,
+    MsOption,
+    SockAddrOption,
+    SizeOption,
+    StringOption,
+    BooleanOption,
+    PointerOption,
+    NotImplementedOption,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +45,22 @@ Pub0 Sub0
 Req0 Rep0
 Socket
 Surveyor0 Respondent0
+RawBus0
+RawPair0
+RawPair1
+RawPush0
+RawPull0
+RawPub0
+RawSub0
+RawReq0
+RawRep0
+RawSurveyor0
+RawRespondent0
+device
+adevice
+stats
+socket_stats
+Stat
 """.split()
 
 # Register an atexit handler to call the nng_fini() cleanup function.
@@ -42,122 +77,7 @@ def _pynng_atexit():
 atexit.register(_pynng_atexit)
 
 
-def _ensure_can_send(thing):
-    """
-    It's easy to accidentally pass in a str instead of bytes when send()ing.
-    This gives a more informative message if a ``str`` was accidentally passed
-    to a send method.
-
-    """
-    # at some point it might be nice to check for the specific types we **can**
-    # send...
-    if isinstance(thing, str):
-        raise ValueError(
-            "Cannot send type str. " 'Maybe you left out a ".encode()" somewhere?'
-        )
-
-
-def to_char(charlike, add_null_term=False):
-    """Convert str or bytes to char*."""
-    # fast path for stuff that doesn't need to be changed.
-    if isinstance(charlike, ffi.CData):
-        return charlike
-    if isinstance(charlike, str):
-        charlike = charlike.encode()
-    if add_null_term:
-        charlike = charlike + b"\x00"
-    charlike = ffi.new("char[]", charlike)
-    return charlike
-
-
-class _NNGOption:
-    """A descriptor for more easily getting/setting NNG option."""
-
-    # this class should not be instantiated directly!  Instantiation will work,
-    # but getting/setting will fail.
-
-    # subclasses set _getter and _setter to the module-level getter and setter
-    # functions
-    _getter = None
-    _setter = None
-
-    def __init__(self, option_name):
-        self.option = to_char(option_name)
-
-    def __get__(self, instance, owner):
-        # have to look up the getter on the class
-        if self._getter is None:
-            raise TypeError(f"{self.__class__} is write-only")
-        return self.__class__._getter(instance, self.option)
-
-    def __set__(self, instance, value):
-        if self._setter is None:
-            raise TypeError(f"{self.__class__} is readonly")
-        self.__class__._setter(instance, self.option, value)
-
-
-class IntOption(_NNGOption):
-    """Descriptor for getting/setting integer options"""
-
-    _getter = options._getopt_int
-    _setter = options._setopt_int
-
-
-class MsOption(_NNGOption):
-    """Descriptor for getting/setting durations (in milliseconds)"""
-
-    _getter = options._getopt_ms
-    _setter = options._setopt_ms
-
-
-class SockAddrOption(_NNGOption):
-    """Descriptor for getting/setting durations (in milliseconds)"""
-
-    _getter = options._getopt_sockaddr
-
-
-class SizeOption(_NNGOption):
-    """Descriptor for getting/setting size_t options"""
-
-    _getter = options._getopt_size
-    _setter = options._setopt_size
-
-
-class StringOption(_NNGOption):
-    """Descriptor for getting/setting string options"""
-
-    _getter = options._getopt_string
-    _setter = options._setopt_string
-
-
-class BooleanOption(_NNGOption):
-    """Descriptor for getting/setting boolean values"""
-
-    _getter = options._getopt_bool
-    _setter = options._setopt_bool
-
-
-class PointerOption(_NNGOption):
-    """Descriptor for setting pointer values"""
-
-    _setter = options._setopt_ptr
-
-
-class NotImplementedOption(_NNGOption):
-    """Represents a currently un-implemented option in Python."""
-
-    def __init__(self, option_name, errmsg):
-        super().__init__(option_name)
-        self.errmsg = errmsg
-
-    def __get__(self, instance, owner):
-        raise NotImplementedError(self.errmsg)
-
-    def __set__(self, instance, value):
-        raise NotImplementedError(self.errmsg)
-
-
-class Socket:
+class Socket(_base.Socket):
     """
     Open a socket with one of the scalability protocols.  This should not be
     instantiated directly; instead, one of its subclasses should be used.
@@ -267,187 +187,56 @@ class Socket:
 
     """
 
-    # TODO: Do we need to document ttl_max?  We're not supporting nng_device
-    # yet, so I guess not?
+    # Set v1 CFFI lib and ffi
+    _lib = lib
+    _ffi = ffi
+    _version_tag = "v1"
 
-    # the following options correspond to nng options documented at
-    # https://nanomsg.github.io/nng/man/v1.0.1/nng_options.5.html
+    # v1-specific options (not in base class)
     name = StringOption("socket-name")
     raw = BooleanOption("raw")
     protocol = IntOption("protocol")
     protocol_name = StringOption("protocol-name")
     peer = IntOption("peer")
     peer_name = StringOption("peer-name")
-    recv_buffer_size = IntOption("recv-buffer")
-    send_buffer_size = IntOption("send-buffer")
-    recv_timeout = MsOption("recv-timeout")
-    send_timeout = MsOption("send-timeout")
-    ttl_max = IntOption("ttl-max")
-    recv_max_size = SizeOption("recv-size-max")
-    reconnect_time_min = MsOption("reconnect-time-min")
-    reconnect_time_max = MsOption("reconnect-time-max")
     recv_fd = IntOption("recv-fd")
     send_fd = IntOption("send-fd")
-    tcp_nodelay = BooleanOption("tcp-nodelay")
-    tcp_keepalive = BooleanOption("tcp-keepalive")
 
     tls_config = PointerOption("tls-config")
 
     def __init__(
         self,
         *,
-        dial=None,
-        listen=None,
-        recv_timeout=None,
-        send_timeout=None,
-        recv_buffer_size=None,
-        send_buffer_size=None,
-        recv_max_size=None,
-        reconnect_time_min=None,
-        reconnect_time_max=None,
-        opener=None,
-        block_on_dial=None,
         name=None,
         tls_config=None,
-        async_backend=None,
+        listen=None,
+        dial=None,
+        block_on_dial=None,
+        raw=False,
+        **kwargs,
     ):
-        # mapping of id: Python objects
-        self._dialers = {}
-        self._listeners = {}
-        self._pipes = {}
-        self._on_pre_pipe_add = []
-        self._on_post_pipe_add = []
-        self._on_post_pipe_remove = []
-        self._pipe_notify_lock = threading.Lock()
-        self._async_backend = async_backend
-        self._socket = ffi.new(
-            "nng_socket *",
+        super().__init__(
+            listen=None,
+            dial=None,
+            block_on_dial=block_on_dial,
+            raw=raw,
+            **kwargs,
         )
-        if opener is not None:
-            self._opener = opener
-        if opener is None and not hasattr(self, "_opener"):
-            raise TypeError("Cannot directly instantiate a Socket.  Try a subclass.")
-        check_err(self._opener(self._socket))
         if tls_config is not None:
             self.tls_config = tls_config
-        if recv_timeout is not None:
-            self.recv_timeout = recv_timeout
-        if send_timeout is not None:
-            self.send_timeout = send_timeout
-        if recv_max_size is not None:
-            self.recv_max_size = recv_max_size
-        if reconnect_time_min is not None:
-            self.reconnect_time_min = reconnect_time_min
-        if reconnect_time_max is not None:
-            self.reconnect_time_max = reconnect_time_max
-        if recv_buffer_size is not None:
-            self.recv_buffer_size = recv_buffer_size
-        if send_buffer_size is not None:
-            self.send_buffer_size = send_buffer_size
         if name is not None:
             self.name = name
-
-        # set up pipe callbacks. This **must** be called before listen/dial to
-        # avoid race conditions.
-
-        handle = ffi.new_handle(self)
-        self._handle = handle
-
-        for event in (
-            lib.NNG_PIPE_EV_ADD_PRE,
-            lib.NNG_PIPE_EV_ADD_POST,
-            lib.NNG_PIPE_EV_REM_POST,
-        ):
-            check_err(lib.nng_pipe_notify(self.socket, event, lib._nng_pipe_cb, handle))
-
         if listen is not None:
             self.listen(listen)
         if dial is not None:
             self.dial(dial, block=block_on_dial)
-
-    def dial(self, address, *, block=None):
-        """Dial the specified address.
-
-        Args:
-            address:  The address to dial.
-            block:  Whether to block or not.  There are three possible values
-              this can take:
-
-                1. If ``True``, a blocking dial is attempted.  If it fails for
-                   any reason, the dial fails and an exception is raised.
-                2. If ``False``, a non-blocking dial is started.  The dial is
-                   retried periodically in the background until it is
-                   successful.
-                3. (**Default behavior**): If ``None``, a blocking dial is
-                   first attempted. If it fails an exception is logged (using
-                   the Python logging module), then a non-blocking dial is
-                   done.
-
-        """
-        if block:
-            return self._dial(address, flags=0)
-        elif block is None:
-            try:
-                return self.dial(address, block=True)
-            except pynng.ConnectionRefused:
-                msg = "Synchronous dial failed; attempting asynchronous now"
-                logger.exception(msg)
-                return self.dial(address, block=False)
-        else:
-            return self._dial(address, flags=lib.NNG_FLAG_NONBLOCK)
-
-    def _dial(self, address, flags=0):
-        """Dial specified ``address``
-
-        ``flags`` usually do not need to be given.
-
-        """
-        dialer = ffi.new("nng_dialer *")
-        ret = lib.nng_dial(self.socket, to_char(address), dialer, flags)
-        check_err(ret)
-        # we can only get here if check_err doesn't raise
-        d_id = lib.nng_dialer_id(dialer[0])
-        py_dialer = Dialer(dialer, self)
-        self._dialers[d_id] = py_dialer
-        return py_dialer
-
-    def listen(self, address, flags=0):
-        """Listen at specified address.
-
-        ``listener`` and ``flags`` usually do not need to be given.
-
-        """
-        listener = ffi.new("nng_listener *")
-        ret = lib.nng_listen(self.socket, to_char(address), listener, flags)
-        check_err(ret)
-        # we can only get here if check_err doesn't raise
-        l_id = lib.nng_listener_id(listener[0])
-        py_listener = Listener(listener, self)
-        self._listeners[l_id] = py_listener
-        return py_listener
-
     def close(self):
-        """Close the socket, freeing all system resources."""
-        # if a TypeError occurs (e.g. a bad keyword to __init__) we don't have
-        # the attribute _socket yet.  This prevents spewing extra exceptions
-        if hasattr(self, "_socket"):
-            lib.nng_close(self.socket)
-            # cleanup the list of listeners/dialers.  A program would be likely to
-            # segfault if a user accessed the listeners or dialers after this
-            # point.
-            self._listeners = {}
-            self._dialers = {}
+        """Close the socket, freeing all system resources.
 
-    def __del__(self):
-        try:
-            self.close()
-        except (TypeError, AttributeError):
-            # During interpreter shutdown, globals (lib, ffi) may be None
-            pass
-
-    @property
-    def socket(self):
-        return self._socket[0]
+        This method is idempotent and thread-safe. It may be called multiple
+        times (e.g. via __exit__ and later __del__) without harm.
+        """
+        self._do_close(lib.nng_close)
 
     def recv(self, block=True):
         """Receive data on the socket.  If the request times out the exception
@@ -482,7 +271,7 @@ class Socket:
 
         Args:
 
-          data: either ``bytes`` or ``bytearray``
+          data: bytes, bytearray, memoryview, or any buffer-protocol object.
 
           block: If block is True (the default), the function will
             not return until the operation is completed or times out.
@@ -493,7 +282,11 @@ class Socket:
         flags = 0
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
-        err = lib.nng_send(self.socket, data, len(data), flags)
+        if isinstance(data, bytes):
+            c_buf = data
+        else:
+            c_buf = ffi.from_buffer(data)
+        err = lib.nng_send(self.socket, c_buf, len(data), flags)
         check_err(err)
 
     async def arecv(self):
@@ -507,200 +300,13 @@ class Socket:
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.asend(data)
 
-    def __enter__(self):
-        return self
+    def stats(self):
+        """Get snapshot of statistics for this socket."""
+        return socket_stats(self)
 
-    def __exit__(self, *tb_info):
-        self.close()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *tb_info):
-        """Close the socket. Delegates to synchronous close() since the
-        underlying NNG close operation is non-blocking."""
-        self.close()
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        try:
-            return await self.arecv()
-        except pynng.Closed:
-            raise StopAsyncIteration
-
-    async def aclose(self):
-        """Asynchronous close. Delegates to the synchronous :meth:`close`
-        since the underlying NNG close operation is non-blocking."""
-        self.close()
-
-    @property
-    def dialers(self):
-        """A list of the active dialers"""
-        return tuple(self._dialers.values())
-
-    @property
-    def listeners(self):
-        """A list of the active listeners"""
-        return tuple(self._listeners.values())
-
-    @property
-    def pipes(self):
-        """A list of the active pipes"""
-        with self._pipe_notify_lock:
-            return tuple(self._pipes.values())
-
-    def _add_pipe(self, lib_pipe):
-        # this is only called inside the pipe callback.
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-
-        # If the pipe already exists in the Socket, don't create a new one
-        if pipe_id not in self._pipes:
-            pipe = Pipe(lib_pipe, self)
-            self._pipes[pipe_id] = pipe
-
-        return self._pipes[pipe_id]
-
-    def _remove_pipe(self, lib_pipe):
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        del self._pipes[pipe_id]
-
-    def new_context(self):
-        """Return a new :class:`Context` for this socket."""
-        return Context(self)
-
-    def add_pre_pipe_connect_cb(self, callback):
-        """
-        Add a callback which will be called before a Pipe is connected to a
-        Socket.  You can add as many callbacks as you want, and they will be
-        called in the order they were added.
-
-        The callback provided must accept a single argument: a Pipe.  The
-        socket associated with the pipe can be accessed through the pipe's
-        ``socket`` attribute.  If the pipe is closed, the callbacks for
-        post_pipe_connect and post_pipe_remove will not be called.
-
-        """
-        self._on_pre_pipe_add.append(callback)
-
-    def add_post_pipe_connect_cb(self, callback):
-        """
-        Add a callback which will be called after a Pipe is connected to a
-        Socket.  You can add as many callbacks as you want, and they will be
-        called in the order they were added.
-
-        The callback provided must accept a single argument: a :class:`Pipe`.
-
-        """
-        self._on_post_pipe_add.append(callback)
-
-    def add_post_pipe_remove_cb(self, callback):
-        """
-        Add a callback which will be called after a Pipe is removed from a
-        Socket.  You can add as many callbacks as you want, and they will be
-        called in the order they were added.
-
-        The callback provided must accept a single argument: a :class:`Pipe`.
-
-        """
-        self._on_post_pipe_remove.append(callback)
-
-    def remove_pre_pipe_connect_cb(self, callback):
-        """Remove ``callback`` from the list of callbacks for pre pipe connect
-        events
-
-        """
-        self._on_pre_pipe_add.remove(callback)
-
-    def remove_post_pipe_connect_cb(self, callback):
-        """Remove ``callback`` from the list of callbacks for post pipe connect
-        events
-
-        """
-        self._on_post_pipe_add.remove(callback)
-
-    def remove_post_pipe_remove_cb(self, callback):
-        """Remove ``callback`` from the list of callbacks for post pipe remove
-        events
-
-        """
-        self._on_post_pipe_remove.remove(callback)
-
-    def _try_associate_msg_with_pipe(self, msg):
-        """Looks up the nng_msg associated with the ``msg`` and attempts to
-        set it on the Message ``msg``
-
-        """
-
-        # Wrap pipe handling inside the notify lock since we can create
-        # a new Pipe and associate it with the Socket if the callbacks
-        # haven't been called yet. This will ensure there's no race
-        # condition with the pipe callbacks.
-        with self._pipe_notify_lock:
-            lib_pipe = lib.nng_msg_get_pipe(msg._nng_msg)
-            pipe_id = lib.nng_pipe_id(lib_pipe)
-            try:
-                msg.pipe = self._pipes[pipe_id]
-            except KeyError:
-                # A message may have been received before the pipe callback was called.
-                # Create a new Pipe and associate it with the Socket.
-                # When the callback is called, it will detect that the pipe was already.
-
-                # if pipe_id < 0, that *probably* means we hit a race where the
-                # associated pipe was closed.
-                if pipe_id >= 0:
-                    # Add the pipe to the socket
-                    msg.pipe = self._add_pipe(lib_pipe)
-
-    def recv_msg(self, block=True):
-        """Receive a :class:`Message` on the socket."""
-        flags = 0
-        if not block:
-            flags |= lib.NNG_FLAG_NONBLOCK
-        msg_p = ffi.new("nng_msg **")
-        check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
-        msg = msg_p[0]
-        msg = Message(msg)
-        self._try_associate_msg_with_pipe(msg)
-        return msg
-
-    def send_msg(self, msg, block=True):
-        """Send the :class:`Message` ``msg`` on the socket.
-
-        .. Note::
-
-            It's may be more convenient to call :meth:`Pipe.send` than this
-            method.
-
-        """
-        flags = 0
-        if not block:
-            flags |= lib.NNG_FLAG_NONBLOCK
-        with msg._mem_freed_lock:
-            msg._ensure_can_send()
-            check_err(lib.nng_sendmsg(self.socket, msg._nng_msg, flags))
-            msg._mem_freed = True
-
-    async def asend_msg(self, msg):
-        """
-        Asynchronously send the :class:`Message` ``msg`` on the socket.
-
-        """
-        with msg._mem_freed_lock:
-            msg._ensure_can_send()
-            with _aio.AIOHelper(self, self._async_backend) as aio:
-                # Note: the aio helper sets the _mem_freed flag on the msg
-                return await aio.asend_msg(msg)
-
-    async def arecv_msg(self):
-        """
-        Asynchronously receive the :class:`Message` ``msg`` on the socket.
-        """
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            msg = await aio.arecv_msg()
-            self._try_associate_msg_with_pipe(msg)
-            return msg
+    def stat(self, name):
+        """Get a single statistic value by name for this socket."""
+        return socket_stats(self)[name].value
 
 
 class Bus0(Socket):
@@ -717,11 +323,15 @@ class Bus0(Socket):
 
     Here is a demonstration of using the bus protocol:
 
-    .. literalinclude:: snippets/bus0_sync.py
+    .. literalinclude:: /snippets/bus0_sync.py
         :language: python3
     """
 
     _opener = lib.nng_bus0_open
+    _raw_opener = lib.nng_bus0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pair0(Socket):
@@ -735,19 +345,23 @@ class Pair0(Socket):
 
     This demonstrates the synchronous API:
 
-    .. literalinclude:: snippets/pair0_sync.py
+    .. literalinclude:: /snippets/pair0_sync.py
         :language: python3
 
     This demonstrates the asynchronous API using `Trio`_.  Remember that
     :mod:`asyncio` is also supported.
 
-    .. literalinclude:: snippets/pair0_async.py
+    .. literalinclude:: /snippets/pair0_async.py
         :language: python3
 
 
     """
 
     _opener = lib.nng_pair0_open
+    _raw_opener = lib.nng_pair0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pair1(Socket):
@@ -783,20 +397,24 @@ class Pair1(Socket):
     because it requires to use the :class:`Pipe` and :class:`Message`
     interfaces.
 
-    .. literalinclude:: snippets/pair1_sync.py
+    .. literalinclude:: /snippets/pair1_sync.py
 
     And here is an example using the async API, using `Trio`_.
 
-    .. literalinclude:: snippets/pair1_async.py
+    .. literalinclude:: /snippets/pair1_async.py
 
     """
 
-    def __init__(self, *, polyamorous=False, **kwargs):
-        if polyamorous:
+    _raw_opener = lib.nng_pair1_open_raw
+
+    def __init__(self, *, polyamorous=False, raw=False, **kwargs):
+        if raw:
+            kwargs["opener"] = lib.nng_pair1_open_raw
+        elif polyamorous:
             kwargs["opener"] = lib.nng_pair1_open_poly
         else:
             kwargs["opener"] = lib.nng_pair1_open
-        super().__init__(**kwargs)
+        super().__init__(raw=raw, **kwargs)
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
@@ -818,11 +436,15 @@ class Push0(Socket):
     Here is an example of two :class:`Pull0` sockets connected to a
     :class:`Push0` socket.
 
-    .. literalinclude:: snippets/pushpull_sync.py
+    .. literalinclude:: /snippets/pushpull_sync.py
 
     """
 
     _opener = lib.nng_push0_open
+    _raw_opener = lib.nng_push0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pull0(Socket):
@@ -843,6 +465,10 @@ class Pull0(Socket):
     """
 
     _opener = lib.nng_pull0_open
+    _raw_opener = lib.nng_pull0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pub0(Socket):
@@ -863,6 +489,10 @@ class Pub0(Socket):
     """
 
     _opener = lib.nng_pub0_open
+    _raw_opener = lib.nng_pub0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Sub0(Socket):
@@ -896,14 +526,17 @@ class Sub0(Socket):
 
     The following example demonstrates a basic usage of pub/sub:
 
-    .. literalinclude:: snippets/pubsub_sync.py
+    .. literalinclude:: /snippets/pubsub_sync.py
 
     """
 
     _opener = lib.nng_sub0_open
+    _raw_opener = lib.nng_sub0_open_raw
 
-    def __init__(self, *, topics=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, topics=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
+        self._subscriptions = set()
+        self._sub_lock = threading.RLock()
         if topics is None:
             return
         # special-case str/bytes
@@ -911,6 +544,12 @@ class Sub0(Socket):
             topics = [topics]
         for topic in topics:
             self.subscribe(topic)
+
+    @property
+    def subscriptions(self):
+        """Return a frozenset of current subscriptions (as bytes)."""
+        with self._sub_lock:
+            return frozenset(self._subscriptions)
 
     def subscribe(self, topic):
         """Subscribe to the specified topic.
@@ -925,10 +564,14 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
+        if isinstance(topic, str):
+            topic = topic.encode()
         options._setopt_string_nonnull(self, b"sub:subscribe", topic)
+        with self._sub_lock:
+            self._subscriptions.add(topic)
 
     def unsubscribe(self, topic):
-        """Unsubscribe to the specified topic.
+        """Unsubscribe from the specified topic.
 
         .. Note::
 
@@ -937,7 +580,31 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
+        if isinstance(topic, str):
+            topic = topic.encode()
         options._setopt_string_nonnull(self, b"sub:unsubscribe", topic)
+        with self._sub_lock:
+            self._subscriptions.discard(topic)
+
+    def subscribe_all(self, topics):
+        """Subscribe to multiple topics at once.
+
+        Args:
+            topics: An iterable of :class:`str` or :class:`bytes` topics.
+
+        """
+        for topic in topics:
+            self.subscribe(topic)
+
+    def unsubscribe_all(self):
+        """Unsubscribe from all current subscriptions."""
+        with self._sub_lock:
+            current = list(self._subscriptions)
+            for topic in current:
+                try:
+                    self.unsubscribe(topic)
+                except NoEntry:
+                    pass
 
 
 class Req0(Socket):
@@ -967,15 +634,16 @@ class Req0(Socket):
 
     Here is an example demonstrating the request/response pattern.
 
-    .. literalinclude:: snippets/reqrep_sync.py
+    .. literalinclude:: /snippets/reqrep_sync.py
 
     """
 
     resend_time = MsOption("req:resend-time")
     _opener = lib.nng_req0_open
+    _raw_opener = lib.nng_req0_open_raw
 
-    def __init__(self, *, resend_time=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, resend_time=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         if resend_time is not None:
             self.resend_time = resend_time
 
@@ -1006,6 +674,10 @@ class Rep0(Socket):
     """
 
     _opener = lib.nng_rep0_open
+    _raw_opener = lib.nng_rep0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Surveyor0(Socket):
@@ -1026,17 +698,68 @@ class Surveyor0(Socket):
 
     Here is an example:
 
-    .. literalinclude:: snippets/surveyor_sync.py
+    .. literalinclude:: /snippets/surveyor_sync.py
 
     """
 
     _opener = lib.nng_surveyor0_open
+    _raw_opener = lib.nng_surveyor0_open_raw
     survey_time = MsOption("surveyor:survey-time")
 
-    def __init__(self, *, survey_time=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, survey_time=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         if survey_time is not None:
             self.survey_time = survey_time
+
+    async def asurvey(self, data, *, timeout=None, max_responses=None):
+        """Send a survey and collect all responses until timeout.
+
+        Args:
+            data: Survey message to send (bytes).
+            timeout: Response collection timeout in ms. If None, uses
+                the socket's recv_timeout.
+            max_responses: Maximum number of responses to collect. If
+                None (the default), collects all responses until timeout.
+                Useful for bounding memory usage when the number of
+                respondents is unknown.
+
+        Returns:
+            list[bytes]: All responses received before timeout or
+            max_responses limit.
+
+        Note:
+            The survey protocol does not support nng contexts, so when a
+            ``timeout`` is provided this method temporarily modifies the
+            socket-level ``recv_timeout``. A try/finally block ensures the
+            original value is restored, but callers sharing the socket
+            across concurrent tasks should be aware this is not task-safe.
+            If task-safety is required, use a dedicated socket per task.
+        """
+        old_recv_timeout = self.recv_timeout
+        old_survey_time = self.survey_time
+        if timeout is not None:
+            self.recv_timeout = timeout
+            self.survey_time = timeout
+
+        try:
+            await self.asend(data)
+            responses = []
+            while True:
+                if max_responses is not None and len(responses) >= max_responses:
+                    break
+                try:
+                    response = await self.arecv()
+                    responses.append(response)
+                except pynng.Timeout:
+                    break
+            return responses
+        finally:
+            try:
+                if timeout is not None:
+                    self.recv_timeout = old_recv_timeout
+                    self.survey_time = old_survey_time
+            except Closed:
+                pass
 
 
 class Respondent0(Socket):
@@ -1059,9 +782,101 @@ class Respondent0(Socket):
     """
 
     _opener = lib.nng_respondent0_open
+    _raw_opener = lib.nng_respondent0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
-class Dialer:
+class RawBus0(Bus0):
+    """A raw bus0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPair0(Pair0):
+    """A raw pair0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPair1(Pair1):
+    """A raw pair1 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPush0(Push0):
+    """A raw push0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPull0(Pull0):
+    """A raw pull0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawPub0(Pub0):
+    """A raw pub0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawSub0(Sub0):
+    """A raw sub0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawReq0(Req0):
+    """A raw req0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawRep0(Rep0):
+    """A raw rep0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawSurveyor0(Surveyor0):
+    """A raw surveyor0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class RawRespondent0(Respondent0):
+    """A raw respondent0 socket."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("raw", True)
+        super().__init__(**kwargs)
+
+
+class Dialer(_base.Dialer):
     """The Python version of `nng_dialer
     <https://nanomsg.github.io/nng/man/tip/nng_dialer.5>`_.  A
     :class:`Dialer` is returned whenever :meth:`Socket.dial` is called.  A list
@@ -1073,63 +888,15 @@ class Dialer:
 
     """
 
-    local_address = SockAddrOption("local-address")
-    remote_address = SockAddrOption("remote-address")
-    reconnect_time_min = MsOption("reconnect-time-min")
-    reconnect_time_max = MsOption("reconnect-time-max")
-    recv_max_size = SizeOption("recv-size-max")
-    url = StringOption("url")
-    peer = IntOption("peer")
-    peer_name = StringOption("peer-name")
-    tcp_nodelay = BooleanOption("tcp-nodelay")
-    tcp_keepalive = BooleanOption("tcp-keepalive")
-
+    # v1-specific TLS options on the dialer
     tls_config = PointerOption("tls-config")
     tls_ca_file = StringOption("tls-ca-file")
     tls_cert_key_file = StringOption("tls-cert-key-file")
     tls_auth_mode = IntOption("tls-authmode")
     tls_server_name = StringOption("tls-server-name")
 
-    def __init__(self, dialer, socket):
-        """
-        Args:
-            dialer: the initialized `lib.nng_dialer`.
-            socket: The Socket associated with the dialer
 
-        """
-        # I can't think of a reason you would need to directly instantiate this
-        # class
-        self._dialer = dialer
-        self.socket = socket
-
-    @property
-    def dialer(self):
-        return self._dialer[0]
-
-    def close(self):
-        """
-        Close the dialer.
-        """
-        lib.nng_dialer_close(self.dialer)
-        self.socket._dialers.pop(self.id, None)
-
-    @property
-    def id(self):
-        return lib.nng_dialer_id(self.dialer)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        self.close()
-
-    async def aclose(self):
-        """Asynchronous close. Delegates to the synchronous :meth:`close`
-        since the underlying NNG close operation is non-blocking."""
-        self.close()
-
-
-class Listener:
+class Listener(_base.Listener):
     """The Python version of `nng_listener
     <https://nanomsg.github.io/nng/man/tip/nng_listener.5>`_.  A
     :class:`Listener` is returned whenever :meth:`Socket.listen` is called.  A
@@ -1141,63 +908,15 @@ class Listener:
 
     """
 
-    local_address = SockAddrOption("local-address")
-    remote_address = SockAddrOption("remote-address")
-    reconnect_time_min = MsOption("reconnect-time-min")
-    reconnect_time_max = MsOption("reconnect-time-max")
-    recv_max_size = SizeOption("recv-size-max")
-    url = StringOption("url")
-    peer = IntOption("peer")
-    peer_name = StringOption("peer-name")
-    tcp_nodelay = BooleanOption("tcp-nodelay")
-    tcp_keepalive = BooleanOption("tcp-keepalive")
-
+    # v1-specific TLS options on the listener
     tls_config = PointerOption("tls-config")
     tls_ca_file = StringOption("tls-ca-file")
     tls_cert_key_file = StringOption("tls-cert-key-file")
     tls_auth_mode = IntOption("tls-authmode")
     tls_server_name = StringOption("tls-server-name")
 
-    def __init__(self, listener, socket):
-        """
-        Args:
-            listener: the initialized `lib.nng_dialer`.
-            socket: The Socket associated with the dialer
 
-        """
-        # I can't think of a reason you would need to directly instantiate this
-        # class
-        self._listener = listener
-        self.socket = socket
-
-    @property
-    def listener(self):
-        return self._listener[0]
-
-    def close(self):
-        """
-        Close the listener.
-        """
-        lib.nng_listener_close(self.listener)
-        self.socket._listeners.pop(self.id, None)
-
-    @property
-    def id(self):
-        return lib.nng_listener_id(self.listener)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        self.close()
-
-    async def aclose(self):
-        """Asynchronous close. Delegates to the synchronous :meth:`close`
-        since the underlying NNG close operation is non-blocking."""
-        self.close()
-
-
-class Context:
+class Context(_base.Context):
     """
     This is the Python version of `nng_context
     <https://nanomsg.github.io/nng/man/tip/nng_ctx.5.html>`_.  The way to
@@ -1246,201 +965,10 @@ class Context:
     :class:`Socket`, and call the :meth:`~Socket.new_context` method.
 
     """
-
-    recv_timeout = MsOption("recv-timeout")
-    send_timeout = MsOption("send-timeout")
-
-    def __init__(self, socket):
-        # need to set attributes first, so that if anything goes wrong,
-        # __del__() doesn't throw an AttributeError
-        self._context = None
-        assert isinstance(socket, Socket)
-        self._socket = socket
-        self._context = ffi.new("nng_ctx *")
-        check_err(lib.nng_ctx_open(self._context, socket.socket))
-
-        assert lib.nng_ctx_id(self.context) != -1
-
-    async def arecv(self):
-        """Asynchronously receive data using this context."""
-        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-            return await aio.arecv()
-
-    async def asend(self, data):
-        """Asynchronously send data using this context."""
-        _ensure_can_send(data)
-        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-            return await aio.asend(data)
-
-    def recv_msg(self):
-        """Synchronously receive a :class:`Message` using this context."""
-        aio_p = ffi.new("nng_aio **")
-        check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
-        aio = aio_p[0]
-        try:
-            check_err(lib.nng_ctx_recv(self.context, aio))
-            check_err(lib.nng_aio_wait(aio))
-            check_err(lib.nng_aio_result(aio))
-            nng_msg = lib.nng_aio_get_msg(aio)
-            msg = Message(nng_msg)
-            self._socket._try_associate_msg_with_pipe(msg)
-        finally:
-            lib.nng_aio_free(aio)
-        return msg
-
-    def recv(self):
-        """Synchronously receive data on this context."""
-
-        msg = self.recv_msg()
-        return msg.bytes
-
-    def send_msg(self, msg):
-        """Synchronously send the :class:`Message` ``msg`` on the context."""
-        with msg._mem_freed_lock:
-            msg._ensure_can_send()
-            aio_p = ffi.new("nng_aio **")
-            check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
-            aio = aio_p[0]
-            try:
-                check_err(lib.nng_aio_set_msg(aio, msg._nng_msg))
-                check_err(lib.nng_ctx_send(self.context, aio))
-                msg._mem_freed = True
-                check_err(lib.nng_aio_wait(aio))
-                check_err(lib.nng_aio_result(aio))
-            finally:
-                lib.nng_aio_free(aio)
-
-    def send(self, data):
-        """
-        Synchronously send data on the context.
-
-        """
-        _ensure_can_send(data)
-        msg = Message(data)
-        return self.send_msg(msg)
-
-    def close(self):
-        """Close this context."""
-        ctx_err = 0
-        if self._context is not None:
-            # check that nng still has a reference
-            if lib.nng_ctx_id(self.context) != -1:
-                ctx_err = lib.nng_ctx_close(self.context)
-                self._context = None
-                check_err(ctx_err)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        self.close()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        """Close the context. Delegates to synchronous close() since the
-        underlying NNG close operation is non-blocking."""
-        self.close()
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        try:
-            return await self.arecv()
-        except pynng.Closed:
-            raise StopAsyncIteration
-
-    async def aclose(self):
-        """Asynchronous close. Delegates to the synchronous :meth:`close`
-        since the underlying NNG close operation is non-blocking."""
-        self.close()
-
-    @property
-    def context(self):
-        """Return the underlying nng object."""
-        return self._context[0]
-
-    def __del__(self):
-        try:
-            self.close()
-        except (TypeError, AttributeError):
-            # During interpreter shutdown, globals (lib, ffi) may be None
-            pass
-
-    async def asend_msg(self, msg):
-        """
-        Asynchronously send the :class:`Message` ``msg`` on the context.
-        """
-        with msg._mem_freed_lock:
-            msg._ensure_can_send()
-            with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-                # Note: the aio helper sets the _mem_freed flag on the msg
-                return await aio.asend_msg(msg)
-
-    async def arecv_msg(self):
-        """
-        Asynchronously receive a :class:`Message` on the context.
-        """
-        with _aio.AIOHelper(self, self._socket._async_backend) as aio:
-            msg = await aio.arecv_msg()
-            self._socket._try_associate_msg_with_pipe(msg)
-            return msg
+    pass
 
 
-def _do_callbacks(pipe, callbacks):
-    for cb in callbacks:
-        try:
-            cb(pipe)
-        except Exception:
-            msg = "Exception raised in pre pipe connect callback {!r}"
-            logger.exception(msg.format(cb))
-
-
-@ffi.def_extern()
-def _nng_pipe_cb(lib_pipe, event, arg):
-    logger.debug("Pipe callback event {}".format(event))
-
-    # Get the Socket from the handle passed through the callback arguments
-    sock = ffi.from_handle(arg)
-
-    # exceptions don't propagate out of this function, so if any exception is
-    # raised in any of the callbacks, we just log it (using logger.exception).
-    with sock._pipe_notify_lock:
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        if event == lib.NNG_PIPE_EV_ADD_PRE:
-            # time to do our bookkeeping; actually create the pipe and attach it to
-            # the socket
-            pipe = sock._add_pipe(lib_pipe)
-            _do_callbacks(pipe, sock._on_pre_pipe_add)
-            if pipe.closed:
-                # NB: we need to remove the pipe from socket now, before a remote
-                # tries connecting again and the same pipe ID may be reused.  This
-                # will result in a KeyError below.
-                sock._remove_pipe(lib_pipe)
-        elif event == lib.NNG_PIPE_EV_ADD_POST:
-            # The ADD_POST event can arrive before ADD_PRE, in which case the Socket
-            # won't have the pipe_id in the _pipes dictionary
-
-            # _add_pipe will return an existing pipe or create a new one if it doesn't exist
-            pipe = sock._add_pipe(lib_pipe)
-            _do_callbacks(pipe, sock._on_post_pipe_add)
-        elif event == lib.NNG_PIPE_EV_REM_POST:
-            try:
-                pipe = sock._pipes[pipe_id]
-            except KeyError:
-                # we get here if the pipe was closed in pre_connect earlier. This
-                # is not a big deal.
-                logger.debug("Could not find pipe for socket")
-                return
-            try:
-                _do_callbacks(pipe, sock._on_post_pipe_remove)
-            finally:
-                sock._remove_pipe(lib_pipe)
-
-
-class Pipe:
+class Pipe(_base.Pipe):
     """
     A "pipe" is a single connection between two endpoints.  This is the Python
     version of `nng_pipe
@@ -1450,121 +978,18 @@ class Pipe:
     the underlying socket whenever the pipe is created.
 
     """
-
-    local_address = SockAddrOption("local-address")
-    remote_address = SockAddrOption("remote-address")
-    url = StringOption("url")
-    protocol = IntOption("protocol")
-    protocol_name = StringOption("protocol-name")
-    peer = IntOption("peer")
-    peer_name = StringOption("peer-name")
-    tcp_nodelay = BooleanOption("tcp-nodelay")
-    tcp_keepalive = BooleanOption("tcp-keepalive")
-
-    def __init__(self, lib_pipe, socket):
-        # Ohhhhkay
-        # so
-        # this is weird, I know
-        # okay
-        # so
-        # For some reason, I'm not sure why, if we keep a reference to lib_pipe
-        # directly, we end up with memory corruption issues.  Maybe it's a
-        # weird interaction between getting called in a callback and refcount
-        # or something, I dunno.  Anyway, we need to make a copy of the
-        # lib_pipe object.
-        self._pipe = ffi.new("nng_pipe *")
-        self._pipe[0] = lib_pipe
-        self.pipe = self._pipe[0]
-        self.socket = socket
-        self._closed = False
-
-    @property
-    def closed(self):
-        """
-        Return whether the pipe has been closed directly.
-
-        This will not be valid if the pipe was closed indirectly, e.g. by
-        closing the associated listener/dialer/socket.
-
-        """
-        return self._closed
-
-    @property
-    def id(self):
-        return lib.nng_pipe_id(self.pipe)
-
-    @property
-    def dialer(self):
-        """
-        Return the dialer this pipe is associated with.  If the pipe is not
-        associated with a dialer, raise an exception
-
-        """
-        dialer = lib.nng_pipe_dialer(self.pipe)
-        d_id = lib.nng_dialer_id(dialer)
-        if d_id < 0:
-            raise TypeError("This pipe has no associated dialers.")
-        return self.socket._dialers[d_id]
-
-    @property
-    def listener(self):
-        """
-        Return the listener this pipe is associated with.  If the pipe is not
-        associated with a listener, raise an exception
-
-        """
-        listener = lib.nng_pipe_listener(self.pipe)
-        l_id = lib.nng_listener_id(listener)
-        if l_id < 0:
-            raise TypeError("This pipe has no associated listeners.")
-        return self.socket._listeners[l_id]
-
-    def close(self):
-        """
-        Close the pipe.
-
-        """
-        check_err(lib.nng_pipe_close(self.pipe))
-        self._closed = True
-
-    def send(self, data):
-        """
-        Synchronously send bytes from this :class:`Pipe`.  This method
-        automatically creates a :class:`Message`, associates with this pipe,
-        and sends it with this pipe's associated :class:`Socket`.
-
-        """
-        _ensure_can_send(data)
-        msg = Message(data, self)
-        self.socket.send_msg(msg)
-
-    def send_msg(self, msg):
-        """
-        Synchronously send a Message from this :class:`Pipe`.
-
-        """
-        msg.pipe = self
-        self.socket.send_msg(msg)
-
-    async def asend(self, data):
-        """
-        Asynchronously send bytes from this :class:`Pipe`.
-
-        """
-        _ensure_can_send(data)
-        msg = Message(data, self)
-        return await self.socket.asend_msg(msg)
-
-    async def asend_msg(self, msg):
-        """
-        Asynchronously send a Message from this :class:`Pipe`.
-
-        """
-        msg.pipe = self
-        return await self.socket.asend_msg(msg)
+    pass
 
 
-class Message:
+# Wire up the v1-specific subclasses so base class factory methods
+# create v1 types (Context, Pipe, Dialer, Listener, Message) instead of _base types.
+Socket._context_class = Context
+Socket._pipe_class = Pipe
+Socket._dialer_class = Dialer
+Socket._listener_class = Listener
+
+
+class Message(_base.Message):
     """
     Python interface for `nng_msg
     <https://nanomsg.github.io/nng/man/tip/nng_msg.5.html>`_.  Using the
@@ -1592,89 +1017,100 @@ class Message:
         result.
 
     """
+    pass
 
-    def __init__(self, data, pipe=None):
-        # NB! There are two ways that a user can free resources that an nng_msg
-        # is using: either sending with nng_sendmsg (or the async equivalent)
-        # or with nng_msg_free.  We don't know how this msg will be used, but
-        # we need to **ensure** that we don't try to double free.  The flag
-        # _mem_freed is used to indicate that we cannot send the message again.
-        # The methods send_msg() and asend_msg() must ensure that the flag
-        # `_mem_freed` is set to True.
-        self._mem_freed = False
-        self._mem_freed_lock = threading.Lock()
 
-        if isinstance(data, ffi.CData) and ffi.typeof(data).cname == "struct nng_msg *":
-            self._nng_msg = data
-        else:
-            msg_p = ffi.new("nng_msg **")
-            check_err(lib.nng_msg_alloc(msg_p, 0))
-            msg = msg_p[0]
-            check_err(lib.nng_msg_append(msg, data, len(data)))
-            self._nng_msg = msg
+Socket._message_class = Message
 
-        # We may not have been given a pipe, in which case the pipe is None.
-        if pipe is None:
-            self._pipe = None
-        else:
-            self.pipe = pipe
 
-    @property
-    def pipe(self):
-        return self._pipe
+@ffi.def_extern()
+def _nng_pipe_cb(lib_pipe, event, arg):
+    logger.debug("Pipe callback event {}".format(event))
 
-    @pipe.setter
-    def pipe(self, pipe):
-        if not isinstance(pipe, Pipe):
-            msg = "pipe must be type Pipe, not {}".format(type(pipe))
-            raise ValueError(msg)
-        check_err(lib.nng_msg_set_pipe(self._nng_msg, pipe.pipe))
-        self._pipe = pipe
+    # Get the Socket from the handle passed through the callback arguments.
+    # If the Socket has been GC'd and the handle is invalid, from_handle()
+    # will crash. Guard against this by catching exceptions.
+    try:
+        sock = ffi.from_handle(arg)
+    except (RuntimeError, ValueError, ffi.error):
+        logger.info(
+            "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
+        )
+        return
 
-    @property
-    def _buffer(self):
-        """
-        Returns a cffi.buffer to the underlying nng_msg buffer.
+    # exceptions don't propagate out of this function, so if any exception is
+    # raised in any of the callbacks, we just log it (using logger.exception).
+    # Snapshot callbacks under lock, then invoke outside the lock to prevent deadlock
+    # if a user callback performs socket operations or registers/unregisters callbacks.
+    callbacks = None
+    pipe = None
+    remove_pipe_on_finally = False
 
-        If you access the message's buffer using this property, you must ensure
-        that you do not send the message until you are not using the buffer
-        anymore.
-
-        """
-        with self._mem_freed_lock:
-            if self._mem_freed:
-                raise pynng.MessageStateError(
-                    "Message buffer is no longer available after sending."
-                )
-            size = lib.nng_msg_len(self._nng_msg)
-            data = ffi.cast("char *", lib.nng_msg_body(self._nng_msg))
-            return ffi.buffer(data[0:size])
-
-    @property
-    def bytes(self):
-        """
-        Return the bytes from the underlying buffer.
-
-        """
-        return bytes(self._buffer)
-
-    def __del__(self):
-        with self._mem_freed_lock:
-            if self._mem_freed:
+    with sock._pipe_notify_lock:
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        if event == lib.NNG_PIPE_EV_ADD_PRE:
+            pipe = sock._add_pipe(lib_pipe)
+            callbacks = list(sock._on_pre_pipe_add)
+        elif event == lib.NNG_PIPE_EV_ADD_POST:
+            pipe = sock._add_pipe(lib_pipe)
+            callbacks = list(sock._on_post_pipe_add)
+        elif event == lib.NNG_PIPE_EV_REM_POST:
+            try:
+                pipe = sock._pipes[pipe_id]
+            except KeyError:
+                logger.debug("Could not find pipe for socket")
                 return
-            else:
-                lib.nng_msg_free(self._nng_msg)
-                # pretty sure it's not necessary to set this, but that's okay.
-                self._mem_freed = True
+            callbacks = list(sock._on_post_pipe_remove)
+            remove_pipe_on_finally = True
 
-    def _ensure_can_send(self):
-        """
-        Raises an exception if the message's state is such that it cannot be
-        sent.  The _mem_freed_lock() must be acquired when this method is
-        called.
+    try:
+        if callbacks and pipe:
+            _do_callbacks(pipe, callbacks)
+    finally:
+        if remove_pipe_on_finally:
+            with sock._pipe_notify_lock:
+                sock._remove_pipe(lib_pipe)
+        elif event == lib.NNG_PIPE_EV_ADD_PRE and pipe and pipe.closed:
+            with sock._pipe_notify_lock:
+                sock._remove_pipe(lib_pipe)
 
-        """
-        assert self._mem_freed_lock.locked()
-        if self._mem_freed:
-            msg = "Attempted to send the same message more than once."
-            raise pynng.MessageStateError(msg)
+
+def device(s1, s2=None):
+    """Forward messages between socket s1 and socket s2 synchronously.
+
+    If s2 is None, messages are forwarded in only one direction (from s1, which
+    must be able to receive, to whatever destination). This function blocks
+    until an error occurs or one of the sockets is closed.
+
+    Args:
+        s1: A :class:`Socket` instance.
+        s2: A :class:`Socket` instance or None.
+
+    Raises:
+        Closed: When one of the sockets is closed.
+        NNGException: If an NNG error occurs.
+    """
+    s1_raw = s1.socket if isinstance(s1, Socket) else s1
+    if s2 is not None:
+        s2_raw = s2.socket if isinstance(s2, Socket) else s2
+    else:
+        s2_raw = ffi.new("nng_socket *", {"id": 0})[0]
+    check_err(lib.nng_device(s1_raw, s2_raw))
+
+
+async def adevice(s1, s2=None, *, async_backend=None):
+    """Forward messages between socket s1 and socket s2 asynchronously.
+
+    Can be cancelled cleanly in asyncio and trio tasks.
+
+    Args:
+        s1: A :class:`Socket` instance.
+        s2: A :class:`Socket` instance or None.
+        async_backend: Async backend name ("asyncio" or "trio"), or None to auto-detect.
+
+    Raises:
+        Closed: When one of the sockets is closed.
+        NNGException: If an NNG error occurs.
+    """
+    with _aio.DeviceAIO(s1, s2, async_backend=async_backend) as dev:
+        await dev.run()

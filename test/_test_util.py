@@ -9,9 +9,9 @@ def wait_pipe_len(sock, expected, timeout=10):
     runs.
 
     """
-    now = time.time()
+    now = time.monotonic()
     later = now + timeout
-    while time.time() < later and len(sock.pipes) != expected:
+    while time.monotonic() < later and len(sock.pipes) != expected:
         time.sleep(0.0005)
     if len(sock.pipes) != expected:
         raise TimeoutError(

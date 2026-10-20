@@ -3,11 +3,12 @@
 import pynng
 import pytest
 
-addr = "inproc://test-context-options"
+from conftest import random_addr
 
 
 def test_context_recv_timeout_get_set():
     """recv_timeout can be get/set on a context independently of the socket."""
+    addr = random_addr()
     with pynng.Rep0(listen=addr) as s:
         ctx = s.new_context()
         try:
@@ -23,7 +24,8 @@ def test_context_recv_timeout_get_set():
 
 def test_context_send_timeout_get_set():
     """send_timeout can be get/set on a context independently of the socket."""
-    with pynng.Rep0(listen=addr + "-send") as s:
+    addr = random_addr()
+    with pynng.Rep0(listen=addr) as s:
         ctx = s.new_context()
         try:
             assert ctx.send_timeout == -1
@@ -36,7 +38,8 @@ def test_context_send_timeout_get_set():
 
 def test_two_contexts_independent_timeouts():
     """Two contexts on the same socket can have different timeouts."""
-    with pynng.Rep0(listen=addr + "-independent") as s:
+    addr = random_addr()
+    with pynng.Rep0(listen=addr) as s:
         ctx1 = s.new_context()
         ctx2 = s.new_context()
         try:
@@ -56,7 +59,8 @@ def test_two_contexts_independent_timeouts():
 
 def test_context_timeout_triggers():
     """Setting a short recv_timeout on a context causes Timeout exception."""
-    with pynng.Rep0(listen=addr + "-timeout") as s:
+    addr = random_addr()
+    with pynng.Rep0(listen=addr) as s:
         ctx = s.new_context()
         try:
             ctx.recv_timeout = 1  # 1 ms

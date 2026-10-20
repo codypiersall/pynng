@@ -4,7 +4,11 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("pynng")
 except PackageNotFoundError:
-    __version__ = "0.0.0"
+    try:
+        from ._version import __version__
+    except ImportError:
+        __version__ = "0.0.0"
+
 from ._nng import lib, ffi
 from .nng import (
     Bus0,
@@ -18,14 +22,31 @@ from .nng import (
     Rep0,
     Surveyor0,
     Respondent0,
+    RawBus0,
+    RawPair0,
+    RawPair1,
+    RawPush0,
+    RawPull0,
+    RawPub0,
+    RawSub0,
+    RawReq0,
+    RawRep0,
+    RawSurveyor0,
+    RawRespondent0,
     Context,
     Socket,
     Listener,
     Dialer,
     Pipe,
+    PipeEvent,
+    PipeEventStream,
     Message,
+    device,
+    adevice,
 )
 
+from .stats import stats, Stat
+from .service import Rep0Service, Request  # noqa: F401
 from .tls import TLSConfig
 
 from .exceptions import (
@@ -61,6 +82,7 @@ from .exceptions import (
     Ambiguous,
     BadType,
     Internal,
+    Stopped,
     check_err,
     MessageStateError,
 )

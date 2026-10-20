@@ -8,12 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Surveyor0.asurvey()` method for ergonomic async survey/collect pattern (sends survey, collects all responses until timeout, returns list)
+- `Rep0Service` high-level async service class for concurrent request/reply handling with multiple context workers
+- `Request` class with `.data` and `.reply()` for ergonomic request processing within `Rep0Service`
 - `async with` context manager support for sockets (`async with pynng.Pair0() as sock:`)
 - `async for` iteration over received messages (`async for msg in sock:`)
 - `aclose()` method for explicit async socket cleanup
 - `async with` context manager support for `Dialer` and `Listener`
 - `aclose()` method for `Dialer` and `Listener`
 - `recv_timeout` and `send_timeout` option descriptors on `Context` for per-context timeout control
+- `Sub0.subscriptions` property to inspect current subscriptions as a frozenset
+- `Sub0.subscribe_all(topics)` for batch subscription to multiple topics
+- `Sub0.unsubscribe_all()` to clear all current subscriptions
+- Local subscription tracking in `Sub0` (NNG has no API to query subscriptions)
+- `socket.pipe_events()` returns an async iterator of `PipeEvent` objects for consuming pipe connect/disconnect events (`async for event in socket.pipe_events()`)
 
 ### Changed
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
@@ -23,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
 
 ### Fixed
+- `ffi.from_handle` dangling pointer in pipe callbacks: module-level `_active_handles` registry keeps handles alive until `Socket.close()` completes, with try/except guard in `_nng_pipe_cb`
+- `_aio_map` thread safety for free-threaded Python (3.13t/3.14t): all accesses protected by `_aio_map_lock`
+- `AIOHelper._free()` potential deadlock during GC: cancel pending AIO operations before calling `nng_aio_free()` to prevent callback/GIL deadlock
+- Pipe callback list mutations now protected by `_pipe_notify_lock` for thread safety under free-threaded Python
+- Make `Socket.close()` idempotent and thread-safe with `_close_lock` and `_socket_closed` flag
 - `_setopt_size` and `_setopt_ms` now check error returns from NNG C library instead of silently swallowing failures
 - `Message._buffer` raises `MessageStateError` after send instead of returning `None` (which caused confusing `TypeError`)
 - `_NNGOption.__get__` error message corrected from "cannot be set" to "is write-only"

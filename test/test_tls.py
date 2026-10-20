@@ -1,5 +1,16 @@
+import gc
+import platform
+
 import pytest
+
+import pynng
 from pynng import Pair0, TLSConfig
+
+from conftest import FAST_TIMEOUT
+
+# All TLS tests are v1-only because v2 uses endpoint-level TLS configuration
+# (different API). v2 TLS tests should be added when the v2 TLS API is finalized.
+pytestmark = [pytest.mark.nng_v1]
 
 SERVER_CERT = """
 -----BEGIN CERTIFICATE-----
@@ -60,13 +71,22 @@ nFcJUXxIIJLAKbqnMRIp46OP
 # we use a self-signed certificate
 CA_CERT = SERVER_CERT
 
-URL = "tls+tcp://localhost:5556"
+LISTEN_URL = "tls+tcp://localhost:0"
 BYTES = b"1234567890"
 
 
+def _tls_dial_url(server):
+    """Extract the actual assigned port from a TLS listener and build a dial URL."""
+    sa = server.listeners[0].local_address
+    import socket
+    port = socket.ntohs(sa.port)
+    return f"tls+tcp://localhost:{port}"
+
+
+@pytest.mark.requires_tls
 def test_config_string():
-    with Pair0(recv_timeout=1000, send_timeout=1000) as server, Pair0(
-        recv_timeout=1000, send_timeout=1000
+    with Pair0(recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT) as server, Pair0(
+        recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT
     ) as client:
         c_server = TLSConfig(
             TLSConfig.MODE_SERVER,
@@ -78,12 +98,170 @@ def test_config_string():
         c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_string=CA_CERT, server_name="localhost")
         client.tls_config = c_client
 
-        server.listen(URL)
-        client.dial(URL)
+        server.listen(LISTEN_URL)
+        client.dial(_tls_dial_url(server))
         client.send(BYTES)
         assert server.recv() == BYTES
         server.send(BYTES)
         assert client.recv() == BYTES
+
+
+@pytest.mark.requires_tls
+def test_config_file(tmp_path):
+    ca_crt_file = tmp_path / "ca.crt"
+    ca_crt_file.write_text(CA_CERT)
+
+    key_pair_file = tmp_path / "key_pair_file.pem"
+    key_pair_file.write_text(SERVER_CERT + SERVER_KEY)
+
+    with Pair0(recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT) as server, Pair0(
+        recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT
+    ) as client:
+        c_server = TLSConfig(TLSConfig.MODE_SERVER, cert_key_file=str(key_pair_file), server_name="localhost")
+        server.tls_config = c_server
+        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_files=[str(ca_crt_file)], server_name="localhost")
+        client.tls_config = c_client
+
+        server.listen(LISTEN_URL)
+        client.dial(_tls_dial_url(server))
+        client.send(BYTES)
+        assert server.recv() == BYTES
+        server.send(BYTES)
+        assert client.recv() == BYTES
+
+
+def test_tls_config_ca_mutual_exclusion():
+    """Cannot set both ca_string and ca_files."""
+    # ValueError is raised before NNG allocation, so no TLSConfig is created.
+    with pytest.raises(ValueError) as exc_info:
+        TLSConfig(TLSConfig.MODE_CLIENT, ca_string="cert", ca_files=["file.pem"])
+    assert str(exc_info.value) == "Cannot set both ca_string and ca_files!"
+    gc.collect()
+
+
+def test_tls_config_own_cert_mutual_exclusion():
+    """Cannot set both own_cert_string/own_key_string and cert_key_file."""
+    with pytest.raises(ValueError) as exc_info:
+        TLSConfig(TLSConfig.MODE_SERVER,
+                  own_cert_string="cert", own_key_string="key",
+                  cert_key_file="file.pem")
+    assert str(exc_info.value) == "Cannot set both own_{key,cert}_string and cert_key_file!"
+    gc.collect()
+
+
+def test_tls_config_own_cert_both_required():
+    """own_cert_string and own_key_string must both be set or both unset."""
+    with pytest.raises(ValueError) as exc_info:
+        TLSConfig(TLSConfig.MODE_SERVER, own_cert_string="cert")
+    assert str(exc_info.value) == "own_key_string and own_cert_string must be both set or unset"
+    with pytest.raises(ValueError) as exc_info:
+        TLSConfig(TLSConfig.MODE_SERVER, own_key_string="key")
+    assert str(exc_info.value) == "own_key_string and own_cert_string must be both set or unset"
+    gc.collect()
+
+
+@pytest.mark.requires_tls
+def test_tls_set_server_name_none():
+    """set_server_name(None) raises ValueError."""
+    config = TLSConfig(TLSConfig.MODE_CLIENT)
+    try:
+        with pytest.raises(ValueError, match="cannot be None"):
+            config.set_server_name(None)
+    finally:
+        del config
+        gc.collect()
+
+
+@pytest.mark.requires_tls
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="Windows SChannel TLS backend does not support set_auth_mode",
+)
+def test_tls_auth_mode():
+    """Test TLSConfig.set_auth_mode with valid and invalid values."""
+    config = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_cert_string=SERVER_CERT,
+        own_key_string=SERVER_KEY,
+    )
+    try:
+        # Valid modes should not raise, and the resulting config should be
+        # usable on a real socket.  NNG has no getter for auth_mode, so we
+        # verify each mode is accepted at the NNG level by applying it to a
+        # listener-capable socket.
+        for mode in (
+            TLSConfig.AUTH_MODE_NONE,
+            TLSConfig.AUTH_MODE_OPTIONAL,
+            TLSConfig.AUTH_MODE_REQUIRED,
+        ):
+            config.set_auth_mode(mode)
+
+            # Build a fresh config with this mode and apply it to a socket,
+            # confirming the mode value is accepted end-to-end.
+            tls = TLSConfig(
+                TLSConfig.MODE_SERVER,
+                own_cert_string=SERVER_CERT,
+                own_key_string=SERVER_KEY,
+                auth_mode=mode,
+            )
+            with Pair0() as s:
+                s.tls_config = tls
+
+        # Invalid auth mode behavior varies by TLS engine and platform:
+        # - mbedTLS: returns EINVAL for unknown modes
+        # - wolfSSL: silently accepts any value
+        # - CFFI on Linux/macOS: raises OverflowError for negative unsigned int
+        # - CFFI on Windows: wraps negative values, may or may not error
+        # We only test that negative values are rejected at the CFFI level.
+        with pytest.raises((OverflowError, pynng.NNGException)):
+            config.set_auth_mode(-999)
+    finally:
+        del config
+        gc.collect()
+
+
+@pytest.mark.requires_tls
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="Windows SChannel TLS backend does not support set_auth_mode",
+)
+def test_tls_auth_mode_in_constructor():
+    """Verify auth_mode parameter in constructor works for all valid values.
+
+    AUTH_MODE_NONE has integer value 0, which is falsy.  This exercises
+    the ``if auth_mode is not None:`` guard (not ``if auth_mode:``).
+    """
+    for mode in (
+        TLSConfig.AUTH_MODE_NONE,      # value 0 -- falsy!
+        TLSConfig.AUTH_MODE_OPTIONAL,   # value 1
+        TLSConfig.AUTH_MODE_REQUIRED,   # value 2
+    ):
+        config = TLSConfig(
+            TLSConfig.MODE_SERVER,
+            own_cert_string=SERVER_CERT,
+            own_key_string=SERVER_KEY,
+            auth_mode=mode,
+        )
+        try:
+            # Verify config was allocated and is usable.
+            # NNG has no auth_mode getter, so we confirm the internal pointer
+            # is live and the config can be applied to a socket without error.
+            assert config._tls_config is not None, "TLS config should be allocated"
+            with Pair0() as s:
+                s.tls_config = config
+        finally:
+            del config
+
+    gc.collect()
+
+
+def test_tls_auth_mode_none_applied():
+    """auth_mode=AUTH_MODE_NONE is applied."""
+    tls = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        auth_mode=TLSConfig.AUTH_MODE_NONE,
+    )
+    assert tls._tls_config is not None
 
 
 def test_tls_config_del_partially_initialized():
@@ -96,15 +274,7 @@ def test_tls_config_del_after_normal_init():
     """TLSConfig cleans up normally when garbage collected."""
     tls = TLSConfig(TLSConfig.MODE_CLIENT)
     assert tls._tls_config is not None
-
-
-def test_tls_auth_mode_none_applied():
-    """auth_mode=AUTH_MODE_NONE is applied."""
-    tls = TLSConfig(
-        TLSConfig.MODE_CLIENT,
-        auth_mode=TLSConfig.AUTH_MODE_NONE,
-    )
-    assert tls is not None
+    tls.__del__()
 
 
 def test_tls_server_name_none_raises():
@@ -125,24 +295,106 @@ def test_tls_server_name_set():
     tls = TLSConfig(TLSConfig.MODE_CLIENT)
     tls.set_server_name("example.com")
 
-def test_config_file(tmp_path):
-    ca_crt_file = tmp_path / "ca.crt"
-    ca_crt_file.write_text(CA_CERT)
 
-    key_pair_file = tmp_path / "key_pair_file.pem"
-    key_pair_file.write_text(SERVER_CERT + SERVER_KEY)
+@pytest.mark.requires_tls
+def test_socket_init_with_tls_config_and_listen():
+    """Socket.__init__ properly configures tls_config before listening/dialing."""
+    c_server = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_key_string=SERVER_KEY,
+        own_cert_string=SERVER_CERT,
+        server_name="localhost",
+    )
+    with Pair0(
+        listen=LISTEN_URL,
+        tls_config=c_server,
+        recv_timeout=FAST_TIMEOUT,
+        send_timeout=FAST_TIMEOUT,
+    ) as server:
+        c_client = TLSConfig(
+            TLSConfig.MODE_CLIENT,
+            ca_string=CA_CERT,
+            server_name="localhost",
+        )
+        with Pair0(
+            dial=_tls_dial_url(server),
+            tls_config=c_client,
+            recv_timeout=FAST_TIMEOUT,
+            send_timeout=FAST_TIMEOUT,
+        ) as client:
+            client.send(BYTES)
+            assert server.recv() == BYTES
 
-    with Pair0(recv_timeout=1000, send_timeout=1000) as server, Pair0(
-        recv_timeout=1000, send_timeout=1000
+
+@pytest.mark.requires_tls
+def test_wss_roundtrip():
+    """Verify bidirectional message transfer over WebSocket Secure (wss://)."""
+    import socket
+
+    c_server = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_key_string=SERVER_KEY,
+        own_cert_string=SERVER_CERT,
+        server_name="localhost",
+    )
+    c_client = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        ca_string=CA_CERT,
+        server_name="localhost",
+    )
+    with Pair0(recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT) as server, Pair0(
+        recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT
     ) as client:
-        c_server = TLSConfig(TLSConfig.MODE_SERVER, cert_key_file=str(key_pair_file), server_name="localhost")
         server.tls_config = c_server
-        c_client = TLSConfig(TLSConfig.MODE_CLIENT, ca_files=[str(ca_crt_file)], server_name="localhost")
         client.tls_config = c_client
 
-        server.listen(URL)
-        client.dial(URL)
+        server.listen("wss://127.0.0.1:0/ws_path")
+        sa = server.listeners[0].local_address
+        port = socket.ntohs(sa.port)
+
+        client.dial(f"wss://127.0.0.1:{port}/ws_path")
+
         client.send(BYTES)
         assert server.recv() == BYTES
         server.send(BYTES)
         assert client.recv() == BYTES
+
+
+@pytest.mark.requires_tls
+def test_wss_constructor_init():
+    """Verify Pair0 constructor properly applies tls_config when using listen/dial kwargs on wss://."""
+    import socket
+
+    c_server = TLSConfig(
+        TLSConfig.MODE_SERVER,
+        own_key_string=SERVER_KEY,
+        own_cert_string=SERVER_CERT,
+        server_name="localhost",
+    )
+    c_client = TLSConfig(
+        TLSConfig.MODE_CLIENT,
+        ca_string=CA_CERT,
+        server_name="localhost",
+    )
+    with Pair0(
+        listen="wss://127.0.0.1:0/test_init",
+        tls_config=c_server,
+        recv_timeout=FAST_TIMEOUT,
+        send_timeout=FAST_TIMEOUT,
+    ) as server:
+        sa = server.listeners[0].local_address
+        port = socket.ntohs(sa.port)
+
+        with Pair0(
+            dial=f"wss://127.0.0.1:{port}/test_init",
+            tls_config=c_client,
+            recv_timeout=FAST_TIMEOUT,
+            send_timeout=FAST_TIMEOUT,
+        ) as client:
+            client.send(BYTES)
+            assert server.recv() == BYTES
+            server.send(BYTES)
+            assert client.recv() == BYTES
+
+
+
