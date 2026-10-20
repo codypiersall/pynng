@@ -21,6 +21,28 @@ Install for development with:
 
    uv pip install -e '.[dev]'
 
+Build Options
+-------------
+
+TLS engine selection:
+
+.. code-block:: bash
+
+   # Default (mbedTLS)
+   uv pip install -e '.[dev]'
+
+   # wolfSSL
+   uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=wolf"
+
+   # OpenSSL 3.5+ (v2 only; v1 built without TLS)
+   uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=openssl"
+
+   # Disable TLS
+   uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=none"
+
+   # Disable v2 module
+   uv pip install -e '.[dev]' -C cmake.args="-DBUILD_NNG_V2=OFF"
+
 Testing without pulling dependencies from GitHub
 -------------------------------------------------
 

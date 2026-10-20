@@ -1,9 +1,10 @@
 TLS Guide
 =========
 
-pynng supports TLS-encrypted connections using the ``tls+tcp://`` transport
-scheme. TLS is configured through the :class:`~pynng.TLSConfig` class, which
-wraps NNG's TLS configuration.
+pynng supports TLS-encrypted connections using either the ``tls+tcp://``
+(TLS over TCP) or ``wss://`` (WebSocket Secure) transport schemes. TLS is
+configured through the :class:`~pynng.TLSConfig` class, which wraps NNG's
+TLS configuration.
 
 .. contents:: Topics
    :local:
@@ -18,8 +19,11 @@ To use TLS with pynng:
    and private key).
 2. Create a :class:`~pynng.TLSConfig` for the client (with the CA
    certificate to verify the server).
-3. Assign the TLS config to each socket via the ``tls_config`` attribute.
-4. Use ``tls+tcp://`` as the transport scheme when listening and dialing.
+3. Assign the TLS config to each socket via the ``tls_config`` attribute (or
+   pass ``tls_config`` to the socket constructor).
+4. Use ``tls+tcp://`` or ``wss://`` as the transport scheme when listening and
+   dialing.
+
 
 Server Configuration
 --------------------
@@ -198,6 +202,14 @@ certificate):
 
         server.send(b"Secure reply")
         print(client.recv())  # b'Secure reply'
+
+.. note::
+
+   The exact same :class:`~pynng.TLSConfig` setup works for WebSocket Secure
+   (``wss://``) connections. Simply substitute a ``wss://`` URL containing
+   a path (e.g. ``wss://localhost:8443/ws``) for ``tls+tcp://``. Sockets can
+   also be initialized with constructor keyword arguments:
+   ``Pair0(listen="wss://localhost:8443/ws", tls_config=server_tls)``.
 
 Using TLS with Files
 --------------------

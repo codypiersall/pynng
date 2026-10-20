@@ -106,4 +106,5 @@ testpaths = ["test"]
 markers = [
     "nng_v1: marks tests as v1-only",
     "nng_v2: marks tests as v2-only (deselected when _nng_v2 is not built)",
+    "requires_tls: marks tests that need TLS support (skipped when built with PYNNG_TLS_ENGINE=none)",
 ]
