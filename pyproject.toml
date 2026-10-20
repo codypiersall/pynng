@@ -53,6 +53,9 @@ requires = [
     "setuptools-scm",
 ]
 
+[tool.setuptools]
+packages = ["pynng"]
+
 [tool.scikit-build]
 wheel.packages = ["pynng"]
 wheel.py-api = "cp310"
