@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Dual-version coexistence with NNG v2.0.0 GA under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`)
+- Dual-version coexistence with nng v2.0.0 GA under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`)
 - Pluggable TLS engine support via CMake `NNG_TLS_ENGINE` supporting `mbedTLS`, `wolfSSL`, `OpenSSL`, and `none`
 - Raw socket wrapper classes (`RawBus0`, `RawPair0`, `RawPair1`, `RawReq0`, `RawRep0`, `RawPub0`, `RawSub0`, `RawPush0`, `RawPull0`, `RawSurveyor0`, `RawRespondent0`) for broker and proxy topologies
 - `pynng.device()` and async `pynng.adevice()` forwarding proxies for kernel-level bridging
@@ -28,13 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Sub0.subscriptions` property to inspect current subscriptions as a frozenset
 - `Sub0.subscribe_all(topics)` for batch subscription to multiple topics
 - `Sub0.unsubscribe_all()` to clear all current subscriptions
-- Local subscription tracking in `Sub0` (NNG has no API to query subscriptions)
+- Local subscription tracking in `Sub0` (nng has no API to query subscriptions)
 - `socket.pipe_events()` returns an async iterator of `PipeEvent` objects for consuming pipe connect/disconnect events (`async for event in socket.pipe_events()`)
 
 ### Changed
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
 - Migrate build system from setuptools/CMake to scikit-build-core with headerkit for C header generation
-- Replace handwritten CFFI bindings with auto-generated bindings from NNG headers via headerkit
+- Replace handwritten CFFI bindings with auto-generated bindings from nng headers via headerkit
 - Add CI concurrency groups to cancel stale workflow runs
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
 - Python 3.10 EOL deprecation advisory in documentation and README
