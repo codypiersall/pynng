@@ -351,6 +351,7 @@ class Socket:
         reconnect_time_min=None,
         reconnect_time_max=None,
         opener=None,
+        raw=False,
         block_on_dial=None,
         async_backend=None,
         **kwargs,
@@ -375,7 +376,9 @@ class Socket:
         )
         if opener is not None:
             self._opener = opener
-        if opener is None and not hasattr(self, "_opener"):
+        elif raw and hasattr(self, "_raw_opener"):
+            self._opener = self._raw_opener
+        elif not hasattr(self, "_opener"):
             raise TypeError("Cannot directly instantiate a Socket.  Try a subclass.")
         from .exceptions import check_err
         check_err(self._opener(self._socket))
@@ -546,6 +549,49 @@ class Socket:
         msg = msg_cls(msg, _lib=_lib, _ffi=_ffi)
         self._try_associate_msg_with_pipe(msg)
         return msg
+
+    def recv_into(self, buffer, block=True):
+        """Receive data directly into the provided writable buffer.
+
+        Args:
+            buffer: A writable buffer object (e.g. bytearray, memoryview).
+            block: If False, raises pynng.TryAgain immediately if no data is available.
+
+        Returns:
+            int: The number of bytes written to buffer.
+        """
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = self.recv_msg(block=block)
+        with msg._mem_freed_lock:
+            body = self._lib.nng_msg_body(msg._nng_msg)
+            msg_len = self._lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = self._ffi.from_buffer(m)
+            self._ffi.memmove(c_buf, body, nbytes)
+        return nbytes
+
+    async def arecv_into(self, buffer):
+        """Asynchronously receive data directly into the provided writable buffer.
+
+        Args:
+            buffer: A writable buffer object (e.g. bytearray, memoryview).
+
+        Returns:
+            int: The number of bytes written to buffer.
+        """
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = await self.arecv_msg()
+        with msg._mem_freed_lock:
+            body = self._lib.nng_msg_body(msg._nng_msg)
+            msg_len = self._lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = self._ffi.from_buffer(m)
+            self._ffi.memmove(c_buf, body, nbytes)
+        return nbytes
 
     def send_msg(self, msg, block=True):
         """Send the :class:`Message` ``msg`` on the socket."""
@@ -1060,6 +1106,34 @@ class Context:
         msg = self.recv_msg()
         return msg.bytes
 
+    def recv_into(self, buffer):
+        """Receive data directly into the provided writable buffer."""
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = self.recv_msg()
+        with msg._mem_freed_lock:
+            body = self._lib.nng_msg_body(msg._nng_msg)
+            msg_len = self._lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = self._ffi.from_buffer(m)
+            self._ffi.memmove(c_buf, body, nbytes)
+        return nbytes
+
+    async def arecv_into(self, buffer):
+        """Asynchronously receive data directly into the provided writable buffer."""
+        m = memoryview(buffer)
+        if m.readonly:
+            raise BufferError("buffer must be writable")
+        msg = await self.arecv_msg()
+        with msg._mem_freed_lock:
+            body = self._lib.nng_msg_body(msg._nng_msg)
+            msg_len = self._lib.nng_msg_len(msg._nng_msg)
+            nbytes = min(len(m), msg_len)
+            c_buf = self._ffi.from_buffer(m)
+            self._ffi.memmove(c_buf, body, nbytes)
+        return nbytes
+
     def send_msg(self, msg):
         """Synchronously send the :class:`Message` ``msg`` on the context."""
         _ffi = self._ffi
@@ -1195,11 +1269,17 @@ class Message:
         if isinstance(data, _ffi.CData) and _ffi.typeof(data).cname == "struct nng_msg *":
             self._nng_msg = data
         else:
+            _ensure_can_send(data)
+            m = memoryview(data)
+            if isinstance(data, bytes):
+                c_buf = data
+            else:
+                c_buf = _ffi.from_buffer(m)
             msg_p = _ffi.new("nng_msg **")
             check_err(_lib.nng_msg_alloc(msg_p, 0))
             msg = msg_p[0]
             try:
-                check_err(_lib.nng_msg_append(msg, data, len(data)))
+                check_err(_lib.nng_msg_append(msg, c_buf, len(m)))
             except Exception:
                 _lib.nng_msg_free(msg)
                 raise
@@ -1260,6 +1340,84 @@ class Message:
 
         """
         return bytes(self._buffer)
+
+    @property
+    def header(self):
+        """Return the bytes from the message header."""
+        import pynng
+        _lib = self.__lib
+        _ffi = self.__ffi
+        with self._mem_freed_lock:
+            if self._mem_freed:
+                raise pynng.MessageStateError(
+                    "Message header is no longer available after sending."
+                )
+            size = _lib.nng_msg_header_len(self._nng_msg)
+            if size == 0:
+                return b""
+            data = _ffi.cast("char *", _lib.nng_msg_header(self._nng_msg))
+            return bytes(_ffi.buffer(data[0:size]))
+
+    def header_append(self, data):
+        """Append data to the message header.
+
+        Args:
+            data: Any buffer-protocol object (e.g. bytes, bytearray, memoryview).
+        """
+        _lib = self.__lib
+        _ffi = self.__ffi
+        from .exceptions import check_err
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            m = memoryview(data)
+            if isinstance(data, bytes):
+                c_buf = data
+            else:
+                c_buf = _ffi.from_buffer(m)
+            check_err(_lib.nng_msg_header_append(self._nng_msg, c_buf, len(m)))
+
+    def header_trim(self, sz):
+        """Trim sz bytes from the start of the message header."""
+        _lib = self.__lib
+        from .exceptions import check_err
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            check_err(_lib.nng_msg_header_trim(self._nng_msg, sz))
+
+    def header_chop(self, sz):
+        """Chop sz bytes from the end of the message header."""
+        _lib = self.__lib
+        from .exceptions import check_err
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            check_err(_lib.nng_msg_header_chop(self._nng_msg, sz))
+
+    def header_clear(self):
+        """Clear all data from the message header."""
+        _lib = self.__lib
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            _lib.nng_msg_header_clear(self._nng_msg)
+
+    def copy(self):
+        """Create a duplicate copy of this message."""
+        _lib = self.__lib
+        _ffi = self.__ffi
+        import pynng
+        from .exceptions import check_err
+        with self._mem_freed_lock:
+            if self._mem_freed:
+                raise pynng.MessageStateError(
+                    "Cannot copy a message that has already been sent."
+                )
+            dup_p = _ffi.new("nng_msg **")
+            check_err(_lib.nng_msg_dup(dup_p, self._nng_msg))
+            msg_cls = type(self)
+            return msg_cls(dup_p[0], pipe=self._pipe, _lib=_lib, _ffi=_ffi)
+
+    def dup(self):
+        """Alias for :meth:`copy`."""
+        return self.copy()
 
     def __del__(self):
         if not hasattr(self, "_mem_freed_lock"):

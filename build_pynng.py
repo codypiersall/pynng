@@ -65,7 +65,7 @@ NNG_V2_HEADERS = [
 # Keep NNG_HEADERS as alias for v1 (backward compatibility)
 NNG_HEADERS = NNG_V1_HEADERS
 
-EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)"]
+EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)", r"NNG_PROTOCOL_NUMBER"]
 
 # Additional patterns to exclude when TLS is disabled (PYNNG_TLS_ENABLED=0).
 # nng_tls_config_psk exists only when a TLS engine is compiled in.
@@ -77,6 +77,7 @@ EXCLUDE_PATTERNS_NO_TLS = [r"nng_tls_config_psk"]
 # functions (internal data structure not needed by pynng).
 EXCLUDE_PATTERNS_V2 = [
     r"nng_tls_config_(pass|key)",
+    r"NNG_PROTOCOL_NUMBER",
     r"nng_id_map",
     r"nng_id_(get|set|alloc|remove|visit)",
     r"nng_tls_cert",
@@ -335,6 +336,12 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
     # and `enum nng_err` are incomplete types in C.
     cdef = re.sub(r"\benum\s+nng_pipe_ev\b", "nng_pipe_ev", cdef)
     cdef = re.sub(r"\benum\s+nng_err\b", "nng_err", cdef)
+
+    # In nng.h v2, nng_init_params is an anonymous struct typedef.
+    # Replace parameter type with void * so CFFI doesn't require the full struct definition
+    # (pynng only passes NULL to nng_init).
+    cdef = re.sub(r"\bconst\s+(?:struct\s+)?nng_init_params\s*\*", "void *", cdef)
+    cdef = re.sub(r"\b(?:struct\s+)?nng_init_params\s*\*", "void *", cdef)
 
     # Extract additional #define constants from nng.h via regex
     # (libclang can miss macro values that involve expressions)

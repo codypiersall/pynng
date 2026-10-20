@@ -22,6 +22,17 @@ from .nng import (
     Rep0,
     Surveyor0,
     Respondent0,
+    RawBus0,
+    RawPair0,
+    RawPair1,
+    RawPush0,
+    RawPull0,
+    RawPub0,
+    RawSub0,
+    RawReq0,
+    RawRep0,
+    RawSurveyor0,
+    RawRespondent0,
     Context,
     Socket,
     Listener,
@@ -30,8 +41,11 @@ from .nng import (
     PipeEvent,
     PipeEventStream,
     Message,
+    device,
+    adevice,
 )
 
+from .stats import stats, Stat
 from .service import Rep0Service, Request  # noqa: F401
 from .tls import TLSConfig
 

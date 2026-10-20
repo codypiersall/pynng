@@ -224,7 +224,11 @@ class AIOHelper:
         msg_p = _ffi.new("nng_msg **")
         check_err(_lib.nng_msg_alloc(msg_p, 0))
         msg = msg_p[0]
-        check_err(_lib.nng_msg_append(msg, data, len(data)))
+        if isinstance(data, bytes):
+            buf = data
+        else:
+            buf = _ffi.from_buffer(data)
+        check_err(_lib.nng_msg_append(msg, buf, len(data)))
         check_err(_lib.nng_aio_set_msg(self.aio, msg))
         check_err(self._lib_asend(self._nng_obj, self.aio))
         return await self.awaitable
@@ -262,3 +266,66 @@ class AIOHelper:
 
     def __del__(self):
         self._free()
+
+
+class DeviceAIO:
+    """Handles an asynchronous nng_device_aio operation for the correct event loop."""
+
+    def __init__(self, s1, s2=None, async_backend=None):
+        self.aio = None
+        self.s1 = s1
+        self.s2 = s2
+        self._lib = getattr(s1, "_lib", lib)
+        self._ffi = getattr(s1, "_ffi", ffi)
+        sock1 = s1.socket if hasattr(s1, "socket") else s1
+        if s2 is None:
+            sock2 = self._ffi.new("nng_socket *")[0]
+        else:
+            sock2 = s2.socket if hasattr(s2, "socket") else s2
+        self._sock1 = sock1
+        self._sock2 = sock2
+
+        if async_backend is None:
+            if hasattr(s1, "_async_backend") and s1._async_backend is not None:
+                async_backend = s1._async_backend
+            else:
+                async_backend = sniffio.current_async_library()
+        if async_backend not in AIOHelper._aio_helper_map:
+            raise ValueError(
+                "The async backend {} is not currently supported.".format(async_backend)
+            )
+        self.awaitable, self.cb_arg = AIOHelper._aio_helper_map[async_backend](self)
+
+        aio_p = self._ffi.new("nng_aio **")
+        with _aio_map_lock:
+            _aio_map[id(self.cb_arg)] = self.cb_arg
+        idarg = id(self.cb_arg)
+        as_void = self._ffi.cast("void *", idarg)
+        self._lib.nng_aio_alloc(aio_p, self._lib._async_complete, as_void)
+        self.aio = aio_p[0]
+
+    async def run(self):
+        try:
+            self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
+            await self.awaitable
+        finally:
+            self._free()
+
+    def _free(self):
+        if self.aio is not None:
+            self._lib.nng_aio_cancel(self.aio)
+            self._lib.nng_aio_free(self.aio)
+            self.aio = None
+        if hasattr(self, "cb_arg"):
+            with _aio_map_lock:
+                _aio_map.pop(id(self.cb_arg), None)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        self._free()
+
+    def __del__(self):
+        self._free()
+
