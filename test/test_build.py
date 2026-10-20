@@ -19,12 +19,19 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from pynng._nng import ffi, lib
+try:
+    from pynng._nng import ffi, lib
+    _has_compiled_nng = True
+except ImportError:
+    _has_compiled_nng = False
+    ffi = None
+    lib = None
 
 
 # -- Tests against the compiled FFI module ------------------------------------
 
 
+@pytest.mark.skipif(not _has_compiled_nng, reason="pynng._nng extension not yet compiled")
 class TestFFIExcludePatterns:
     """Verify that EXCLUDE_PATTERNS properly filter sensitive TLS functions."""
 
@@ -41,3 +48,46 @@ class TestFFIExcludePatterns:
     def test_ffi_retains_non_excluded_tls_functions(self):
         # nng_tls_config_alloc should NOT be excluded
         assert hasattr(lib, "nng_tls_config_alloc")
+
+
+# -- Direct CFFI generation tests from NNG headers via HeaderKit --------------
+
+_NNG_INCLUDE_DIR = os.environ.get("NNG_INCLUDE_DIR")
+_has_nng_headers = _NNG_INCLUDE_DIR is not None and os.path.isdir(_NNG_INCLUDE_DIR)
+
+
+@pytest.mark.skipif(not _has_nng_headers, reason="NNG_INCLUDE_DIR not set or not a directory")
+class TestGenerateCDef:
+    """Test CFFI declarations generation directly via HeaderKit and build_pynng."""
+
+    def test_cdef_is_valid_cffi(self):
+        """The generated cdef can be parsed by a fresh FFI without error."""
+        import cffi
+        from build_pynng import generate_cdef
+
+        cdef, _headers = generate_cdef()
+        test_ffi = cffi.FFI()
+        test_ffi.cdef(cdef)
+
+    def test_cdef_contains_core_types(self):
+        from build_pynng import generate_cdef
+
+        cdef, _headers = generate_cdef()
+        for type_name in [
+            "nng_socket",
+            "nng_pipe",
+            "nng_aio",
+            "nng_ctx",
+            "nng_msg",
+            "nng_dialer",
+            "nng_listener",
+        ]:
+            assert type_name in cdef, f"Missing type {type_name} in cdef"
+
+    def test_cdef_contains_core_functions(self):
+        from build_pynng import generate_cdef
+
+        cdef, _headers = generate_cdef()
+        for func in ["nng_send", "nng_recv", "nng_close", "nng_aio_alloc", "nng_ctx_open"]:
+            assert func in cdef, f"Missing function {func} in cdef"
+

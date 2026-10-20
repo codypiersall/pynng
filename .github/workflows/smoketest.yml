@@ -30,10 +30,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build a single wheel using stable ABI (cp310), installable on all Python 3.10+
+  # Build wheels across runner environments:
+  # - ubuntu-latest (modern LLVM)
+  # - ubuntu-22.04 (LLVM 14, guards against libclang 14 regression per HeaderKit #81)
   build:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,6 +56,7 @@ jobs:
       - name: Build wheel
         run: uv build --wheel -o dist/
       - name: Upload wheel
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
           name: smoketest-wheel
