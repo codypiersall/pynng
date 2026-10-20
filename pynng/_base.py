@@ -14,6 +14,7 @@ import asyncio
 import collections
 import logging
 import math
+import os
 import threading
 import weakref
 
@@ -24,6 +25,62 @@ from . import _aio
 from .exceptions import NNGException
 
 logger = logging.getLogger(__name__)
+
+# Keep track of initialized PID to intercept and prevent unsupported fork() calls.
+_init_pid = None
+_is_forked_child = False
+
+
+def _after_fork_in_child():
+    global _is_forked_child
+    if _init_pid is not None:
+        _is_forked_child = True
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
+def _mark_nng_initialized():
+    """Record the PID when NNG is initialized."""
+    global _init_pid
+    if _init_pid is None:
+        _init_pid = os.getpid()
+
+
+def _check_fork():
+    """Verify that we are not executing inside a forked child process.
+
+    NNG is heavily multithreaded and is not fork-reentrant safe.
+    Attempting to use NNG in a forked child causes hard C panics or deadlocks.
+    """
+    if _is_forked_child or (_init_pid is not None and os.getpid() != _init_pid):
+        raise RuntimeError(
+            "pynng does not support fork(). "
+            "NNG background threads and mutexes cannot survive a fork without exec. "
+            "Use multiprocessing.set_start_method('spawn') instead."
+        )
+
+
+def _is_nng_finalized():
+    """Check whether NNG runtime has been finalized."""
+    try:
+        from . import nng as _nng_mod
+
+        if getattr(_nng_mod, "_finalized", False):
+            return True
+    except Exception:
+        pass
+    try:
+        import sys
+
+        v2_mod = sys.modules.get("pynng.v2")
+        if v2_mod is not None and getattr(v2_mod, "_finalized", False):
+            return True
+    except Exception:
+        pass
+    return False
+
 
 # Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
@@ -49,9 +106,10 @@ def _ensure_can_send(thing):
     to a send method.
 
     """
+    _check_fork()
     if isinstance(thing, str):
         raise ValueError(
-            "Cannot send type str. " 'Maybe you left out a ".encode()" somewhere?'
+            'Cannot send type str. Maybe you left out a ".encode()" somewhere?'
         )
 
 
@@ -65,6 +123,7 @@ def to_char(charlike, add_null_term=False, ffi=None):
     """
     if ffi is None:
         from ._nng import ffi as _ffi
+
         ffi = _ffi
     # fast path for stuff that doesn't need to be changed.
     if isinstance(charlike, ffi.CData):
@@ -111,7 +170,10 @@ class PipeEventStream:
             self._loop = asyncio.get_running_loop()
         elif self._backend == "trio":
             import trio
-            self._send_channel, self._receive_channel = trio.open_memory_channel(math.inf)
+
+            self._send_channel, self._receive_channel = trio.open_memory_channel(
+                math.inf
+            )
             self._trio_token = trio.lowlevel.current_trio_token()
         else:
             raise ValueError(
@@ -131,7 +193,8 @@ class PipeEventStream:
             self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
         elif self._backend == "trio":
             self._trio_token.run_sync_soon(
-                self._trio_send_nowait, event,
+                self._trio_send_nowait,
+                event,
             )
 
     def _trio_send_nowait(self, event):
@@ -141,6 +204,7 @@ class PipeEventStream:
         raised here would crash the Trio event loop.
         """
         import trio
+
         try:
             self._send_channel.send_nowait(event)
         except trio.ClosedResourceError:
@@ -178,14 +242,13 @@ class PipeEventStream:
         # Signal the iterator to stop
         if self._backend == "asyncio":
             try:
-                self._loop.call_soon_threadsafe(
-                    self._queue.put_nowait, _SENTINEL
-                )
+                self._loop.call_soon_threadsafe(self._queue.put_nowait, _SENTINEL)
             except RuntimeError:
                 # Loop may be closed already
                 pass
         elif self._backend == "trio":
             import trio
+
             try:
                 self._send_channel.close()
             except trio.ClosedResourceError:
@@ -204,6 +267,7 @@ class PipeEventStream:
             return item
         elif self._backend == "trio":
             import trio
+
             try:
                 return await self._receive_channel.receive()
             except trio.EndOfChannel:
@@ -219,6 +283,7 @@ class PipeEventStream:
 # --- Option descriptors ---
 # These descriptors call into options.py, which resolves lib/ffi from the
 # owning instance.
+
 
 class _NNGOption:
     """A descriptor for more easily getting/setting NNG option."""
@@ -356,6 +421,9 @@ class Socket:
         async_backend=None,
         **kwargs,
     ):
+        _check_fork()
+        _mark_nng_initialized()
+
         # mapping of id: Python objects
         self._dialers = {}
         self._listeners = {}
@@ -381,6 +449,7 @@ class Socket:
         elif not hasattr(self, "_opener"):
             raise TypeError("Cannot directly instantiate a Socket.  Try a subclass.")
         from .exceptions import check_err
+
         check_err(self._opener(self._socket))
 
         if recv_timeout is not None:
@@ -425,9 +494,10 @@ class Socket:
             _lib.NNG_PIPE_EV_REM_POST,
         ):
             from .exceptions import check_err
-            check_err(_lib.nng_pipe_notify(
-                self.socket, event, _lib._nng_pipe_cb, handle
-            ))
+
+            check_err(
+                _lib.nng_pipe_notify(self.socket, event, _lib._nng_pipe_cb, handle)
+            )
 
     def dial(self, address, *, block=None):
         """Dial the specified address.
@@ -448,7 +518,9 @@ class Socket:
                    done.
 
         """
+        _check_fork()
         import pynng
+
         if block:
             return self._dial(address, flags=0)
         elif block is None:
@@ -470,6 +542,7 @@ class Socket:
         _ffi = self._ffi
         _lib = self._lib
         from .exceptions import check_err
+
         dialer = _ffi.new("nng_dialer *")
         ret = _lib.nng_dial(self.socket, to_char(address, ffi=_ffi), dialer, flags)
         check_err(ret)
@@ -486,9 +559,11 @@ class Socket:
         ``listener`` and ``flags`` usually do not need to be given.
 
         """
+        _check_fork()
         _ffi = self._ffi
         _lib = self._lib
         from .exceptions import check_err
+
         listener = _ffi.new("nng_listener *")
         ret = _lib.nng_listen(self.socket, to_char(address, ffi=_ffi), listener, flags)
         check_err(ret)
@@ -525,6 +600,8 @@ class Socket:
         self._dialers = {}
 
     def __del__(self):
+        if _is_nng_finalized():
+            return
         try:
             self.close()
         except (TypeError, AttributeError):
@@ -536,9 +613,11 @@ class Socket:
 
     def recv_msg(self, block=True):
         """Receive a :class:`Message` on the socket."""
+        _check_fork()
         _ffi = self._ffi
         _lib = self._lib
         from .exceptions import check_err
+
         flags = 0
         if not block:
             flags |= _lib.NNG_FLAG_NONBLOCK
@@ -560,6 +639,7 @@ class Socket:
         Returns:
             int: The number of bytes written to buffer.
         """
+        _check_fork()
         m = memoryview(buffer)
         if m.readonly:
             raise BufferError("buffer must be writable")
@@ -597,6 +677,7 @@ class Socket:
         """Send the :class:`Message` ``msg`` on the socket."""
         _lib = self._lib
         from .exceptions import check_err
+
         flags = 0
         if not block:
             flags |= _lib.NNG_FLAG_NONBLOCK
@@ -644,6 +725,7 @@ class Socket:
 
     async def __anext__(self):
         import pynng
+
         try:
             return await self.arecv()
         except pynng.Closed:
@@ -1000,6 +1082,7 @@ class Pipe:
 
         """
         from .exceptions import check_err
+
         check_err(self._lib.nng_pipe_close(self.pipe))
         self._closed = True
 
@@ -1049,6 +1132,8 @@ class Context:
     send_timeout = MsOption("send-timeout")
 
     def __init__(self, socket):
+        _check_fork()
+        _mark_nng_initialized()
         # need to set attributes first, so that if anything goes wrong,
         # __del__() doesn't throw an AttributeError
         self._context = None
@@ -1057,6 +1142,7 @@ class Context:
         _ffi = socket._ffi
         _lib = socket._lib
         from .exceptions import check_err
+
         self._context = _ffi.new("nng_ctx *")
         check_err(_lib.nng_ctx_open(self._context, socket.socket))
 
@@ -1083,9 +1169,11 @@ class Context:
 
     def recv_msg(self):
         """Synchronously receive a :class:`Message` using this context."""
+        _check_fork()
         _ffi = self._ffi
         _lib = self._lib
         from .exceptions import check_err
+
         aio_p = _ffi.new("nng_aio **")
         check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL))
         aio = aio_p[0]
@@ -1139,6 +1227,7 @@ class Context:
         _ffi = self._ffi
         _lib = self._lib
         from .exceptions import check_err
+
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             aio_p = _ffi.new("nng_aio **")
@@ -1167,6 +1256,7 @@ class Context:
         """Close this context."""
         _lib = self._lib
         from .exceptions import check_err
+
         ctx_err = 0
         if self._context is not None:
             # check that nng still has a reference
@@ -1194,6 +1284,7 @@ class Context:
 
     async def __anext__(self):
         import pynng
+
         try:
             return await self.arecv()
         except pynng.Closed:
@@ -1210,6 +1301,8 @@ class Context:
         return self._context[0]
 
     def __del__(self):
+        if _is_nng_finalized():
+            return
         try:
             self.close()
         except (TypeError, AttributeError, NNGException):
@@ -1245,7 +1338,7 @@ class Message:
     def __init__(self, data, pipe=None, *, _lib=None, _ffi=None):
         # Resolve lib/ffi: explicit args > pipe's socket > v1 default
         if _lib is None or _ffi is None:
-            if pipe is not None and hasattr(pipe, 'socket'):
+            if pipe is not None and hasattr(pipe, "socket"):
                 if _lib is None:
                     _lib = pipe.socket._lib
                 if _ffi is None:
@@ -1253,9 +1346,11 @@ class Message:
             else:
                 if _lib is None:
                     from ._nng import lib
+
                     _lib = lib
                 if _ffi is None:
                     from ._nng import ffi
+
                     _ffi = ffi
 
         self.__lib = _lib
@@ -1266,7 +1361,10 @@ class Message:
 
         from .exceptions import check_err
 
-        if isinstance(data, _ffi.CData) and _ffi.typeof(data).cname == "struct nng_msg *":
+        if (
+            isinstance(data, _ffi.CData)
+            and _ffi.typeof(data).cname == "struct nng_msg *"
+        ):
             self._nng_msg = data
         else:
             _ensure_can_send(data)
@@ -1308,6 +1406,7 @@ class Message:
             msg = "pipe must be type Pipe, not {}".format(type(pipe))
             raise ValueError(msg)
         from .exceptions import check_err
+
         check_err(self.__lib.nng_msg_set_pipe(self._nng_msg, pipe.pipe))
         self._pipe = pipe
 
@@ -1322,6 +1421,7 @@ class Message:
 
         """
         import pynng
+
         _lib = self.__lib
         _ffi = self.__ffi
         with self._mem_freed_lock:
@@ -1345,6 +1445,7 @@ class Message:
     def header(self):
         """Return the bytes from the message header."""
         import pynng
+
         _lib = self.__lib
         _ffi = self.__ffi
         with self._mem_freed_lock:
@@ -1367,6 +1468,7 @@ class Message:
         _lib = self.__lib
         _ffi = self.__ffi
         from .exceptions import check_err
+
         with self._mem_freed_lock:
             self._ensure_can_send()
             m = memoryview(data)
@@ -1380,6 +1482,7 @@ class Message:
         """Trim sz bytes from the start of the message header."""
         _lib = self.__lib
         from .exceptions import check_err
+
         with self._mem_freed_lock:
             self._ensure_can_send()
             check_err(_lib.nng_msg_header_trim(self._nng_msg, sz))
@@ -1388,6 +1491,7 @@ class Message:
         """Chop sz bytes from the end of the message header."""
         _lib = self.__lib
         from .exceptions import check_err
+
         with self._mem_freed_lock:
             self._ensure_can_send()
             check_err(_lib.nng_msg_header_chop(self._nng_msg, sz))
@@ -1405,6 +1509,7 @@ class Message:
         _ffi = self.__ffi
         import pynng
         from .exceptions import check_err
+
         with self._mem_freed_lock:
             if self._mem_freed:
                 raise pynng.MessageStateError(
@@ -1420,6 +1525,8 @@ class Message:
         return self.copy()
 
     def __del__(self):
+        if _is_nng_finalized():
+            return
         if not hasattr(self, "_mem_freed_lock"):
             return
         with self._mem_freed_lock:
@@ -1438,6 +1545,7 @@ class Message:
 
         """
         import pynng
+
         assert self._mem_freed_lock.locked()
         if self._mem_freed:
             msg = "Attempted to send the same message more than once."

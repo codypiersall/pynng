@@ -2,7 +2,6 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
-
 import logging
 import atexit
 import threading
@@ -61,17 +60,32 @@ adevice
 stats
 socket_stats
 Stat
+nng_fini
+nng_fini_at_exit
 """.split()
 
-# Register an atexit handler to call the nng_fini() cleanup function.
-# This is necessary to ensure:
-#   * The Python interpreter doesn't finalize and kill the reap thread
-#     during a callback to _nng_pipe_cb
-#   * Cleanup background queue threads used by NNG
+# Flag to allow users who explicitly need nng_fini() at atexit to opt in.
+# Defaults to False to avoid process-crashing race conditions with Python GC.
+nng_fini_at_exit = False
+_finalized = False
+
+
+def nng_fini():
+    """Explicitly finalize the NNG library runtime.
+
+    Frees global NNG resources. After calling this function, no further NNG
+    operations should be performed; remaining Python objects skip C deallocations
+    during GC.
+    """
+    global _finalized
+    if not _finalized:
+        _finalized = True
+        lib.nng_fini()
 
 
 def _pynng_atexit():
-    lib.nng_fini()
+    if nng_fini_at_exit:
+        nng_fini()
 
 
 atexit.register(_pynng_atexit)
@@ -230,6 +244,7 @@ class Socket(_base.Socket):
             self.listen(listen)
         if dial is not None:
             self.dial(dial, block=block_on_dial)
+
     def close(self):
         """Close the socket, freeing all system resources.
 
@@ -253,6 +268,7 @@ class Socket(_base.Socket):
             the socket, the function will raise ``pynng.TryAgain``.
 
         """
+        _base._check_fork()
         # TODO: someday we should support some kind of recv_into() operation
         # where the user provides the data buffer.
         flags = lib.NNG_FLAG_ALLOC
@@ -969,6 +985,7 @@ class Context(_base.Context):
     :class:`Socket`, and call the :meth:`~Socket.new_context` method.
 
     """
+
     pass
 
 
@@ -982,6 +999,7 @@ class Pipe(_base.Pipe):
     the underlying socket whenever the pipe is created.
 
     """
+
     pass
 
 
@@ -1021,6 +1039,7 @@ class Message(_base.Message):
         result.
 
     """
+
     pass
 
 
@@ -1094,6 +1113,8 @@ def device(s1, s2=None):
         Closed: When one of the sockets is closed.
         NNGException: If an NNG error occurs.
     """
+    _base._check_fork()
+    _base._mark_nng_initialized()
     s1_raw = s1.socket if isinstance(s1, Socket) else s1
     if s2 is not None:
         s2_raw = s2.socket if isinstance(s2, Socket) else s2
@@ -1116,5 +1137,7 @@ async def adevice(s1, s2=None, *, async_backend=None):
         Closed: When one of the sockets is closed.
         NNGException: If an NNG error occurs.
     """
+    _base._check_fork()
+    _base._mark_nng_initialized()
     with _aio.DeviceAIO(s1, s2, async_backend=async_backend) as dev:
         await dev.run()

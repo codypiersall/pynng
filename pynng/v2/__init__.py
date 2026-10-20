@@ -39,12 +39,29 @@ except ImportError as exc:
         "pip install -e . (or pip install pynng with a v2-capable build)."
     ) from exc
 
+from .._base import _mark_nng_initialized
+
 # Initialize nng v2 runtime. Must be called before any v2 operations.
 _lib.nng_init(_ffi.NULL)
+_mark_nng_initialized()
+
+# Flag to allow users who explicitly need nng_fini() at atexit to opt in.
+# Defaults to False to avoid process-crashing race conditions with Python GC.
+nng_fini_at_exit = False
+_finalized = False
+
+
+def nng_fini():
+    """Explicitly finalize the NNG v2 library runtime."""
+    global _finalized
+    if not _finalized:
+        _finalized = True
+        _lib.nng_fini()
 
 
 def _pynng_v2_atexit():
-    _lib.nng_fini()
+    if nng_fini_at_exit:
+        nng_fini()
 
 
 atexit.register(_pynng_v2_atexit)

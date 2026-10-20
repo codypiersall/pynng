@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local subscription tracking in `Sub0` (nng has no API to query subscriptions)
 - `socket.pipe_events()` returns an async iterator of `PipeEvent` objects for consuming pipe connect/disconnect events (`async for event in socket.pipe_events()`)
 
+- Support Python 3.15 in package classifiers and CI smoketest matrix
+- `pynng.nng_fini()` function and `nng_fini_at_exit` setting for explicit runtime finalization control
+
 ### Changed
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
 - Migrate build system from setuptools/CMake to scikit-build-core with headerkit for C header generation
@@ -41,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modernize GitHub Actions workflows to Node 24-compatible actions
 
 ### Fixed
+- Fix #108: Prevent process crash / NNG panic during Python interpreter shutdown by disabling unconditional `nng_fini()` at atexit (`nng_fini_at_exit = False`) and guarding `Socket`, `Context`, `Message`, `AIOHelper`, and `DeviceAIO` finalizers against calling deallocated NNG C state during GC
+- Fix #113: Prevent hard C aborts (`panic: nng is not fork-reentrant safe`) in forked child processes by detecting `fork()` and raising a descriptive Python `RuntimeError` directing users to `multiprocessing.set_start_method('spawn')`
 - Fix #104: Prevent `RuntimeError: cannot use unpack() on <cdata 'char *' NULL>` when receiving 0-byte messages via v1 `Socket.recv()`
 - Fix #128: Ensure `asyncio.CancelledError` is always propagated by `wait_for_aio()` if task was cancelled, preventing swallowed cancellations and freeing orphaned messages during cancel/send races
 - `ffi.from_handle` dangling pointer in pipe callbacks: module-level `_active_handles` registry keeps handles alive until `Socket.close()` completes, with try/except guard in `_nng_pipe_cb`

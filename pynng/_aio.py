@@ -143,6 +143,7 @@ class AIOHelper:
 
         # Resolve lib/ffi from the object if not explicitly provided
         from . import _base
+
         if _lib is None or _ffi is None:
             if isinstance(obj, _base.Socket):
                 if _lib is None:
@@ -172,7 +173,7 @@ class AIOHelper:
             self._nng_obj = obj.socket
             # Use _aio_recv_fn / _aio_send_fn properties if available,
             # otherwise fall back to v1 function names
-            if hasattr(obj, '_aio_recv_fn'):
+            if hasattr(obj, "_aio_recv_fn"):
                 self._lib_arecv = obj._aio_recv_fn
                 self._lib_asend = obj._aio_send_fn
             else:
@@ -216,11 +217,15 @@ class AIOHelper:
         check_err(_lib.nng_aio_result(self.aio))
         msg = _lib.nng_aio_get_msg(self.aio)
         from ._base import Message, Socket, Context
+
         # Use the socket's message class if available
         msg_cls = Message
         if isinstance(self.obj, Socket) and self.obj._message_class is not None:
             msg_cls = self.obj._message_class
-        elif isinstance(self.obj, Context) and self.obj._socket._message_class is not None:
+        elif (
+            isinstance(self.obj, Context)
+            and self.obj._socket._message_class is not None
+        ):
             msg_cls = self.obj._socket._message_class
         return msg_cls(msg, _lib=_lib, _ffi=_ffi)
 
@@ -254,6 +259,15 @@ class AIOHelper:
         """
         Free resources allocated with nng
         """
+        from ._base import _is_nng_finalized
+
+        if _is_nng_finalized():
+            self.aio = None
+            if hasattr(self, "cb_arg"):
+                with _aio_map_lock:
+                    _aio_map.pop(id(self.cb_arg), None)
+            return
+
         if self.aio is not None:
             _lib = self._lib
             # Cancel in-flight AIO before freeing to prevent deadlock during GC.
@@ -318,6 +332,15 @@ class DeviceAIO:
             self._free()
 
     def _free(self):
+        from ._base import _is_nng_finalized
+
+        if _is_nng_finalized():
+            self.aio = None
+            if hasattr(self, "cb_arg"):
+                with _aio_map_lock:
+                    _aio_map.pop(id(self.cb_arg), None)
+            return
+
         if self.aio is not None:
             self._lib.nng_aio_cancel(self.aio)
             self._lib.nng_aio_free(self.aio)
@@ -334,4 +357,3 @@ class DeviceAIO:
 
     def __del__(self):
         self._free()
-
