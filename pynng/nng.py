@@ -162,6 +162,148 @@ class PipeEventStream:
     async def __aexit__(self, *exc_info):
         self.close()
 
+# Keep CFFI socket handles alive for callbacks until socket close.
+_active_handles = {}
+_active_handles_lock = threading.Lock()
+
+
+PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
+"""A pipe event with the pipe and the event type.
+
+Attributes:
+    pipe: The :class:`Pipe` associated with the event.
+    event_type: One of ``"pre_add"``, ``"post_add"``, or ``"remove"``.
+"""
+
+
+_SENTINEL = object()
+
+
+class PipeEventStream:
+    """Async iterator that yields :class:`PipeEvent` objects.
+
+    Returned by :meth:`Socket.pipe_events`.  Use it with ``async for``::
+
+        async for event in socket.pipe_events():
+            print(f"Pipe {event.pipe} {event.event_type}")
+
+    Call :meth:`close` or use ``async with`` to stop receiving events and
+    unregister the internal callbacks.
+    """
+
+    def __init__(self, socket):
+        self._socket = socket
+        self._closed = False
+        backend = socket._async_backend
+        if backend is None:
+            backend = sniffio.current_async_library()
+        self._backend = backend
+
+        if self._backend == "asyncio":
+            self._queue = asyncio.Queue()
+            self._loop = asyncio.get_running_loop()
+        elif self._backend == "trio":
+            import trio
+            self._send_channel, self._receive_channel = trio.open_memory_channel(math.inf)
+            self._trio_token = trio.lowlevel.current_trio_token()
+        else:
+            raise ValueError(
+                "The async backend {} is not currently supported.".format(backend)
+            )
+
+        self._socket.add_pre_pipe_connect_cb(self._on_pre_add)
+        self._socket.add_post_pipe_connect_cb(self._on_post_add)
+        self._socket.add_post_pipe_remove_cb(self._on_remove)
+
+    def _put_event(self, event):
+        """Thread-safe put of an event into the async queue."""
+        if self._closed:
+            return
+        if self._backend == "asyncio":
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+        elif self._backend == "trio":
+            self._trio_token.run_sync_soon(
+                self._trio_send_nowait, event,
+            )
+
+    def _trio_send_nowait(self, event):
+        """Wrapper for send_nowait that suppresses ClosedResourceError.
+
+        Called via ``run_sync_soon`` from a foreign thread, so any exception
+        raised here would crash the Trio event loop.
+        """
+        import trio
+        try:
+            self._send_channel.send_nowait(event)
+        except trio.ClosedResourceError:
+            pass
+
+    def _on_pre_add(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="pre_add"))
+
+    def _on_post_add(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="post_add"))
+
+    def _on_remove(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="remove"))
+
+    def close(self):
+        """Stop receiving events and unregister callbacks."""
+        if self._closed:
+            return
+        self._closed = True
+
+        try:
+            self._socket.remove_pre_pipe_connect_cb(self._on_pre_add)
+        except ValueError:
+            pass
+        try:
+            self._socket.remove_post_pipe_connect_cb(self._on_post_add)
+        except ValueError:
+            pass
+        try:
+            self._socket.remove_post_pipe_remove_cb(self._on_remove)
+        except ValueError:
+            pass
+
+        if self._backend == "asyncio":
+            try:
+                self._loop.call_soon_threadsafe(
+                    self._queue.put_nowait, _SENTINEL
+                )
+            except RuntimeError:
+                pass
+        elif self._backend == "trio":
+            import trio
+            try:
+                self._send_channel.close()
+            except trio.ClosedResourceError:
+                pass
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._closed:
+            raise StopAsyncIteration
+        if self._backend == "asyncio":
+            item = await self._queue.get()
+            if item is _SENTINEL:
+                raise StopAsyncIteration
+            return item
+        elif self._backend == "trio":
+            import trio
+            try:
+                return await self._receive_channel.receive()
+            except trio.EndOfChannel:
+                raise StopAsyncIteration
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        self.close()
+
 
 logger = logging.getLogger(__name__)
 
@@ -981,7 +1123,7 @@ class Bus0(Socket):
 
     Here is a demonstration of using the bus protocol:
 
-    .. literalinclude:: snippets/bus0_sync.py
+    .. literalinclude:: /snippets/bus0_sync.py
         :language: python3
     """
 
@@ -1003,13 +1145,13 @@ class Pair0(Socket):
 
     This demonstrates the synchronous API:
 
-    .. literalinclude:: snippets/pair0_sync.py
+    .. literalinclude:: /snippets/pair0_sync.py
         :language: python3
 
     This demonstrates the asynchronous API using `Trio`_.  Remember that
     :mod:`asyncio` is also supported.
 
-    .. literalinclude:: snippets/pair0_async.py
+    .. literalinclude:: /snippets/pair0_async.py
         :language: python3
 
 
@@ -1055,11 +1197,11 @@ class Pair1(Socket):
     because it requires to use the :class:`Pipe` and :class:`Message`
     interfaces.
 
-    .. literalinclude:: snippets/pair1_sync.py
+    .. literalinclude:: /snippets/pair1_sync.py
 
     And here is an example using the async API, using `Trio`_.
 
-    .. literalinclude:: snippets/pair1_async.py
+    .. literalinclude:: /snippets/pair1_async.py
 
     """
 
@@ -1096,7 +1238,7 @@ class Push0(Socket):
     Here is an example of two :class:`Pull0` sockets connected to a
     :class:`Push0` socket.
 
-    .. literalinclude:: snippets/pushpull_sync.py
+    .. literalinclude:: /snippets/pushpull_sync.py
 
     """
 
@@ -1186,7 +1328,7 @@ class Sub0(Socket):
 
     The following example demonstrates a basic usage of pub/sub:
 
-    .. literalinclude:: snippets/pubsub_sync.py
+    .. literalinclude:: /snippets/pubsub_sync.py
 
     """
 
@@ -1294,7 +1436,7 @@ class Req0(Socket):
 
     Here is an example demonstrating the request/response pattern.
 
-    .. literalinclude:: snippets/reqrep_sync.py
+    .. literalinclude:: /snippets/reqrep_sync.py
 
     """
 
@@ -1358,7 +1500,7 @@ class Surveyor0(Socket):
 
     Here is an example:
 
-    .. literalinclude:: snippets/surveyor_sync.py
+    .. literalinclude:: /snippets/surveyor_sync.py
 
     """
 
