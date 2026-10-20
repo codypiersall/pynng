@@ -55,7 +55,7 @@ class TLSConfig:
             raise ValueError("Cannot set both ca_string and ca_files!")
 
         if (own_cert_string or own_key_string) and cert_key_file:
-            raise ValueError("Cannot set both own_{key,cert}_string an cert_key_file!")
+            raise ValueError("Cannot set both own_{key,cert}_string and cert_key_file!")
 
         if bool(own_cert_string) != bool(own_key_string):
             raise ValueError(
@@ -91,8 +91,10 @@ class TLSConfig:
 
     def __del__(self):
         try:
-            if self._tls_config is not None:
-                pynng.lib.nng_tls_config_free(self._tls_config)
+            if getattr(self, "_tls_config", None) is not None:
+                cfg = self._tls_config
+                self._tls_config = None
+                pynng.lib.nng_tls_config_free(cfg)
         except (TypeError, AttributeError):
             # During interpreter shutdown, globals (pynng, lib) may be None
             pass

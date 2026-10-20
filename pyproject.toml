@@ -34,7 +34,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit>=0.7.1"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit>=0.9.0"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinxcontrib-trio"]
 
 [project.urls]
@@ -48,7 +48,7 @@ requires = [
     "scikit-build-core>=0.8.0",
     "cffi",
     "cffi_buildtool",
-    "headerkit>=0.7.1",
+    "headerkit>=0.9.0",
     "setuptools-scm",
 ]
 
@@ -61,13 +61,15 @@ minimum-version = "0.8.0"
 build-dir = "./build/{cache_tag}"
 cmake.define = { "CMAKE_POSITION_INDEPENDENT_CODE" = "ON" }
 cmake.build-type = "Release"
+metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
+
 
 [tool.setuptools_scm]
 version_file = "pynng/_version.py"
 
 [tool.cibuildwheel]
 build-frontend = "build[uv]"
-test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio", "headerkit>=0.7.1"]
+test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio", "headerkit>=0.9.0"]
 # test_build.py tests the build system (header parsing via libclang), not the installed wheel.
 # It runs in smoketest (source checkout with build deps); cibuildwheel tests the installed wheel.
 test-command = "pytest {project}/test --ignore={project}/test/test_build.py"
@@ -75,26 +77,26 @@ test-command = "pytest {project}/test --ignore={project}/test/test_build.py"
 # cp314t-win*: https://github.com/python/cpython/issues/127294
 # *-win32: 32-bit Python can't load 64-bit libclang during build
 # *i686: 32-bit manylinux containers lack package managers for libclang
-# pp*: headerkit's vendored cindex uses c_char_p subclassing incompatible with PyPy's ctypes
-skip = "cp314t-win* *-win32 *i686 pp*"
+# PyPy and 32-bit builds are not enabled by default in cibuildwheel v3.
+skip = "cp314t-win* *-win32 *i686"
 
 build-verbosity = 1
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
-before-build = "uv run --no-project --with 'headerkit>=0.7.1' python -m headerkit.install_libclang --skip-verify"
+before-build = "uv run --no-project --with 'headerkit>=0.9.0' python -m headerkit.install_libclang --skip-verify"
 
 [tool.cibuildwheel.windows]
 # Windows builds fail because they try to use the same directory for different
 # architectures, and that's no good.
-before-build = "uv run --no-project --with \"headerkit>=0.7.1\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
+before-build = "uv run --no-project --with \"headerkit>=0.9.0\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
 environment = { PATH = "C:\\Program Files\\LLVM\\bin;$PATH" }
 
 [tool.cibuildwheel.macos]
 # Specify universal2 building for macOS
 archs = ["universal2"]
-before-build = "uv run --no-project --with 'headerkit>=0.7.1' python -m headerkit.install_libclang --skip-verify"
+before-build = "uv run --no-project --with 'headerkit>=0.9.0' python -m headerkit.install_libclang --skip-verify"
 
 environment = { CMAKE_OSX_ARCHITECTURES = "x86_64;arm64" }
 

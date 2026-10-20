@@ -6,12 +6,13 @@ import trio
 
 import pynng
 
-addr = "inproc://test-addr"
+from conftest import random_addr, FAST_TIMEOUT, MEDIUM_TIMEOUT, SLOW_TIMEOUT
 
 
-@pytest.mark.trio
+@pytest.mark.asyncio
 async def test_arecv_asend_asyncio():
-    with pynng.Pair0(listen=addr, recv_timeout=1000) as listener, pynng.Pair0(
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as listener, pynng.Pair0(
         dial=addr
     ) as dialer:
         await dialer.asend(b"hello there buddy")
@@ -20,8 +21,9 @@ async def test_arecv_asend_asyncio():
 
 @pytest.mark.trio
 async def test_asend_arecv_trio():
-    with pynng.Pair0(listen=addr, recv_timeout=2000) as listener, pynng.Pair0(
-        dial=addr, send_timeout=2000
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=MEDIUM_TIMEOUT) as listener, pynng.Pair0(
+        dial=addr, send_timeout=MEDIUM_TIMEOUT
     ) as dialer:
         await dialer.asend(b"hello there")
         assert (await listener.arecv()) == b"hello there"
@@ -29,7 +31,8 @@ async def test_asend_arecv_trio():
 
 @pytest.mark.trio
 async def test_arecv_trio_cancel():
-    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=SLOW_TIMEOUT) as p0:
         with pytest.raises(trio.TooSlowError):
             with trio.fail_after(0.001):
                 await p0.arecv()
@@ -43,7 +46,8 @@ async def test_arecv_asyncio_cancel():
         await asyncio.sleep(sleep_time)
         fut.cancel()
 
-    with pynng.Pair0(listen=addr, recv_timeout=5000) as p0:
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=SLOW_TIMEOUT) as p0:
         arecv = p0.arecv()
         fut = asyncio.ensure_future(arecv)
         with pytest.raises(asyncio.CancelledError):
@@ -52,6 +56,7 @@ async def test_arecv_asyncio_cancel():
 
 @pytest.mark.asyncio
 async def test_asend_asyncio_send_timeout():
+    addr = random_addr()
     with pytest.raises(pynng.exceptions.Timeout):
         with pynng.Pair0(listen=addr, send_timeout=1) as p0:
             await p0.asend(b"foo")
@@ -59,6 +64,7 @@ async def test_asend_asyncio_send_timeout():
 
 @pytest.mark.trio
 async def test_asend_trio_send_timeout():
+    addr = random_addr()
     with pytest.raises(pynng.exceptions.Timeout):
         with pynng.Pair0(listen=addr, send_timeout=1) as p0:
             await p0.asend(b"foo")
@@ -68,11 +74,12 @@ async def test_asend_trio_send_timeout():
 async def test_pub_sub_trio():
     """Demonstrate pub-sub protocol use with ``trio``.
 
-    Start a publisher which publishes 1000 integers and marks each value
-    as *even* or *odd* (its parity). Spawn 4 subscribers (2 for consuming
-    the evens and 2 for consuming the odds) in separate tasks and have each
-    one retreive values and verify the parity.
+    Start a publisher which publishes 20 integers and marks each value
+    as *even* or *odd* (its parity). Spawn 2 subscribers (1 for consuming
+    the evens and 1 for consuming the odds) in separate tasks and have each
+    one retrieve values and verify the parity.
     """
+    addr = random_addr()
     sentinel_received = {}
 
     def is_even(i):
@@ -80,9 +87,15 @@ async def test_pub_sub_trio():
 
     async def pub():
         with pynng.Pub0(listen=addr) as pubber:
+            # Wait until both subscribers have connected before publishing.
+            # inproc is reliable but messages sent before subscription is
+            # established are dropped.
+            while len(pubber.pipes) < 2:
+                await trio.sleep(0.01)
+
             for i in range(20):
                 prefix = "even" if is_even(i) else "odd"
-                msg = "{}:{}".format(prefix, i)
+                msg = f"{prefix}:{i}"
                 await pubber.asend(msg.encode("ascii"))
 
             while not all(sentinel_received.values()):
@@ -92,13 +105,14 @@ async def test_pub_sub_trio():
 
     async def subs(which):
         if which == "even":
-            pred = is_even
+            expected_values = list(range(0, 20, 2))  # [0, 2, 4, ..., 18]
         else:
-            pred = lambda i: not is_even(i)
+            expected_values = list(range(1, 20, 2))  # [1, 3, 5, ..., 19]
 
-        with pynng.Sub0(dial=addr, recv_timeout=5000) as subber:
+        with pynng.Sub0(dial=addr, recv_timeout=SLOW_TIMEOUT) as subber:
             subber.subscribe(which + ":")
 
+            received_values = []
             while True:
                 val = await subber.arecv()
 
@@ -107,8 +121,15 @@ async def test_pub_sub_trio():
                 if i == b"None":
                     break
 
-                assert pred(int(i))
+                received_values.append(int(i))
 
+            # The publisher sends 20 messages (10 per parity). Since pub
+            # waits for both subscribers to connect before publishing,
+            # all 10 messages must arrive with exactly the right values.
+            assert sorted(received_values) == expected_values, (
+                f"{which} subscriber received wrong values: {sorted(received_values)!r}, "
+                f"expected {expected_values!r}"
+            )
             # mark subscriber as having received None sentinel
             sentinel_received[which] = True
 

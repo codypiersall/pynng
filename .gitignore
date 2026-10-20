@@ -49,5 +49,9 @@ htmlcov/
 docs/_build/
 docs/_generated/
 
+# headerkit cdef cache
+_nng_cdef_cache.txt
+*.hkcache
+
 # Build directories we want to ignore
 _skbuild/

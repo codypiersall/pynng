@@ -9,7 +9,7 @@ import atexit
 
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err
+from .exceptions import check_err, NNGException
 from . import options
 from . import _aio
 
@@ -1365,8 +1365,9 @@ class Context:
     def __del__(self):
         try:
             self.close()
-        except (TypeError, AttributeError):
-            # During interpreter shutdown, globals (lib, ffi) may be None
+        except (TypeError, AttributeError, NNGException):
+            # During interpreter shutdown, globals (lib, ffi) may be None.
+            # If the parent socket was closed first, lib.nng_ctx_close raises Closed.
             pass
 
     async def asend_msg(self, msg):

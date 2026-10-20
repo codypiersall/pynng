@@ -9,26 +9,29 @@ import time
 import pytest
 
 import pynng
+import pynng.sockaddr
 from _test_util import wait_pipe_len
-
-addr = "inproc://test-addr"
+from conftest import random_addr, FAST_TIMEOUT
 
 
 def test_pipe_gets_added_and_removed():
-    s0 = pynng.Pair0(listen=addr)
-    s1 = pynng.Pair0()
-    assert len(s0.pipes) == 0
-    assert len(s1.pipes) == 0
-    s1.dial(addr)
-    wait_pipe_len(s0, 1)
-    wait_pipe_len(s1, 1)
-    # Close s1 first, then wait for s0 to see the pipe removed
-    s1.close()
-    wait_pipe_len(s0, 0)
-    s0.close()
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
+        assert len(s0.pipes) == 0
+        assert len(s1.pipes) == 0
+        s1.dial(addr)
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
+        # Close one side explicitly and verify pipes are removed on both ends
+        # while both sockets are still open (avoids racing against socket
+        # teardown, which can be slow on Windows ARM).
+        s1.close()
+        wait_pipe_len(s0, 0)
+        wait_pipe_len(s1, 0)
 
 
 def test_close_pipe_works():
+    addr = random_addr()
     with pynng.Pair0() as s0, pynng.Pair0() as s1:
         # list of pipes that got the callback called on them
         cb_pipes = []
@@ -63,6 +66,7 @@ def test_close_pipe_works():
 
 
 def test_pipe_local_and_remote_addresses():
+    addr = random_addr()
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
         wait_pipe_len(s0, 1)
         wait_pipe_len(s1, 1)
@@ -72,13 +76,18 @@ def test_pipe_local_and_remote_addresses():
         remote_addr0 = p0.remote_address
         local_addr1 = p1.local_address
         remote_addr1 = p1.remote_address
-        assert str(local_addr0) == addr.replace("tcp://", "")
+        # Verify address types
+        assert isinstance(local_addr0, pynng.sockaddr.InprocAddr)
+        assert isinstance(remote_addr0, pynng.sockaddr.InprocAddr)
+        # Verify symmetry: listener's local == dialer's remote
         assert str(local_addr0) == str(remote_addr1)
-        # on Windows, the local address is 0.0.0.0:0
         assert str(local_addr1) == str(remote_addr0)
+        # Verify the actual address content matches what was listened on
+        assert str(local_addr0) == addr
 
 
 def test_pre_pipe_connect_cb_totally_works():
+    addr = random_addr()
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
         called = False
 
@@ -94,6 +103,7 @@ def test_pre_pipe_connect_cb_totally_works():
 
 
 def test_closing_pipe_in_pre_connect_works():
+    addr = random_addr()
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
         s0.name = "s0"
         s1.name = "s1"
@@ -128,6 +138,7 @@ def test_closing_pipe_in_pre_connect_works():
 
 
 def test_post_pipe_connect_cb_works():
+    addr = random_addr()
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
         post_called = False
 
@@ -138,14 +149,16 @@ def test_post_pipe_connect_cb_works():
         s0.add_post_pipe_connect_cb(post_connect_cb)
         s1.dial(addr)
 
-        later = time.time() + 10
-        while later > time.time():
+        later = time.monotonic() + 10
+        while later > time.monotonic():
             if post_called:
                 break
+            time.sleep(0.0005)
         assert post_called
 
 
 def test_post_pipe_remove_cb_works():
+    addr = random_addr()
     with pynng.Pair0(listen=addr) as s0, pynng.Pair0() as s1:
         post_called = False
 
@@ -159,30 +172,41 @@ def test_post_pipe_remove_cb_works():
         wait_pipe_len(s1, 1)
         assert not post_called
 
-    later = time.time() + 10
-    while later > time.time():
+    later = time.monotonic() + 10
+    while later > time.monotonic():
         if post_called:
             break
+        time.sleep(0.0005)
     assert post_called
 
 
 def test_can_send_from_pipe():
-    with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as s0, \
+         pynng.Pair0(dial=addr, recv_timeout=FAST_TIMEOUT) as s1:
         wait_pipe_len(s0, 1)
-        s0.send(b"hello")
-        assert s1.recv() == b"hello"
-        s0.send_msg(pynng.Message(b"it is me again"))
-        assert s1.recv() == b"it is me again"
+        pipe = s0.pipes[0]
+        # Actually send from the pipe object
+        pipe.send(b"hello from pipe")
+        assert s1.recv() == b"hello from pipe"
+        # Also test send_msg from pipe
+        msg = pynng.Message(b"msg from pipe")
+        pipe.send_msg(msg)
+        assert s1.recv() == b"msg from pipe"
 
 
 @pytest.mark.trio
 async def test_can_asend_from_pipe():
-    with pynng.Pair0(listen=addr) as s0, pynng.Pair0(dial=addr) as s1:
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as s0, \
+         pynng.Pair0(dial=addr, recv_timeout=FAST_TIMEOUT) as s1:
         wait_pipe_len(s0, 1)
-        await s0.asend(b"hello")
-        assert await s1.arecv() == b"hello"
-        await s0.asend_msg(pynng.Message(b"it is me again"))
-        assert await s1.arecv() == b"it is me again"
+        pipe = s0.pipes[0]
+        await pipe.asend(b"hello from pipe async")
+        assert await s1.arecv() == b"hello from pipe async"
+        msg = pynng.Message(b"msg from pipe async")
+        await pipe.asend_msg(msg)
+        assert await s1.arecv() == b"msg from pipe async"
 
 
 def test_bad_callbacks_dont_cause_extra_failures():
@@ -192,6 +216,7 @@ def test_bad_callbacks_dont_cause_extra_failures():
         nonlocal called_pre_connect
         called_pre_connect = True
 
+    addr = random_addr()
     with pynng.Pair0(listen=addr) as s0:
         # adding something that is not a callback should still allow correct
         # things to work.
@@ -199,17 +224,80 @@ def test_bad_callbacks_dont_cause_extra_failures():
         s0.add_pre_pipe_connect_cb(pre_connect_cb)
         with pynng.Pair0(dial=addr) as _:
             wait_pipe_len(s0, 1)
-            later = time.time() + 10
-            while later > time.time():
+            later = time.monotonic() + 10
+            while later > time.monotonic():
                 if called_pre_connect:
                     break
+                time.sleep(0.0005)
             assert called_pre_connect
+
+
+def test_pipe_dialer_property():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0, \
+         pynng.Pair0(dial=addr) as s1:
+        wait_pipe_len(s1, 1)
+        pipe = s1.pipes[0]
+        dialer = pipe.dialer
+        assert dialer is s1.dialers[0]
+
+
+def test_pipe_listener_property():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0, \
+         pynng.Pair0(dial=addr) as s1:
+        wait_pipe_len(s0, 1)
+        pipe = s0.pipes[0]
+        listener = pipe.listener
+        assert listener is s0.listeners[0]
+
+
+def test_pipe_dialer_raises_on_listener_side():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0, \
+         pynng.Pair0(dial=addr) as s1:
+        wait_pipe_len(s0, 1)
+        pipe = s0.pipes[0]  # listener-side pipe
+        with pytest.raises(TypeError):
+            pipe.dialer
+
+
+def test_pipe_listener_raises_on_dialer_side():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0, \
+         pynng.Pair0(dial=addr) as s1:
+        wait_pipe_len(s1, 1)
+        pipe = s1.pipes[0]  # dialer-side pipe
+        with pytest.raises(TypeError):
+            pipe.listener
+
+
+def test_pipe_send_msg():
+    addr = random_addr()
+    with pynng.Pair1(listen=addr, polyamorous=True,
+                      recv_timeout=FAST_TIMEOUT) as s0, \
+         pynng.Pair1(dial=addr, polyamorous=True,
+                      recv_timeout=FAST_TIMEOUT) as s1:
+        wait_pipe_len(s0, 1)
+        pipe = s0.pipes[0]
+        msg = pynng.Message(b"pipe msg test")
+        pipe.send_msg(msg)
+        assert s1.recv() == b"pipe msg test"
+
+
+def test_pipe_properties():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s0, \
+         pynng.Pair0(dial=addr) as s1:
+        wait_pipe_len(s0, 1)
+        pipe = s0.pipes[0]
+        assert pipe.protocol_name == "pair"
 
 
 def test_pipes_access_under_contention():
     """Concurrent pipes access with connection churn does not crash."""
-    a = "inproc://test-pipe-contention-{}".format(id(object()))
-    listener = pynng.Pair0(listen=a)
+    addr = random_addr()
+    listener = pynng.Pair0(listen=addr)
     errors = []
 
     def access_pipes():
@@ -225,7 +313,7 @@ def test_pipes_access_under_contention():
 
     dialers = []
     for _ in range(10):
-        d = pynng.Pair0(dial=a)
+        d = pynng.Pair0(dial=addr)
         dialers.append(d)
 
     for t in threads:
@@ -236,3 +324,4 @@ def test_pipes_access_under_contention():
     listener.close()
 
     assert not errors, f"Thread errors: {errors}"
+

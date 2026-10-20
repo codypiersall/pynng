@@ -1,8 +1,31 @@
 name: Build
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - master
+      - main
+    paths:
+      - 'pynng/**'
+      - 'build_pynng.py'
+      - 'preprocess.py'
+      - 'pyproject.toml'
+      - 'CMakeLists.txt'
+      - 'stubs/**'
+      - 'patches/**'
+      - '.github/workflows/cibuildwheel.yml'
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'pynng/**'
+      - 'build_pynng.py'
+      - 'preprocess.py'
+      - 'pyproject.toml'
+      - 'CMakeLists.txt'
+      - 'stubs/**'
+      - 'patches/**'
+      - '.github/workflows/cibuildwheel.yml'
   release:
     types: [published]
 
@@ -12,8 +35,12 @@ concurrency:
 
 jobs:
   build_wheels:
-    # Prevent running duplicate jobs for PRs and pushes
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    # Tier 2: Run on master push, release, manual dispatch, or when PR is labeled 'ci:full'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'release' ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -29,46 +56,50 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
 
       # Used to host cibuildwheel
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.3
+        uses: pypa/cibuildwheel@v3.4.0
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
           path: ./wheelhouse/*.whl
 
   # create the source distribution
   make_sdist:
-    # Prevent running duplicate jobs for PRs and pushes
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    # Tier 2: Run on master push, release, manual dispatch, or when PR is labeled 'ci:full'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'release' ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
     name: Make SDist
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Optional, use if you use setuptools_scm
           fetch-tags: true
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Build SDist
         run: uv build --sdist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cibw-sdist
           path: dist/*.tar.gz
@@ -93,14 +124,14 @@ jobs:
       attestations: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: cibw-*
           merge-multiple: true
 
       - name: Generate attestations
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
 
