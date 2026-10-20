@@ -73,6 +73,7 @@ EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)", r"NNG_PROTOCOL_NUMBER"]
 # functions (internal data structure not needed by pynng).
 EXCLUDE_PATTERNS_V2 = [
     r"nng_tls_config_(pass|key)",
+    r"NNG_PROTOCOL_NUMBER",
     r"nng_id_map",
     r"nng_id_(get|set|alloc|remove|visit)",
     r"nng_tls_cert",
