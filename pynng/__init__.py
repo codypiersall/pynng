@@ -43,6 +43,8 @@ from .nng import (
     Message,
     device,
     adevice,
+    nng_fini,
+    nng_fini_at_exit,
 )
 
 from .stats import stats, Stat
