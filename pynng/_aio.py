@@ -58,7 +58,7 @@ def asyncio_helper(aio):
             else:
                 break
         err = _lib.nng_aio_result(aio.aio)
-        if err == _lib.NNG_ECANCELED:
+        if already_called_nng_aio_cancel or err == _lib.NNG_ECANCELED:
             raise asyncio.CancelledError
         check_err(err)
 
@@ -206,7 +206,13 @@ class AIOHelper:
         _lib = self._lib
         _ffi = self._ffi
         check_err(self._lib_arecv(self._nng_obj, self.aio))
-        await self.awaitable
+        try:
+            await self.awaitable
+        except BaseException:
+            msg = _lib.nng_aio_get_msg(self.aio)
+            if msg != _ffi.NULL:
+                _lib.nng_msg_free(msg)
+            raise
         check_err(_lib.nng_aio_result(self.aio))
         msg = _lib.nng_aio_get_msg(self.aio)
         from ._base import Message, Socket, Context

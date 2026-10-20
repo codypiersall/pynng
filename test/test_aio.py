@@ -55,6 +55,43 @@ async def test_arecv_asyncio_cancel():
 
 
 @pytest.mark.asyncio
+async def test_arecv_cancellation():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s1:
+        task = asyncio.create_task(s1.arecv())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_arecv_cancellation_immediate():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s1:
+        task = asyncio.create_task(s1.arecv())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_arecv_cancellation_race_with_send():
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as s1, pynng.Pair0(dial=addr) as s2:
+        task = asyncio.create_task(s1.arecv())
+        # Cancel the task while simultaneously sending a message to simulate race
+        task.cancel()
+        s2.send(b"racing message")
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The racing message remains queued in the socket and can be cleanly received
+        assert (await s1.arecv()) == b"racing message"
+        await s2.asend(b"subsequent message")
+        assert (await s1.arecv()) == b"subsequent message"
+
+
+@pytest.mark.asyncio
 async def test_asend_asyncio_send_timeout():
     addr = random_addr()
     with pytest.raises(pynng.exceptions.Timeout):

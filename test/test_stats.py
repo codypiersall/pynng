@@ -1,5 +1,11 @@
+import pytest
 import pynng
 from conftest import random_addr, FAST_TIMEOUT
+
+try:
+    pynng.stats()
+except pynng.exceptions.NotSupported:
+    pytest.skip("NNG compiled without stats support", allow_module_level=True)
 
 
 def test_socket_stats_basic():
