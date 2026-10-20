@@ -23,12 +23,25 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from pynng._nng import ffi, lib
+try:
+    from pynng._nng import ffi, lib
+    _has_compiled_nng = True
+except ImportError:
+    _has_compiled_nng = False
+    ffi = None
+    lib = None
 
 
 # -- Tests against the compiled FFI module ------------------------------------
 
 
+_skip_no_compiled_nng = pytest.mark.skipif(
+    not _has_compiled_nng,
+    reason="pynng._nng extension not yet compiled",
+)
+
+
+@_skip_no_compiled_nng
 class TestFFICoreTypes:
     """Verify that the FFI knows about all core NNG types."""
 
@@ -64,6 +77,7 @@ class TestFFICoreTypes:
         ffi.typeof(type_name)
 
 
+@_skip_no_compiled_nng
 class TestFFICoreFunctions:
     """Verify that all expected protocol openers and core functions exist."""
 
@@ -105,6 +119,7 @@ class TestFFICoreFunctions:
         assert hasattr(lib, func_name)
 
 
+@_skip_no_compiled_nng
 class TestFFIExcludePatterns:
     """Verify that EXCLUDE_PATTERNS properly filter sensitive TLS functions."""
 
@@ -123,6 +138,7 @@ class TestFFIExcludePatterns:
         assert hasattr(lib, "nng_tls_config_alloc")
 
 
+@_skip_no_compiled_nng
 class TestFFIDefines:
     """Verify that #define constants extracted from nng.h are present."""
 
@@ -478,3 +494,4 @@ class TestV2Differences:
 
     def test_v2_has_flag_nonblock(self):
         assert hasattr(self.v2.lib, "NNG_FLAG_NONBLOCK")
+

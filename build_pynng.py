@@ -65,7 +65,7 @@ NNG_V2_HEADERS = [
 # Keep NNG_HEADERS as alias for v1 (backward compatibility)
 NNG_HEADERS = NNG_V1_HEADERS
 
-EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)"]
+EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)", r"NNG_PROTOCOL_NUMBER"]
 
 # v2 has additional opaque types (forward-declared structs with no public
 # definition) that CFFI cannot handle as concrete types. Exclude them and

@@ -9,8 +9,9 @@ import threading
 
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, Closed, NoEntry
+from .exceptions import check_err, NNGException, Closed, NoEntry
 from . import options
+from .stats import stats, socket_stats, Stat
 from . import _aio
 from . import _base
 from ._base import (
@@ -44,6 +45,22 @@ Pub0 Sub0
 Req0 Rep0
 Socket
 Surveyor0 Respondent0
+RawBus0
+RawPair0
+RawPair1
+RawPush0
+RawPull0
+RawPub0
+RawSub0
+RawReq0
+RawRep0
+RawSurveyor0
+RawRespondent0
+device
+adevice
+stats
+socket_stats
+Stat
 """.split()
 
 # Register an atexit handler to call the nng_fini() cleanup function.
@@ -195,12 +212,14 @@ class Socket(_base.Socket):
         listen=None,
         dial=None,
         block_on_dial=None,
+        raw=False,
         **kwargs,
     ):
         super().__init__(
             listen=None,
             dial=None,
             block_on_dial=block_on_dial,
+            raw=raw,
             **kwargs,
         )
         if tls_config is not None:
@@ -252,7 +271,7 @@ class Socket(_base.Socket):
 
         Args:
 
-          data: either ``bytes`` or ``bytearray``
+          data: bytes, bytearray, memoryview, or any buffer-protocol object.
 
           block: If block is True (the default), the function will
             not return until the operation is completed or times out.
@@ -263,7 +282,11 @@ class Socket(_base.Socket):
         flags = 0
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
-        err = lib.nng_send(self.socket, data, len(data), flags)
+        if isinstance(data, bytes):
+            c_buf = data
+        else:
+            c_buf = ffi.from_buffer(data)
+        err = lib.nng_send(self.socket, c_buf, len(data), flags)
         check_err(err)
 
     async def arecv(self):
@@ -276,6 +299,14 @@ class Socket(_base.Socket):
         _ensure_can_send(data)
         with _aio.AIOHelper(self, self._async_backend) as aio:
             return await aio.asend(data)
+
+    def stats(self):
+        """Get snapshot of statistics for this socket."""
+        return socket_stats(self)
+
+    def stat(self, name):
+        """Get a single statistic value by name for this socket."""
+        return socket_stats(self)[name].value
 
 
 class Bus0(Socket):
@@ -297,6 +328,10 @@ class Bus0(Socket):
     """
 
     _opener = lib.nng_bus0_open
+    _raw_opener = lib.nng_bus0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pair0(Socket):
@@ -323,6 +358,10 @@ class Pair0(Socket):
     """
 
     _opener = lib.nng_pair0_open
+    _raw_opener = lib.nng_pair0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pair1(Socket):
@@ -366,12 +405,16 @@ class Pair1(Socket):
 
     """
 
-    def __init__(self, *, polyamorous=False, **kwargs):
-        if polyamorous:
+    _raw_opener = lib.nng_pair1_open_raw
+
+    def __init__(self, *, polyamorous=False, raw=False, **kwargs):
+        if raw:
+            kwargs["opener"] = lib.nng_pair1_open_raw
+        elif polyamorous:
             kwargs["opener"] = lib.nng_pair1_open_poly
         else:
             kwargs["opener"] = lib.nng_pair1_open
-        super().__init__(**kwargs)
+        super().__init__(raw=raw, **kwargs)
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
@@ -398,6 +441,10 @@ class Push0(Socket):
     """
 
     _opener = lib.nng_push0_open
+    _raw_opener = lib.nng_push0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pull0(Socket):
@@ -418,6 +465,10 @@ class Pull0(Socket):
     """
 
     _opener = lib.nng_pull0_open
+    _raw_opener = lib.nng_pull0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Pub0(Socket):
@@ -438,6 +489,10 @@ class Pub0(Socket):
     """
 
     _opener = lib.nng_pub0_open
+    _raw_opener = lib.nng_pub0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Sub0(Socket):
@@ -476,9 +531,10 @@ class Sub0(Socket):
     """
 
     _opener = lib.nng_sub0_open
+    _raw_opener = lib.nng_sub0_open_raw
 
-    def __init__(self, *, topics=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, topics=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         self._subscriptions = set()
         self._sub_lock = threading.RLock()
         if topics is None:
@@ -584,9 +640,10 @@ class Req0(Socket):
 
     resend_time = MsOption("req:resend-time")
     _opener = lib.nng_req0_open
+    _raw_opener = lib.nng_req0_open_raw
 
-    def __init__(self, *, resend_time=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, resend_time=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         if resend_time is not None:
             self.resend_time = resend_time
 
@@ -617,6 +674,10 @@ class Rep0(Socket):
     """
 
     _opener = lib.nng_rep0_open
+    _raw_opener = lib.nng_rep0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
 
 
 class Surveyor0(Socket):
@@ -642,10 +703,11 @@ class Surveyor0(Socket):
     """
 
     _opener = lib.nng_surveyor0_open
+    _raw_opener = lib.nng_surveyor0_open_raw
     survey_time = MsOption("surveyor:survey-time")
 
-    def __init__(self, *, survey_time=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, *, survey_time=None, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
         if survey_time is not None:
             self.survey_time = survey_time
 
@@ -720,6 +782,54 @@ class Respondent0(Socket):
     """
 
     _opener = lib.nng_respondent0_open
+    _raw_opener = lib.nng_respondent0_open_raw
+
+    def __init__(self, *, raw=False, **kwargs):
+        super().__init__(raw=raw, **kwargs)
+
+
+class RawBus0(Bus0):
+    """A raw bus0 socket."""
+
+
+class RawPair0(Pair0):
+    """A raw pair0 socket."""
+
+
+class RawPair1(Pair1):
+    """A raw pair1 socket."""
+
+
+class RawPush0(Push0):
+    """A raw push0 socket."""
+
+
+class RawPull0(Pull0):
+    """A raw pull0 socket."""
+
+
+class RawPub0(Pub0):
+    """A raw pub0 socket."""
+
+
+class RawSub0(Sub0):
+    """A raw sub0 socket."""
+
+
+class RawReq0(Req0):
+    """A raw req0 socket."""
+
+
+class RawRep0(Rep0):
+    """A raw rep0 socket."""
+
+
+class RawSurveyor0(Surveyor0):
+    """A raw surveyor0 socket."""
+
+
+class RawRespondent0(Respondent0):
+    """A raw respondent0 socket."""
 
 
 class Dialer(_base.Dialer):
@@ -919,3 +1029,44 @@ def _nng_pipe_cb(lib_pipe, event, arg):
         elif event == lib.NNG_PIPE_EV_ADD_PRE and pipe and pipe.closed:
             with sock._pipe_notify_lock:
                 sock._remove_pipe(lib_pipe)
+
+
+def device(s1, s2=None):
+    """Forward messages between socket s1 and socket s2 synchronously.
+
+    If s2 is None, messages are forwarded in only one direction (from s1, which
+    must be able to receive, to whatever destination). This function blocks
+    until an error occurs or one of the sockets is closed.
+
+    Args:
+        s1: A :class:`Socket` instance.
+        s2: A :class:`Socket` instance or None.
+
+    Raises:
+        Closed: When one of the sockets is closed.
+        NNGException: If an NNG error occurs.
+    """
+    s1_raw = s1.socket if isinstance(s1, Socket) else s1
+    if s2 is not None:
+        s2_raw = s2.socket if isinstance(s2, Socket) else s2
+    else:
+        s2_raw = ffi.new("nng_socket *", {"id": 0})[0]
+    check_err(lib.nng_device(s1_raw, s2_raw))
+
+
+async def adevice(s1, s2=None, *, async_backend=None):
+    """Forward messages between socket s1 and socket s2 asynchronously.
+
+    Can be cancelled cleanly in asyncio and trio tasks.
+
+    Args:
+        s1: A :class:`Socket` instance.
+        s2: A :class:`Socket` instance or None.
+        async_backend: Async backend name ("asyncio" or "trio"), or None to auto-detect.
+
+    Raises:
+        Closed: When one of the sockets is closed.
+        NNGException: If an NNG error occurs.
+    """
+    with _aio.DeviceAIO(s1, s2, async_backend=async_backend) as dev:
+        await dev.run()
