@@ -47,7 +47,7 @@ NNG_HEADERS = [
     "nng/transport/tls/tls.h",
 ]
 
-EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)"]
+EXCLUDE_PATTERNS = [r"nng_tls_config_(pass|key)", r"NNG_PROTOCOL_NUMBER"]
 
 # Path for the cached cdef file (placed next to build_pynng.py).
 # __file__ may not be defined when invoked via cffi_buildtool exec-python.
