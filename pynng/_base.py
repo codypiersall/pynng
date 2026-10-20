@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import threading
+import time
 import weakref
 
 import sniffio
@@ -97,6 +98,75 @@ Attributes:
 
 
 _SENTINEL = object()
+_RECV_SLICE_MS = 100  # Slice duration for interruptable recv loop (ms)
+
+
+def _sliced_aio_recv(recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_RECV_SLICE_MS):
+    """Perform an interruptable receive using nng_aio with sliced timeouts.
+
+    CFFI releases the GIL when blocking in C. If a thread waits in a long or
+    infinite C wait (e.g. pthread_cond_wait), Python signal handlers (such as
+    KeyboardInterrupt on Ctrl-C) are never triggered until C returns.
+    By slicing the wait into short intervals (default 100ms), Python's runtime
+    regularly regains the GIL to process pending signals.
+
+    Args:
+        recv_fn: C function to initiate receive (e.g. nng_recv_aio, nng_socket_recv, nng_ctx_recv).
+        target_handle: CFFI socket or context handle.
+        lib: CFFI library instance.
+        ffi: CFFI ffi instance.
+        timeout_ms: Total timeout in milliseconds (-1 for infinite).
+        slice_ms: Slice interval in milliseconds.
+
+    Returns:
+        nng_msg*: Pointer to received C message.
+    """
+    from .exceptions import check_err
+
+    if timeout_ms is not None and timeout_ms >= 0:
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+    else:
+        deadline = None
+
+    aio_p = ffi.new("nng_aio **")
+    check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
+    aio = aio_p[0]
+
+    first_attempt = True
+    try:
+        while True:
+            if deadline is None:
+                cur_slice = slice_ms
+            else:
+                now = time.monotonic()
+                if not first_attempt and now >= deadline:
+                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
+                remaining_ms = int(math.ceil((deadline - now) * 1000.0))
+                cur_slice = max(0, min(remaining_ms, slice_ms))
+            first_attempt = False
+
+            t_start = time.monotonic()
+            lib.nng_aio_set_timeout(aio, cur_slice)
+            recv_fn(target_handle, aio)
+            lib.nng_aio_wait(aio)
+            err = lib.nng_aio_result(aio)
+            elapsed_slice = time.monotonic() - t_start
+
+            if err == lib.NNG_ETIMEDOUT:
+                if deadline is not None and time.monotonic() >= deadline:
+                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
+                if cur_slice > 10 and elapsed_slice < (cur_slice * 0.8) / 1000.0:
+                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
+                continue
+
+            check_err(err, lib=lib, ffi=ffi)
+            return lib.nng_aio_get_msg(aio)
+    except BaseException:
+        lib.nng_aio_cancel(aio)
+        lib.nng_aio_wait(aio)
+        raise
+    finally:
+        lib.nng_aio_free(aio)
 
 
 def _ensure_can_send(thing):
@@ -618,14 +688,30 @@ class Socket:
         _lib = self._lib
         from .exceptions import check_err
 
-        flags = 0
         if not block:
-            flags |= _lib.NNG_FLAG_NONBLOCK
-        msg_p = _ffi.new("nng_msg **")
-        check_err(_lib.nng_recvmsg(self.socket, msg_p, flags))
-        msg = msg_p[0]
+            flags = _lib.NNG_FLAG_NONBLOCK
+            msg_p = _ffi.new("nng_msg **")
+            check_err(_lib.nng_recvmsg(self.socket, msg_p, flags), lib=_lib, ffi=_ffi)
+            raw_msg = msg_p[0]
+        else:
+            if hasattr(self, "_aio_recv_fn"):
+                recv_fn = self._aio_recv_fn
+            else:
+                recv_fn = _lib.nng_recv_aio
+            timeout = self.recv_timeout
+            if hasattr(self, "survey_time"):
+                st = self.survey_time
+                if st is not None and st >= 0:
+                    if timeout is None or timeout < 0:
+                        timeout = st
+                    else:
+                        timeout = min(timeout, st)
+            raw_msg = _sliced_aio_recv(
+                recv_fn, self.socket, _lib, _ffi, timeout
+            )
+
         msg_cls = self._message_class or Message
-        msg = msg_cls(msg, _lib=_lib, _ffi=_ffi)
+        msg = msg_cls(raw_msg, _lib=_lib, _ffi=_ffi)
         self._try_associate_msg_with_pipe(msg)
         return msg
 
@@ -1172,21 +1258,13 @@ class Context:
         _check_fork()
         _ffi = self._ffi
         _lib = self._lib
-        from .exceptions import check_err
 
-        aio_p = _ffi.new("nng_aio **")
-        check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL))
-        aio = aio_p[0]
-        try:
-            check_err(_lib.nng_ctx_recv(self.context, aio))
-            check_err(_lib.nng_aio_wait(aio))
-            check_err(_lib.nng_aio_result(aio))
-            nng_msg = _lib.nng_aio_get_msg(aio)
-            msg_cls = self._socket._message_class or Message
-            msg = msg_cls(nng_msg, _lib=_lib, _ffi=_ffi)
-            self._socket._try_associate_msg_with_pipe(msg)
-        finally:
-            _lib.nng_aio_free(aio)
+        nng_msg = _sliced_aio_recv(
+            _lib.nng_ctx_recv, self.context, _lib, _ffi, self.recv_timeout
+        )
+        msg_cls = self._socket._message_class or Message
+        msg = msg_cls(nng_msg, _lib=_lib, _ffi=_ffi)
+        self._socket._try_associate_msg_with_pipe(msg)
         return msg
 
     def recv(self):
