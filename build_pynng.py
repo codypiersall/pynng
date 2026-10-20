@@ -332,6 +332,12 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
     cdef = re.sub(r"\benum\s+nng_pipe_ev\b", "nng_pipe_ev", cdef)
     cdef = re.sub(r"\benum\s+nng_err\b", "nng_err", cdef)
 
+    # In nng.h v2, nng_init_params is an anonymous struct typedef.
+    # Replace parameter type with void * so CFFI doesn't require the full struct definition
+    # (pynng only passes NULL to nng_init).
+    cdef = re.sub(r"\bconst\s+(?:struct\s+)?nng_init_params\s*\*", "void *", cdef)
+    cdef = re.sub(r"\b(?:struct\s+)?nng_init_params\s*\*", "void *", cdef)
+
     # Extract additional #define constants from nng.h via regex
     # (libclang can miss macro values that involve expressions)
     nng_h_path = os.path.join(include_dir, "nng/nng.h")
