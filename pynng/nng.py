@@ -262,8 +262,12 @@ class Socket(_base.Socket):
         size_t = ffi.new("size_t *")
         ret = lib.nng_recv(self.socket, data, size_t, flags)
         check_err(ret)
-        recvd = ffi.unpack(data[0], size_t[0])
-        lib.nng_free(data[0], size_t[0])
+        if size_t[0] == 0:
+            recvd = b""
+        else:
+            recvd = ffi.unpack(data[0], size_t[0])
+        if data[0] != ffi.NULL:
+            lib.nng_free(data[0], size_t[0])
         return recvd
 
     def send(self, data, block=True):

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dual-version coexistence with NNG v2.0.0 GA under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`)
+- Pluggable TLS engine support via CMake `NNG_TLS_ENGINE` supporting `mbedTLS`, `wolfSSL`, `OpenSSL`, and `none`
+- Raw socket wrapper classes (`RawBus0`, `RawPair0`, `RawPair1`, `RawReq0`, `RawRep0`, `RawPub0`, `RawSub0`, `RawPush0`, `RawPull0`, `RawSurveyor0`, `RawRespondent0`) for broker and proxy topologies
+- `pynng.device()` and async `pynng.adevice()` forwarding proxies for kernel-level bridging
+- Zero-copy Python buffer protocol support (`Socket.recv_into`, `Socket.arecv_into`, memoryview/bytearray send) across both v1 and v2
+- Message header manipulation and inspection (`Message.header`, `msg.header_insert()`, `msg.header_append()`, `msg.header_trim()`, `msg.header_chop()`)
+- Runtime statistics extraction via `pynng.stats()` and `socket.get_stat()`
+- Comprehensive Sphinx documentation overhaul with dedicated per-class API references, interactive guides, and architecture documentation
 - `Surveyor0.asurvey()` method for ergonomic async survey/collect pattern (sends survey, collects all responses until timeout, returns list)
 - `Rep0Service` high-level async service class for concurrent request/reply handling with multiple context workers
 - `Request` class with `.data` and `.reply()` for ergonomic request processing within `Rep0Service`
@@ -29,8 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace handwritten CFFI bindings with auto-generated bindings from NNG headers via headerkit
 - Add CI concurrency groups to cancel stale workflow runs
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
+- Python 3.10 EOL deprecation advisory in documentation and README
+- Modernize GitHub Actions workflows to Node 24-compatible actions
 
 ### Fixed
+- Fix #104: Prevent `RuntimeError: cannot use unpack() on <cdata 'char *' NULL>` when receiving 0-byte messages via v1 `Socket.recv()`
+- Fix #128: Ensure `asyncio.CancelledError` is always propagated by `wait_for_aio()` if task was cancelled, preventing swallowed cancellations and freeing orphaned messages during cancel/send races
 - `ffi.from_handle` dangling pointer in pipe callbacks: module-level `_active_handles` registry keeps handles alive until `Socket.close()` completes, with try/except guard in `_nng_pipe_cb`
 - `_aio_map` thread safety for free-threaded Python (3.13t/3.14t): all accesses protected by `_aio_map_lock`
 - `AIOHelper._free()` potential deadlock during GC: cancel pending AIO operations before calling `nng_aio_free()` to prevent callback/GIL deadlock

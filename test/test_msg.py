@@ -1,5 +1,6 @@
 import contextlib
 import io
+import time
 
 import pytest
 import pynng
@@ -202,3 +203,107 @@ def test_buffer_after_send_raises():
         received = receiver.recv()
         assert received == b"hello"
 
+
+def test_recv_zero_byte_pair0():
+    """Verify receiving 0-byte messages via v1 Socket.recv() on Pair0 (Issue #104)."""
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as s1, pynng.Pair0(
+        dial=addr, recv_timeout=FAST_TIMEOUT
+    ) as s2:
+        wait_pipe_len(s1, 1)
+        wait_pipe_len(s2, 1)
+
+        # Blocking recv of 0-byte message
+        s1.send(b"")
+        recvd = s2.recv()
+        assert recvd == b""
+        assert len(recvd) == 0
+
+        # Non-blocking recv of 0-byte message
+        s1.send(b"")
+        for _ in range(50):
+            try:
+                recvd_nb = s2.recv(block=False)
+                break
+            except pynng.TryAgain:
+                time.sleep(0.01)
+        else:
+            pytest.fail("Did not receive 0-byte message with block=False")
+        assert recvd_nb == b""
+        assert len(recvd_nb) == 0
+
+
+def test_recv_zero_byte_reqrep0():
+    """Verify receiving 0-byte messages via v1 Socket.recv() on Req0/Rep0 (Issue #104)."""
+    addr = random_addr()
+    with pynng.Req0(listen=addr, recv_timeout=FAST_TIMEOUT) as req, pynng.Rep0(
+        dial=addr, recv_timeout=FAST_TIMEOUT
+    ) as rep:
+        wait_pipe_len(req, 1)
+        wait_pipe_len(rep, 1)
+
+        # req sends 0-byte request, rep receives (blocking)
+        req.send(b"")
+        recvd = rep.recv()
+        assert recvd == b""
+        assert len(recvd) == 0
+
+        # rep sends 0-byte response, req receives (blocking)
+        rep.send(b"")
+        recvd = req.recv()
+        assert recvd == b""
+        assert len(recvd) == 0
+
+        # Test non-blocking recv with 0-byte request and response
+        req.send(b"")
+        for _ in range(50):
+            try:
+                recvd_nb = rep.recv(block=False)
+                break
+            except pynng.TryAgain:
+                time.sleep(0.01)
+        else:
+            pytest.fail("Rep did not receive 0-byte message with block=False")
+        assert recvd_nb == b""
+        assert len(recvd_nb) == 0
+
+        rep.send(b"")
+        for _ in range(50):
+            try:
+                recvd_nb = req.recv(block=False)
+                break
+            except pynng.TryAgain:
+                time.sleep(0.01)
+        else:
+            pytest.fail("Req did not receive 0-byte message with block=False")
+        assert recvd_nb == b""
+        assert len(recvd_nb) == 0
+
+
+def test_recv_zero_byte_pushpull0():
+    """Verify receiving 0-byte messages via v1 Socket.recv() on Push0/Pull0 (Issue #104)."""
+    addr = random_addr()
+    with pynng.Push0(listen=addr) as push, pynng.Pull0(
+        dial=addr, recv_timeout=FAST_TIMEOUT
+    ) as pull:
+        wait_pipe_len(push, 1)
+        wait_pipe_len(pull, 1)
+
+        # Blocking recv of 0-byte message
+        push.send(b"")
+        recvd = pull.recv()
+        assert recvd == b""
+        assert len(recvd) == 0
+
+        # Non-blocking recv of 0-byte message
+        push.send(b"")
+        for _ in range(50):
+            try:
+                recvd_nb = pull.recv(block=False)
+                break
+            except pynng.TryAgain:
+                time.sleep(0.01)
+        else:
+            pytest.fail("Pull did not receive 0-byte message with block=False")
+        assert recvd_nb == b""
+        assert len(recvd_nb) == 0
