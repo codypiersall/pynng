@@ -268,23 +268,8 @@ class Socket(_base.Socket):
             the socket, the function will raise ``pynng.TryAgain``.
 
         """
-        _base._check_fork()
-        # TODO: someday we should support some kind of recv_into() operation
-        # where the user provides the data buffer.
-        flags = lib.NNG_FLAG_ALLOC
-        if not block:
-            flags |= lib.NNG_FLAG_NONBLOCK
-        data = ffi.new("char **")
-        size_t = ffi.new("size_t *")
-        ret = lib.nng_recv(self.socket, data, size_t, flags)
-        check_err(ret)
-        if size_t[0] == 0:
-            recvd = b""
-        else:
-            recvd = ffi.unpack(data[0], size_t[0])
-        if data[0] != ffi.NULL:
-            lib.nng_free(data[0], size_t[0])
-        return recvd
+        msg = self.recv_msg(block=block)
+        return msg.bytes
 
     def send(self, data, block=True):
         """Sends ``data`` on socket.
