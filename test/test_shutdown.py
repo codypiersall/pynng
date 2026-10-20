@@ -10,7 +10,7 @@ def test_default_nng_fini_at_exit_is_false():
     assert callable(pynng.nng_fini)
 
 
-def test_shutdown_and_gc_safety_in_subprocess():
+def test_shutdown_and_gc_safety_in_subprocess(tmp_path):
     """Verify that calling nng_fini() before GC does not crash or panic the process."""
     code = """
 import asyncio
@@ -35,6 +35,7 @@ print("SHUTDOWN_OK")
 """
     proc = subprocess.run(
         [sys.executable, "-c", code],
+        cwd=str(tmp_path),
         capture_output=True,
         text=True,
         check=False,
@@ -44,7 +45,7 @@ print("SHUTDOWN_OK")
     assert "panic" not in proc.stderr.lower()
 
 
-def test_v2_shutdown_and_gc_safety_in_subprocess():
+def test_v2_shutdown_and_gc_safety_in_subprocess(tmp_path):
     """Verify that v2 nng_fini() does not cause crashes during subsequent GC."""
     code = """
 import pynng.v2 as v2
@@ -56,6 +57,7 @@ print("V2_SHUTDOWN_OK")
 """
     proc = subprocess.run(
         [sys.executable, "-c", code],
+        cwd=str(tmp_path),
         capture_output=True,
         text=True,
         check=False,

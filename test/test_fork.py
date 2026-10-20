@@ -90,6 +90,7 @@ if __name__ == '__main__':
 """)
     res = subprocess.run(
         [sys.executable, str(script)],
+        cwd=str(tmp_path),
         capture_output=True,
         text=True,
         check=False,
