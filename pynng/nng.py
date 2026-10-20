@@ -3,20 +3,163 @@ Provides a Pythonic interface to cffi nng bindings
 """
 
 
+import asyncio
+import collections
 import logging
+import math
 import threading
 import weakref
 import atexit
 
+import sniffio
+
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, NNGException
+from .exceptions import check_err, NNGException, Closed, NoEntry
 from . import options
 from . import _aio
 
 # Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
 _active_handles_lock = threading.Lock()
+
+
+PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
+"""A pipe event with the pipe and the event type.
+
+Attributes:
+    pipe: The :class:`Pipe` associated with the event.
+    event_type: One of ``"pre_add"``, ``"post_add"``, or ``"remove"``.
+"""
+
+
+_SENTINEL = object()
+
+
+class PipeEventStream:
+    """Async iterator that yields :class:`PipeEvent` objects.
+
+    Returned by :meth:`Socket.pipe_events`.  Use it with ``async for``::
+
+        async for event in socket.pipe_events():
+            print(f"Pipe {event.pipe} {event.event_type}")
+
+    Call :meth:`close` or use ``async with`` to stop receiving events and
+    unregister the internal callbacks.
+    """
+
+    def __init__(self, socket):
+        self._socket = socket
+        self._closed = False
+        backend = socket._async_backend
+        if backend is None:
+            backend = sniffio.current_async_library()
+        self._backend = backend
+
+        if self._backend == "asyncio":
+            self._queue = asyncio.Queue()
+            self._loop = asyncio.get_running_loop()
+        elif self._backend == "trio":
+            import trio
+            self._send_channel, self._receive_channel = trio.open_memory_channel(math.inf)
+            self._trio_token = trio.lowlevel.current_trio_token()
+        else:
+            raise ValueError(
+                "The async backend {} is not currently supported.".format(backend)
+            )
+
+        self._socket.add_pre_pipe_connect_cb(self._on_pre_add)
+        self._socket.add_post_pipe_connect_cb(self._on_post_add)
+        self._socket.add_post_pipe_remove_cb(self._on_remove)
+
+    def _put_event(self, event):
+        """Thread-safe put of an event into the async queue."""
+        if self._closed:
+            return
+        if self._backend == "asyncio":
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+        elif self._backend == "trio":
+            self._trio_token.run_sync_soon(
+                self._trio_send_nowait, event,
+            )
+
+    def _trio_send_nowait(self, event):
+        """Wrapper for send_nowait that suppresses ClosedResourceError.
+
+        Called via ``run_sync_soon`` from a foreign thread, so any exception
+        raised here would crash the Trio event loop.
+        """
+        import trio
+        try:
+            self._send_channel.send_nowait(event)
+        except trio.ClosedResourceError:
+            pass
+
+    def _on_pre_add(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="pre_add"))
+
+    def _on_post_add(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="post_add"))
+
+    def _on_remove(self, pipe):
+        self._put_event(PipeEvent(pipe=pipe, event_type="remove"))
+
+    def close(self):
+        """Stop receiving events and unregister callbacks."""
+        if self._closed:
+            return
+        self._closed = True
+
+        try:
+            self._socket.remove_pre_pipe_connect_cb(self._on_pre_add)
+        except ValueError:
+            pass
+        try:
+            self._socket.remove_post_pipe_connect_cb(self._on_post_add)
+        except ValueError:
+            pass
+        try:
+            self._socket.remove_post_pipe_remove_cb(self._on_remove)
+        except ValueError:
+            pass
+
+        if self._backend == "asyncio":
+            try:
+                self._loop.call_soon_threadsafe(
+                    self._queue.put_nowait, _SENTINEL
+                )
+            except RuntimeError:
+                pass
+        elif self._backend == "trio":
+            import trio
+            try:
+                self._send_channel.close()
+            except trio.ClosedResourceError:
+                pass
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._closed:
+            raise StopAsyncIteration
+        if self._backend == "asyncio":
+            item = await self._queue.get()
+            if item is _SENTINEL:
+                raise StopAsyncIteration
+            return item
+        elif self._backend == "trio":
+            import trio
+            try:
+                return await self._receive_channel.receive()
+            except trio.EndOfChannel:
+                raise StopAsyncIteration
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        self.close()
 
 
 logger = logging.getLogger(__name__)
@@ -659,6 +802,30 @@ class Socket:
         with self._pipe_notify_lock:
             self._on_post_pipe_remove.remove(callback)
 
+    def pipe_events(self):
+        """Return an async iterator of :class:`PipeEvent` objects.
+
+        Each event has a ``pipe`` attribute (the :class:`Pipe`) and an
+        ``event_type`` attribute (one of ``"pre_add"``, ``"post_add"``, or
+        ``"remove"``).
+
+        Example::
+
+            async for event in socket.pipe_events():
+                print(f"Pipe {event.pipe} {event.event_type}")
+
+        The returned :class:`PipeEventStream` can also be used as an async
+        context manager::
+
+            async with socket.pipe_events() as events:
+                async for event in events:
+                    ...
+
+        Call ``close()`` on the stream (or exit the ``async with`` block) to
+        stop receiving events and unregister the internal callbacks.
+        """
+        return PipeEventStream(self)
+
     def _try_associate_msg_with_pipe(self, msg):
         """Looks up the nng_msg associated with the ``msg`` and attempts to
         set it on the Message ``msg``
@@ -936,6 +1103,8 @@ class Sub0(Socket):
 
     def __init__(self, *, topics=None, **kwargs):
         super().__init__(**kwargs)
+        self._subscriptions = set()
+        self._sub_lock = threading.RLock()
         if topics is None:
             return
         # special-case str/bytes
@@ -943,6 +1112,12 @@ class Sub0(Socket):
             topics = [topics]
         for topic in topics:
             self.subscribe(topic)
+
+    @property
+    def subscriptions(self):
+        """Return a frozenset of current subscriptions (as bytes)."""
+        with self._sub_lock:
+            return frozenset(self._subscriptions)
 
     def subscribe(self, topic):
         """Subscribe to the specified topic.
@@ -957,10 +1132,14 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
+        if isinstance(topic, str):
+            topic = topic.encode()
         options._setopt_string_nonnull(self, b"sub:subscribe", topic)
+        with self._sub_lock:
+            self._subscriptions.add(topic)
 
     def unsubscribe(self, topic):
-        """Unsubscribe to the specified topic.
+        """Unsubscribe from the specified topic.
 
         .. Note::
 
@@ -969,7 +1148,31 @@ class Sub0(Socket):
             desired behavior, just pass :class:`bytes` in as the topic.
 
         """
+        if isinstance(topic, str):
+            topic = topic.encode()
         options._setopt_string_nonnull(self, b"sub:unsubscribe", topic)
+        with self._sub_lock:
+            self._subscriptions.discard(topic)
+
+    def subscribe_all(self, topics):
+        """Subscribe to multiple topics at once.
+
+        Args:
+            topics: An iterable of :class:`str` or :class:`bytes` topics.
+
+        """
+        for topic in topics:
+            self.subscribe(topic)
+
+    def unsubscribe_all(self):
+        """Unsubscribe from all current subscriptions."""
+        with self._sub_lock:
+            current = list(self._subscriptions)
+            for topic in current:
+                try:
+                    self.unsubscribe(topic)
+                except NoEntry:
+                    pass
 
 
 class Req0(Socket):
@@ -1069,6 +1272,56 @@ class Surveyor0(Socket):
         super().__init__(**kwargs)
         if survey_time is not None:
             self.survey_time = survey_time
+
+    async def asurvey(self, data, *, timeout=None, max_responses=None):
+        """Send a survey and collect all responses until timeout.
+
+        Args:
+            data: Survey message to send (bytes).
+            timeout: Response collection timeout in ms. If None, uses
+                the socket's recv_timeout.
+            max_responses: Maximum number of responses to collect. If
+                None (the default), collects all responses until timeout.
+                Useful for bounding memory usage when the number of
+                respondents is unknown.
+
+        Returns:
+            list[bytes]: All responses received before timeout or
+            max_responses limit.
+
+        Note:
+            The survey protocol does not support nng contexts, so when a
+            ``timeout`` is provided this method temporarily modifies the
+            socket-level ``recv_timeout``. A try/finally block ensures the
+            original value is restored, but callers sharing the socket
+            across concurrent tasks should be aware this is not task-safe.
+            If task-safety is required, use a dedicated socket per task.
+        """
+        old_recv_timeout = self.recv_timeout
+        old_survey_time = self.survey_time
+        if timeout is not None:
+            self.recv_timeout = timeout
+            self.survey_time = timeout
+
+        try:
+            await self.asend(data)
+            responses = []
+            while True:
+                if max_responses is not None and len(responses) >= max_responses:
+                    break
+                try:
+                    response = await self.arecv()
+                    responses.append(response)
+                except pynng.Timeout:
+                    break
+            return responses
+        finally:
+            try:
+                if timeout is not None:
+                    self.recv_timeout = old_recv_timeout
+                    self.survey_time = old_survey_time
+            except Closed:
+                pass
 
 
 class Respondent0(Socket):

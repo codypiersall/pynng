@@ -8,12 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Surveyor0.asurvey()` method for ergonomic async survey/collect pattern (sends survey, collects all responses until timeout, returns list)
+- `Rep0Service` high-level async service class for concurrent request/reply handling with multiple context workers
+- `Request` class with `.data` and `.reply()` for ergonomic request processing within `Rep0Service`
 - `async with` context manager support for sockets (`async with pynng.Pair0() as sock:`)
 - `async for` iteration over received messages (`async for msg in sock:`)
 - `aclose()` method for explicit async socket cleanup
 - `async with` context manager support for `Dialer` and `Listener`
 - `aclose()` method for `Dialer` and `Listener`
 - `recv_timeout` and `send_timeout` option descriptors on `Context` for per-context timeout control
+- `Sub0.subscriptions` property to inspect current subscriptions as a frozenset
+- `Sub0.subscribe_all(topics)` for batch subscription to multiple topics
+- `Sub0.unsubscribe_all()` to clear all current subscriptions
+- Local subscription tracking in `Sub0` (NNG has no API to query subscriptions)
+- `socket.pipe_events()` returns an async iterator of `PipeEvent` objects for consuming pipe connect/disconnect events (`async for event in socket.pipe_events()`)
 
 ### Changed
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads

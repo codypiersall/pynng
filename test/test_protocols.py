@@ -255,3 +255,150 @@ def test_buffer_size_options():
     with pynng.Pair0(recv_buffer_size=4, send_buffer_size=8) as s:
         assert s.recv_buffer_size == 4
         assert s.send_buffer_size == 8
+
+
+def test_sub_subscriptions_property():
+    """Verify Sub0.subscriptions returns an immutable frozenset tracking topics."""
+    with pynng.Sub0() as sub:
+        assert sub.subscriptions == frozenset()
+        sub.subscribe(b"topic1")
+        sub.subscribe("topic2")
+        assert sub.subscriptions == frozenset({b"topic1", b"topic2"})
+
+        # Immutable frozenset check
+        subs = sub.subscriptions
+        assert isinstance(subs, frozenset)
+        with pytest.raises(AttributeError):
+            subs.add(b"topic3")
+
+        # Idempotent subscribe check
+        sub.subscribe(b"topic1")
+        assert sub.subscriptions == frozenset({b"topic1", b"topic2"})
+
+        # Unsubscribe removes from tracking
+        sub.unsubscribe(b"topic1")
+        assert sub.subscriptions == frozenset({b"topic2"})
+
+        # Unsubscribing non-existent topic raises NNGException and leaves tracking intact
+        with pytest.raises(pynng.NNGException):
+            sub.unsubscribe(b"nonexistent")
+        assert sub.subscriptions == frozenset({b"topic2"})
+
+
+def test_sub_constructor_topics():
+    """Verify Sub0 constructor topic tracking for str, bytes, and collections."""
+    with pynng.Sub0(topics="single_str") as sub:
+        assert sub.subscriptions == frozenset({b"single_str"})
+
+    with pynng.Sub0(topics=b"single_bytes") as sub:
+        assert sub.subscriptions == frozenset({b"single_bytes"})
+
+    with pynng.Sub0(topics=[b"a", "b", b"c"]) as sub:
+        assert sub.subscriptions == frozenset({b"a", b"b", b"c"})
+
+
+def test_sub_subscribe_all():
+    """Verify Sub0.subscribe_all batch subscribes multiple topics."""
+    with pynng.Sub0() as sub:
+        sub.subscribe_all([])
+        assert sub.subscriptions == frozenset()
+
+        sub.subscribe_all([b"alpha", "beta", b"gamma"])
+        assert sub.subscriptions == frozenset({b"alpha", b"beta", b"gamma"})
+
+
+def test_sub_unsubscribe_all():
+    """Verify Sub0.unsubscribe_all unregisters and stops receiving messages."""
+    with pynng.Sub0() as sub:
+        # no-op on empty socket
+        sub.unsubscribe_all()
+        assert sub.subscriptions == frozenset()
+
+    addr = random_addr()
+    with pynng.Pub0(listen=addr) as pub, \
+         pynng.Sub0(dial=addr, recv_timeout=FAST_TIMEOUT) as sub:
+        wait_pipe_len(pub, 1)
+
+        sub.subscribe_all([b"weather:", b"sports:"])
+        assert sub.subscriptions == frozenset({b"weather:", b"sports:"})
+
+        time.sleep(0.05)
+        pub.send(b"weather:sunny")
+        assert sub.recv() == b"weather:sunny"
+
+        sub.unsubscribe_all()
+        assert sub.subscriptions == frozenset()
+        time.sleep(0.05)
+
+        pub.send(b"weather:rain")
+        pub.send(b"sports:score")
+        with pytest.raises(pynng.Timeout):
+            sub.recv()
+
+        # Re-subscribing works after unsubscribe_all
+        sub.subscribe(b"sports:")
+        time.sleep(0.05)
+        pub.send(b"sports:final")
+        assert sub.recv() == b"sports:final"
+
+
+def test_sub_multibyte_topics():
+    """Verify Sub0 handles multi-byte unicode strings safely without truncation."""
+    topic_str = "🔥/alerts"
+    topic_bytes = topic_str.encode("utf-8")
+    assert len(topic_str) != len(topic_bytes)
+
+    topic_cjk = "こんにちは/tokyo"
+    topic_cjk_bytes = topic_cjk.encode("utf-8")
+
+    addr = random_addr()
+    with pynng.Pub0(listen=addr) as pub, \
+         pynng.Sub0(dial=addr, recv_timeout=FAST_TIMEOUT) as sub:
+        wait_pipe_len(pub, 1)
+
+        sub.subscribe(topic_str)
+        sub.subscribe(topic_cjk)
+        assert sub.subscriptions == frozenset({topic_bytes, topic_cjk_bytes})
+
+        time.sleep(0.05)
+        pub.send(topic_bytes + b": critical warning")
+        pub.send(b"other: message")
+        pub.send(topic_cjk_bytes + b": greeting")
+
+        assert sub.recv() == topic_bytes + b": critical warning"
+        assert sub.recv() == topic_cjk_bytes + b": greeting"
+
+        sub.unsubscribe(topic_str)
+        assert sub.subscriptions == frozenset({topic_cjk_bytes})
+        time.sleep(0.05)
+        pub.send(topic_bytes + b": another warning")
+        with pytest.raises(pynng.Timeout):
+            sub.recv()
+
+
+def test_sub_thread_safety():
+    """Verify Sub0 subscription tracking is thread-safe under concurrent operations."""
+    with pynng.Sub0() as sub:
+        errors = []
+
+        def worker(worker_id):
+            try:
+                for i in range(50):
+                    t = f"worker_{worker_id}_topic_{i}"
+                    sub.subscribe(t)
+                    subs = sub.subscriptions
+                    assert isinstance(subs, frozenset)
+                    if i % 2 == 0:
+                        sub.unsubscribe(t)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(w,)) for w in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert isinstance(sub.subscriptions, frozenset)
+
