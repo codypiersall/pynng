@@ -275,9 +275,11 @@ class DeviceAIO:
         self.aio = None
         self.s1 = s1
         self.s2 = s2
+        self._lib = getattr(s1, "_lib", lib)
+        self._ffi = getattr(s1, "_ffi", ffi)
         sock1 = s1.socket if hasattr(s1, "socket") else s1
         if s2 is None:
-            sock2 = ffi.new("nng_socket *")[0]
+            sock2 = self._ffi.new("nng_socket *")[0]
         else:
             sock2 = s2.socket if hasattr(s2, "socket") else s2
         self._sock1 = sock1
@@ -294,25 +296,25 @@ class DeviceAIO:
             )
         self.awaitable, self.cb_arg = AIOHelper._aio_helper_map[async_backend](self)
 
-        aio_p = ffi.new("nng_aio **")
+        aio_p = self._ffi.new("nng_aio **")
         with _aio_map_lock:
             _aio_map[id(self.cb_arg)] = self.cb_arg
         idarg = id(self.cb_arg)
-        as_void = ffi.cast("void *", idarg)
-        lib.nng_aio_alloc(aio_p, lib._async_complete, as_void)
+        as_void = self._ffi.cast("void *", idarg)
+        self._lib.nng_aio_alloc(aio_p, self._lib._async_complete, as_void)
         self.aio = aio_p[0]
 
     async def run(self):
         try:
-            lib.nng_device_aio(self.aio, self._sock1, self._sock2)
+            self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
             await self.awaitable
         finally:
             self._free()
 
     def _free(self):
         if self.aio is not None:
-            lib.nng_aio_cancel(self.aio)
-            lib.nng_aio_free(self.aio)
+            self._lib.nng_aio_cancel(self.aio)
+            self._lib.nng_aio_free(self.aio)
             self.aio = None
         if hasattr(self, "cb_arg"):
             with _aio_map_lock:
