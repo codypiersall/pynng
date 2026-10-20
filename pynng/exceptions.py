@@ -7,7 +7,7 @@ Generally, each number in nng_errno_enum corresponds with an Exception type.
 
 """
 
-from ._nng import ffi, lib as nng
+from ._nng import ffi as _default_ffi, lib as _default_lib
 
 
 class NNGException(Exception):
@@ -142,40 +142,49 @@ class Internal(NNGException):  # NNG_EINTERNAL
     pass
 
 
-# maps exceptions from the enum nng_errno_enum to Exception classes
+class Stopped(NNGException):  # NNG_ESTOPPED (v2 only, value 999)
+    pass
+
+
+# Build the exception map using numeric constants extracted from v1 lib.
+# These integer values are stable across v1 and v2.
 EXCEPTION_MAP = {
-    nng.NNG_EINTR: Interrupted,
-    nng.NNG_ENOMEM: NoMemory,
-    nng.NNG_EINVAL: InvalidOperation,
-    nng.NNG_EBUSY: Busy,
-    nng.NNG_ETIMEDOUT: Timeout,
-    nng.NNG_ECONNREFUSED: ConnectionRefused,
-    nng.NNG_ECLOSED: Closed,
-    nng.NNG_EAGAIN: TryAgain,
-    nng.NNG_ENOTSUP: NotSupported,
-    nng.NNG_EADDRINUSE: AddressInUse,
-    nng.NNG_ESTATE: BadState,
-    nng.NNG_ENOENT: NoEntry,
-    nng.NNG_EPROTO: ProtocolError,
-    nng.NNG_EUNREACHABLE: DestinationUnreachable,
-    nng.NNG_EADDRINVAL: AddressInvalid,
-    nng.NNG_EPERM: PermissionDenied,
-    nng.NNG_EMSGSIZE: MessageTooLarge,
-    nng.NNG_ECONNRESET: ConnectionReset,
-    nng.NNG_ECONNABORTED: ConnectionAborted,
-    nng.NNG_ECANCELED: Canceled,
-    nng.NNG_ENOFILES: OutOfFiles,
-    nng.NNG_ENOSPC: OutOfSpace,
-    nng.NNG_EEXIST: AlreadyExists,
-    nng.NNG_EREADONLY: ReadOnly,
-    nng.NNG_EWRITEONLY: WriteOnly,
-    nng.NNG_ECRYPTO: CryptoError,
-    nng.NNG_EPEERAUTH: AuthenticationError,
-    nng.NNG_ENOARG: NoArgument,
-    nng.NNG_EAMBIGUOUS: Ambiguous,
-    nng.NNG_EBADTYPE: BadType,
-    nng.NNG_EINTERNAL: Internal,
+    int(_default_lib.NNG_EINTR): Interrupted,
+    int(_default_lib.NNG_ENOMEM): NoMemory,
+    int(_default_lib.NNG_EINVAL): InvalidOperation,
+    int(_default_lib.NNG_EBUSY): Busy,
+    int(_default_lib.NNG_ETIMEDOUT): Timeout,
+    int(_default_lib.NNG_ECONNREFUSED): ConnectionRefused,
+    int(_default_lib.NNG_ECLOSED): Closed,
+    int(_default_lib.NNG_EAGAIN): TryAgain,
+    int(_default_lib.NNG_ENOTSUP): NotSupported,
+    int(_default_lib.NNG_EADDRINUSE): AddressInUse,
+    int(_default_lib.NNG_ESTATE): BadState,
+    int(_default_lib.NNG_ENOENT): NoEntry,
+    int(_default_lib.NNG_EPROTO): ProtocolError,
+    int(_default_lib.NNG_EUNREACHABLE): DestinationUnreachable,
+    int(_default_lib.NNG_EADDRINVAL): AddressInvalid,
+    int(_default_lib.NNG_EPERM): PermissionDenied,
+    int(_default_lib.NNG_EMSGSIZE): MessageTooLarge,
+    int(_default_lib.NNG_ECONNRESET): ConnectionReset,
+    int(_default_lib.NNG_ECONNABORTED): ConnectionAborted,
+    int(_default_lib.NNG_ECANCELED): Canceled,
+    int(_default_lib.NNG_ENOFILES): OutOfFiles,
+    int(_default_lib.NNG_ENOSPC): OutOfSpace,
+    int(_default_lib.NNG_EEXIST): AlreadyExists,
+    int(_default_lib.NNG_EREADONLY): ReadOnly,
+    int(_default_lib.NNG_EWRITEONLY): WriteOnly,
+    int(_default_lib.NNG_ECRYPTO): CryptoError,
+    int(_default_lib.NNG_EPEERAUTH): AuthenticationError,
+    int(_default_lib.NNG_ENOARG): NoArgument,
+    int(_default_lib.NNG_EAMBIGUOUS): Ambiguous,
+    int(_default_lib.NNG_EBADTYPE): BadType,
+    int(_default_lib.NNG_EINTERNAL): Internal,
 }
+
+# Add NNG_ESTOPPED (999) for v2 support. This code only exists in v2,
+# but we add it to the map unconditionally with its known numeric value.
+EXCEPTION_MAP[999] = Stopped
 
 
 class MessageStateError(Exception):
@@ -184,18 +193,27 @@ class MessageStateError(Exception):
     """
 
 
-def check_err(err):
+def check_err(err, lib=None, ffi=None):
     """
     Raises an exception if the return value of an nng_function is nonzero.
 
     The enum nng_errno_enum is defined in nng.h
 
+    Args:
+        err: The error code returned by an NNG function.
+        lib: The CFFI lib to use for nng_strerror. Defaults to v1 lib.
+        ffi: The CFFI ffi to use for string conversion. Defaults to v1 ffi.
     """
     # fast path for success
     if not err:
         return
 
-    msg = nng.nng_strerror(err)
+    if lib is None:
+        lib = _default_lib
+    if ffi is None:
+        ffi = _default_ffi
+
+    msg = lib.nng_strerror(err)
     string = ffi.string(msg)
     string = string.decode()
     exc = EXCEPTION_MAP.get(err, NNGException)

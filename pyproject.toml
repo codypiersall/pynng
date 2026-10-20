@@ -103,3 +103,7 @@ environment = { CMAKE_OSX_ARCHITECTURES = "x86_64;arm64" }
 [tool.pytest.ini_options]
 addopts = "--capture=no --verbose"
 testpaths = ["test"]
+markers = [
+    "nng_v1: marks tests as v1-only",
+    "nng_v2: marks tests as v2-only (deselected when _nng_v2 is not built)",
+]

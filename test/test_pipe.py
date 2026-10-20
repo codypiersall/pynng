@@ -99,6 +99,11 @@ def test_pre_pipe_connect_cb_totally_works():
         s1.dial(addr)
         wait_pipe_len(s0, 1)
         wait_pipe_len(s1, 1)
+        later = time.monotonic() + 10
+        while later > time.monotonic():
+            if called:
+                break
+            time.sleep(0.0005)
         assert called
 
 
@@ -331,13 +336,14 @@ def test_active_handles_registry():
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
+    key = (s0._version_tag, sock_id)
     with _active_handles_lock:
-        assert sock_id in _active_handles
-        assert _active_handles[sock_id]() is s0
+        assert key in _active_handles
+        assert _active_handles[key]() is s0
 
     s0.close()
     with _active_handles_lock:
-        assert sock_id not in _active_handles
+        assert key not in _active_handles
 
 
 def test_active_handles_reused_id_protection():
@@ -346,21 +352,22 @@ def test_active_handles_reused_id_protection():
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
+    key = (s0._version_tag, sock_id)
 
     # Simulate another socket reusing sock_id
     class Dummy:
         pass
 
-    dummy_obj = Dummy()
-    dummy_ref = weakref.ref(dummy_obj)
+    dummy = Dummy()
+    dummy_ref = weakref.ref(dummy)
     with _active_handles_lock:
-        _active_handles[sock_id] = dummy_ref
+        _active_handles[key] = dummy_ref
 
-    # Closing s0 should not remove the dummy_ref because ref() != s0
+    # Closing s0 should not remove the dummy_ref because s0 is not dummy
     s0.close()
     with _active_handles_lock:
-        assert _active_handles.get(sock_id) is dummy_ref
-        del _active_handles[sock_id]
+        assert _active_handles.get(key) is dummy_ref
+        del _active_handles[key]
 
 
 def test_unclosed_socket_garbage_collected():
@@ -370,14 +377,16 @@ def test_unclosed_socket_garbage_collected():
     addr = random_addr()
     s = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s.socket)
+    vtag = getattr(s, "_version_tag", None)
+    key = (vtag, sock_id) if vtag else sock_id
     with _active_handles_lock:
-        assert sock_id in _active_handles
+        assert key in _active_handles
     wr = weakref.ref(s)
     del s
     gc.collect()
     assert wr() is None, "Unclosed socket leaked and was not garbage-collected!"
     with _active_handles_lock:
-        assert sock_id not in _active_handles
+        assert key not in _active_handles
 
 
 def test_pipe_cb_does_not_deadlock_on_socket_operations():
@@ -446,6 +455,18 @@ def test_nng_pipe_cb_invalid_handle_safe(caplog):
     from pynng.nng import _nng_pipe_cb, ffi, lib
     # Passing NULL or invalid pointer to _nng_pipe_cb should not raise or crash,
     # and should log an informational message that the event was ignored.
+    with caplog.at_level(logging.INFO):
+        _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
+    assert any("invalid handle" in record.message for record in caplog.records)
+
+
+def test_v2_nng_pipe_cb_invalid_handle_safe(caplog):
+    import logging
+    try:
+        from pynng.v2._callbacks import _nng_pipe_cb
+        from pynng._nng_v2 import ffi, lib
+    except ImportError:
+        pytest.skip("v2 extension not available")
     with caplog.at_level(logging.INFO):
         _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
     assert any("invalid handle" in record.message for record in caplog.records)
