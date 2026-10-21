@@ -8,7 +8,7 @@ import threading
 
 import pynng
 from ._nng import ffi, lib
-from .exceptions import check_err, NNGException, Closed, NoEntry
+from .exceptions import check_err, NNGException, Closed, NoEntry, BadState, Timeout
 from . import options
 from .stats import stats, socket_stats, Stat
 from . import _aio
@@ -765,6 +765,13 @@ class Surveyor0(Socket):
                     self.survey_time = old_survey_time
             except Closed:
                 pass
+
+    def recv_msg(self, block=True):
+        """Receive a message on the surveyor socket, translating survey expiration to Timeout."""
+        try:
+            return super().recv_msg(block=block)
+        except BadState:
+            raise Timeout("Timed out", 5)
 
 
 class Respondent0(Socket):
