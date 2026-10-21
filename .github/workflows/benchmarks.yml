@@ -1,0 +1,152 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    paths:
+      - 'pynng/**'
+      - 'build_pynng.py'
+      - 'benchmarks/**'
+      - '.github/workflows/benchmarks.yml'
+  pull_request:
+    paths:
+      - 'pynng/**'
+      - 'build_pynng.py'
+      - 'benchmarks/**'
+      - '.github/workflows/benchmarks.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Base ref / branch to compare against (defaults to master; on master defaults to HEAD~1)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install system build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ninja-build libclang-dev
+
+      - name: Stage benchmark harness
+        run: |
+          mkdir -p /tmp/bench_harness
+          cp -r benchmarks/* /tmp/bench_harness/
+
+      # Step 1: Benchmark current branch
+      - name: Build and Benchmark Current Branch
+        run: |
+          uv build --wheel -o dist/
+          uv pip install --system --reinstall dist/*.whl
+          python /tmp/bench_harness/bench.py -n 10000 --json current_bench.json
+
+      # Step 2: Checkout base branch and benchmark on the EXACT same VM
+      - name: Build and Benchmark Base Branch
+        run: |
+          TARGET_REF="${{ inputs.base_ref }}"
+          if [ -z "$TARGET_REF" ]; then
+            if [ -n "${{ github.base_ref }}" ]; then
+              TARGET_REF="${{ github.base_ref }}"
+            elif [ "${{ github.ref_name }}" = "master" ]; then
+              TARGET_REF="HEAD~1"
+            else
+              TARGET_REF="master"
+            fi
+          fi
+
+          RESOLVED_REF=""
+          if git rev-parse --verify "$TARGET_REF" >/dev/null 2>&1; then
+            RESOLVED_REF="$TARGET_REF"
+          elif git rev-parse --verify "origin/$TARGET_REF" >/dev/null 2>&1; then
+            RESOLVED_REF="origin/$TARGET_REF"
+          fi
+
+          if [ -n "$RESOLVED_REF" ]; then
+            echo "Checking out target base ref: $RESOLVED_REF"
+            rm -rf dist/ build/
+            git checkout "$RESOLVED_REF"
+            uv build --wheel -o dist/
+            uv pip install --system --reinstall dist/*.whl
+            python /tmp/bench_harness/bench.py -n 10000 --json base_bench.json
+          else
+            echo "Base ref $TARGET_REF not found; skipping comparison."
+          fi
+
+      # Step 3: Compare results & generate markdown table
+      - name: Compare Benchmarks
+        id: compare
+        run: |
+          if [ -f base_bench.json ]; then
+            FAIL_ARG=""
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              FAIL_ARG="--fail-on-regression 20"
+            fi
+            python /tmp/bench_harness/compare.py base_bench.json current_bench.json --output report.md $FAIL_ARG
+            cat report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚡ Benchmark Results (Standalone)" >> $GITHUB_STEP_SUMMARY
+            echo "Ran on commit \`$(git rev-parse --short HEAD)\`." >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            python -m json.tool current_bench.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # Step 4: Post or update sticky comment on the PR (only if running on a PR and report exists)
+      - name: Post PR Benchmark Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('report.md')) return;
+            const report = fs.readFileSync('report.md', 'utf8');
+            const issue_number = context.issue.number;
+            const botHeader = '## ⚡ PyNNG Performance Benchmark Report';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' && comment.body.includes(botHeader)
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: report
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+                body: report
+              });
+            }
