@@ -11,6 +11,8 @@ class SockAddr:
 
     """
 
+    __slots__ = ("_sock_addr",)
+
     type_to_str = {
         pynng.lib.NNG_AF_UNSPEC: "Unspecified",
         pynng.lib.NNG_AF_INPROC: "inproc",
@@ -43,6 +45,8 @@ class SockAddr:
 
 
 class InprocAddr(SockAddr):
+    __slots__ = ("_mem",)
+
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
         # union member
@@ -62,6 +66,8 @@ class InprocAddr(SockAddr):
 
 
 class IPCAddr(SockAddr):
+    __slots__ = ("_mem",)
+
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
         # union member
@@ -81,6 +87,8 @@ class IPCAddr(SockAddr):
 
 
 class InAddr(SockAddr):
+    __slots__ = ("_mem",)
+
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
         # union member
@@ -104,6 +112,8 @@ class InAddr(SockAddr):
 
 
 class In6Addr(SockAddr):
+    __slots__ = ("_mem",)
+
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
         # union member
@@ -127,6 +137,8 @@ class In6Addr(SockAddr):
 
 
 class ZTAddr(SockAddr):
+    __slots__ = ("_mem",)
+
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
         # union member
@@ -146,6 +158,8 @@ class ZTAddr(SockAddr):
 
 
 class AbstractAddr(SockAddr):
+    __slots__ = ("_mem",)
+
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
         # union member

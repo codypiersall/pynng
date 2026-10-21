@@ -29,6 +29,13 @@ class Request:
 
     """
 
+    __slots__ = (
+        "data",
+        "context",
+        "_replied",
+        "_replied_event",
+    )
+
     def __init__(self, data, context, _replied_event=None):
         self.data = data
         self.context = context

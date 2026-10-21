@@ -1032,6 +1032,7 @@ class Message(_base.Message):
 
     """
 
+    __slots__ = ()
     pass
 
 
