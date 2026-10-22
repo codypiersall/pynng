@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PyNNG Benchmark Comparison Tool.
+"""pynng Benchmark Comparison Tool.
 
 Compares two benchmark JSON outputs (e.g. base branch vs PR branch) and
 generates a GitHub-flavored Markdown report detailing speedups, regressions,
@@ -50,7 +50,7 @@ def compare_benchmarks(
         pr_map[key] = b
 
     lines = []
-    lines.append("## ⚡ PyNNG Performance Benchmark Report\n")
+    lines.append("## ⚡ pynng Performance Benchmark Report\n")
     lines.append(
         f"**Base:** `{base_meta.get('git_branch', 'base')}@{base_meta.get('git_commit', '')}` "
         f"| **PR:** `{pr_meta.get('git_branch', 'pr')}@{pr_meta.get('git_commit', '')}`\n"
@@ -146,7 +146,7 @@ def compare_benchmarks(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare two PyNNG benchmark JSON files"
+        description="Compare two pynng benchmark JSON files"
     )
     parser.add_argument("base", help="Path to base branch benchmark JSON")
     parser.add_argument("pr", help="Path to PR branch benchmark JSON")

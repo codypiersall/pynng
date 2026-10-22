@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PyNNG Benchmark Suite.
+"""pynng Benchmark Suite.
 
 Measures asynchronous throughput (msgs/sec, MB/s) and latency percentiles
 across transports (inproc, ipc, tcp) and protocols.
@@ -297,7 +297,7 @@ def run_all_benchmarks(
 
     print("\n" + "=" * 80)
     print(
-        f"  PyNNG Performance Benchmark Suite  [{git_info['branch']}@{git_info['commit']}]"
+        f"  pynng Performance Benchmark Suite  [{git_info['branch']}@{git_info['commit']}]"
     )
     print("=" * 80)
     print(f"Python: {sys.version.split()[0]} ({platform.python_implementation()})")
@@ -346,7 +346,7 @@ def run_all_benchmarks(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PyNNG Benchmark Suite")
+    parser = argparse.ArgumentParser(description="pynng Benchmark Suite")
     parser.add_argument(
         "--count",
         "-n",

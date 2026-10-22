@@ -124,7 +124,7 @@ jobs:
             if (!fs.existsSync('report.md')) return;
             const report = fs.readFileSync('report.md', 'utf8');
             const issue_number = context.issue.number;
-            const botHeader = '## ⚡ PyNNG Performance Benchmark Report';
+            const botHeader = '## ⚡ pynng Performance Benchmark Report';
 
             try {
               const { data: comments } = await github.rest.issues.listComments({
