@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Non-blocking convenience methods on both `Socket` and `Context`: `recv_nowait()`, `send_nowait()`, `recv_msg_nowait()`, `send_msg_nowait()`, and `recv_into_nowait()`
 - High-performance wait-free C11 MPSC intrusive queue engine and helper pooling for zero-GIL async I/O completions and up to 2x throughput speedups
+- Hardened performance benchmark suite with GC-pause isolation, best-of-N multi-trial execution, and TCP nodelay optimization for reproducible CI measurement
 - Dual-version coexistence with nng v2.0.0 GA under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`)
 - Pluggable TLS engine support via CMake `NNG_TLS_ENGINE` supporting `mbedTLS`, `wolfSSL`, `OpenSSL`, and `none`
 - Raw socket wrapper classes (`RawBus0`, `RawPair0`, `RawPair1`, `RawReq0`, `RawRep0`, `RawPub0`, `RawSub0`, `RawPush0`, `RawPull0`, `RawSurveyor0`, `RawRespondent0`) for broker and proxy topologies

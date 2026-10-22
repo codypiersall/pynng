@@ -60,15 +60,26 @@ def make_addr(transport: str, test_id: str) -> str:
 # Benchmark 1: Async Pipelined Throughput (Pair0 asend / arecv)
 # ---------------------------------------------------------------------------
 async def bench_async_stream(
-    transport: str, count: int, payload_size: int, warmup: int = 500
+    transport: str, count: int, payload_size: int, warmup: int = 500, rounds: int = 3
 ) -> Dict[str, Any]:
     test_id = f"stream-{int(time.time() * 1000)}"
     addr = make_addr(transport, test_id)
     payload = b"X" * payload_size
 
     with pynng.Pair0(listen=addr) as s1:
+        if transport == "tcp":
+            try:
+                s1.tcp_nodelay = True
+            except Exception:
+                pass
         dial_addr = s1.listeners[0].url if transport == "tcp" else addr
         with pynng.Pair0(dial=dial_addr) as s2:
+            if transport == "tcp":
+                try:
+                    s2.tcp_nodelay = True
+                except Exception:
+                    pass
+
             # Warmup
             async def warmup_run():
                 for _ in range(warmup):
@@ -76,20 +87,32 @@ async def bench_async_stream(
                     await s2.arecv()
 
             await warmup_run()
-            gc.collect()
 
-            # Timed run
-            async def sender():
-                for _ in range(count):
-                    await s1.asend(payload)
+            # Multi-trial timed runs (best-of-N, GC disabled during timed section)
+            elapsed_times: List[float] = []
+            for _ in range(rounds):
+                gc.collect()
+                gc_was_enabled = gc.isenabled()
+                gc.disable()
 
-            async def receiver():
-                for _ in range(count):
-                    await s2.arecv()
+                async def sender():
+                    for _ in range(count):
+                        await s1.asend(payload)
 
-            start = time.perf_counter()
-            await asyncio.gather(sender(), receiver())
-            elapsed = time.perf_counter() - start
+                async def receiver():
+                    for _ in range(count):
+                        await s2.arecv()
+
+                try:
+                    start = time.perf_counter()
+                    await asyncio.gather(sender(), receiver())
+                    elapsed = time.perf_counter() - start
+                    elapsed_times.append(elapsed)
+                finally:
+                    if gc_was_enabled:
+                        gc.enable()
+
+            elapsed = min(elapsed_times)
 
     msgs_per_sec = count / elapsed
     mb_per_sec = (count * payload_size) / (elapsed * 1024 * 1024)
@@ -112,15 +135,26 @@ async def bench_async_stream(
 # Benchmark 2: Ping-Pong Round-Trip Latency (Pair0 RTT percentiles)
 # ---------------------------------------------------------------------------
 async def bench_async_pingpong(
-    transport: str, count: int, payload_size: int, warmup: int = 500
+    transport: str, count: int, payload_size: int, warmup: int = 1000, rounds: int = 3
 ) -> Dict[str, Any]:
     test_id = f"pingpong-{int(time.time() * 1000)}"
     addr = make_addr(transport, test_id)
     payload = b"P" * payload_size
 
     with pynng.Pair0(listen=addr) as s1:
+        if transport == "tcp":
+            try:
+                s1.tcp_nodelay = True
+            except Exception:
+                pass
         dial_addr = s1.listeners[0].url if transport == "tcp" else addr
         with pynng.Pair0(dial=dial_addr) as s2:
+            if transport == "tcp":
+                try:
+                    s2.tcp_nodelay = True
+                except Exception:
+                    pass
+
             # Echo server coroutine
             stop_server = False
 
@@ -139,16 +173,31 @@ async def bench_async_pingpong(
                 await s1.asend(payload)
                 await s1.arecv()
 
-            gc.collect()
+            # Multi-trial timed runs (best-of-N, GC disabled during timed section)
+            best_latencies: List[int] = []
+            best_total_sec = float("inf")
 
-            # Timed measurements
-            latencies_ns: List[int] = []
-            for _ in range(count):
-                t0 = time.perf_counter_ns()
-                await s1.asend(payload)
-                await s1.arecv()
-                t1 = time.perf_counter_ns()
-                latencies_ns.append(t1 - t0)
+            for _ in range(rounds):
+                gc.collect()
+                gc_was_enabled = gc.isenabled()
+                gc.disable()
+
+                latencies_ns: List[int] = []
+                try:
+                    t_start = time.perf_counter()
+                    for _ in range(count):
+                        t0 = time.perf_counter_ns()
+                        await s1.asend(payload)
+                        await s1.arecv()
+                        t1 = time.perf_counter_ns()
+                        latencies_ns.append(t1 - t0)
+                    t_total = time.perf_counter() - t_start
+                    if t_total < best_total_sec:
+                        best_total_sec = t_total
+                        best_latencies = latencies_ns
+                finally:
+                    if gc_was_enabled:
+                        gc.enable()
 
             stop_server = True
             server_task.cancel()
@@ -157,16 +206,16 @@ async def bench_async_pingpong(
             except asyncio.CancelledError:
                 pass
 
-    latencies_ns.sort()
-    n = len(latencies_ns)
-    p50 = latencies_ns[int(n * 0.50)] / 1000.0
-    p90 = latencies_ns[int(n * 0.90)] / 1000.0
-    p95 = latencies_ns[int(n * 0.95)] / 1000.0
-    p99 = latencies_ns[int(n * 0.99)] / 1000.0
-    min_us = latencies_ns[0] / 1000.0
-    max_us = latencies_ns[-1] / 1000.0
-    mean_us = (sum(latencies_ns) / n) / 1000.0
-    total_sec = sum(latencies_ns) / 1e9
+    best_latencies.sort()
+    n = len(best_latencies)
+    p50 = best_latencies[int(n * 0.50)] / 1000.0
+    p90 = best_latencies[int(n * 0.90)] / 1000.0
+    p95 = best_latencies[int(n * 0.95)] / 1000.0
+    p99 = best_latencies[int(n * 0.99)] / 1000.0
+    min_us = best_latencies[0] / 1000.0
+    max_us = best_latencies[-1] / 1000.0
+    mean_us = (sum(best_latencies) / n) / 1000.0
+    total_sec = sum(best_latencies) / 1e9
     rtt_per_sec = count / total_sec
 
     return {
@@ -190,7 +239,7 @@ async def bench_async_pingpong(
 # Benchmark 3: Multi-Context Concurrent Fan-In (Rep0 / Req0 Context arecv)
 # ---------------------------------------------------------------------------
 async def bench_async_context_fanin(
-    count: int, num_contexts: int = 4, payload_size: int = 64
+    count: int, num_contexts: int = 4, payload_size: int = 64, warmup: int = 500, rounds: int = 3
 ) -> Dict[str, Any]:
     addr = make_addr("inproc", f"ctx-fanin-{int(time.time() * 1000)}")
     payload = b"C" * payload_size
@@ -200,21 +249,50 @@ async def bench_async_context_fanin(
         rep_contexts = [rep.new_context() for _ in range(num_contexts)]
         req_contexts = [req.new_context() for _ in range(num_contexts)]
 
-        async def worker(c_rep, c_req):
-            for _ in range(items_per_ctx):
+        # Warmup
+        warmup_per_ctx = max(warmup // num_contexts, 10)
+
+        async def warmup_worker(c_rep, c_req):
+            for _ in range(warmup_per_ctx):
                 await c_req.asend(payload)
                 msg = await c_rep.arecv()
                 await c_rep.asend(msg)
                 await c_req.arecv()
 
-        gc.collect()
-        start = time.perf_counter()
-        tasks = [
-            asyncio.create_task(worker(rep_contexts[i], req_contexts[i]))
+        warmup_tasks = [
+            asyncio.create_task(warmup_worker(rep_contexts[i], req_contexts[i]))
             for i in range(num_contexts)
         ]
-        await asyncio.gather(*tasks)
-        elapsed = time.perf_counter() - start
+        await asyncio.gather(*warmup_tasks)
+
+        # Multi-trial timed runs (best-of-N, GC disabled during timed section)
+        elapsed_times: List[float] = []
+        for _ in range(rounds):
+            gc.collect()
+            gc_was_enabled = gc.isenabled()
+            gc.disable()
+
+            async def worker(c_rep, c_req):
+                for _ in range(items_per_ctx):
+                    await c_req.asend(payload)
+                    msg = await c_rep.arecv()
+                    await c_rep.asend(msg)
+                    await c_req.arecv()
+
+            try:
+                start = time.perf_counter()
+                tasks = [
+                    asyncio.create_task(worker(rep_contexts[i], req_contexts[i]))
+                    for i in range(num_contexts)
+                ]
+                await asyncio.gather(*tasks)
+                elapsed = time.perf_counter() - start
+                elapsed_times.append(elapsed)
+            finally:
+                if gc_was_enabled:
+                    gc.enable()
+
+        elapsed = min(elapsed_times)
 
         for c in rep_contexts + req_contexts:
             c.close()
@@ -238,25 +316,47 @@ async def bench_async_context_fanin(
 # Benchmark 4: Synchronous Baseline (Pair0 send / recv)
 # ---------------------------------------------------------------------------
 def bench_sync_stream(
-    transport: str, count: int, payload_size: int, warmup: int = 500
+    transport: str, count: int, payload_size: int, warmup: int = 500, rounds: int = 3
 ) -> Dict[str, Any]:
     test_id = f"sync-{int(time.time() * 1000)}"
     addr = make_addr(transport, test_id)
     payload = b"S" * payload_size
 
     with pynng.Pair0(listen=addr) as s1:
+        if transport == "tcp":
+            try:
+                s1.tcp_nodelay = True
+            except Exception:
+                pass
         dial_addr = s1.listeners[0].url if transport == "tcp" else addr
         with pynng.Pair0(dial=dial_addr) as s2:
+            if transport == "tcp":
+                try:
+                    s2.tcp_nodelay = True
+                except Exception:
+                    pass
+
             for _ in range(warmup):
                 s1.send(payload)
                 s2.recv()
 
-            gc.collect()
-            start = time.perf_counter()
-            for _ in range(count):
-                s1.send(payload)
-                s2.recv()
-            elapsed = time.perf_counter() - start
+            elapsed_times: List[float] = []
+            for _ in range(rounds):
+                gc.collect()
+                gc_was_enabled = gc.isenabled()
+                gc.disable()
+                try:
+                    start = time.perf_counter()
+                    for _ in range(count):
+                        s1.send(payload)
+                        s2.recv()
+                    elapsed = time.perf_counter() - start
+                    elapsed_times.append(elapsed)
+                finally:
+                    if gc_was_enabled:
+                        gc.enable()
+
+            elapsed = min(elapsed_times)
 
     msgs_per_sec = count / elapsed
     mb_per_sec = (count * payload_size) / (elapsed * 1024 * 1024)
@@ -278,7 +378,7 @@ def bench_sync_stream(
 # CLI Runner and Formatting
 # ---------------------------------------------------------------------------
 def run_all_benchmarks(
-    count: int, transports: List[str], payload_size: int
+    count: int, transports: List[str], payload_size: int, rounds: int = 3, warmup: int = 500
 ) -> Dict[str, Any]:
     git_info = get_git_info()
     suite_data: Dict[str, Any] = {
@@ -291,6 +391,7 @@ def run_all_benchmarks(
             "arch": platform.machine(),
             "git_commit": git_info["commit"],
             "git_branch": git_info["branch"],
+            "rounds": rounds,
         },
         "benchmarks": [],
     }
@@ -302,20 +403,20 @@ def run_all_benchmarks(
     print("=" * 80)
     print(f"Python: {sys.version.split()[0]} ({platform.python_implementation()})")
     print(f"Platform: {platform.system()} {platform.machine()}")
-    print(f"Payload Size: {payload_size} bytes  |  Iterations per run: {count:,}")
+    print(f"Payload Size: {payload_size} bytes  |  Iterations: {count:,}  |  Rounds (best-of): {rounds}")
     print("-" * 80)
 
     # 1. Sync Baseline
     print("\n[1/4] Running Synchronous Baseline...")
     for t in transports:
-        res = bench_sync_stream(t, count, payload_size)
+        res = bench_sync_stream(t, count, payload_size, warmup=warmup, rounds=rounds)
         suite_data["benchmarks"].append(res)
         print(f"  - {t:<8}: {res['msgs_per_sec']:>10,f} msgs/sec  ({res['avg_latency_us']:>6.1f} µs/msg)")
 
     # 2. Async Stream Throughput
     print("\n[2/4] Running Async Pipelined Stream (Throughput)...")
     for t in transports:
-        res = asyncio.run(bench_async_stream(t, count, payload_size))
+        res = asyncio.run(bench_async_stream(t, count, payload_size, warmup=warmup, rounds=rounds))
         suite_data["benchmarks"].append(res)
         print(f"  - {t:<8}: {res['msgs_per_sec']:>10,f} msgs/sec  ({res['avg_latency_us']:>6.1f} µs/msg)  [{res['mb_per_sec']:>6.2f} MB/s]")
 
@@ -324,7 +425,7 @@ def run_all_benchmarks(
     for t in transports:
         # For ping-pong, default count to min(count, 5000) for fast RTT distribution
         pp_count = min(count, 5000)
-        res = asyncio.run(bench_async_pingpong(t, pp_count, payload_size))
+        res = asyncio.run(bench_async_pingpong(t, pp_count, payload_size, warmup=max(warmup, 1000), rounds=rounds))
         suite_data["benchmarks"].append(res)
         print(
             f"  - {t:<8}: mean={res['mean_latency_us']:>5.1f}µs | "
@@ -337,7 +438,7 @@ def run_all_benchmarks(
     # 4. Multi-Context Concurrent Fan-In
     print("\n[4/4] Running Context Multi-Worker Fan-In...")
     for num_ctx in [4, 8]:
-        res = asyncio.run(bench_async_context_fanin(count, num_contexts=num_ctx, payload_size=payload_size))
+        res = asyncio.run(bench_async_context_fanin(count, num_contexts=num_ctx, payload_size=payload_size, warmup=warmup, rounds=rounds))
         suite_data["benchmarks"].append(res)
         print(f"  - {num_ctx} contexts: {res['msgs_per_sec']:>10,f} msgs/sec  ({res['avg_latency_us']:>6.1f} µs/msg)")
 
@@ -353,6 +454,20 @@ def main():
         type=int,
         default=10000,
         help="Number of iterations for throughput tests (default: 10000)",
+    )
+    parser.add_argument(
+        "--rounds",
+        "-r",
+        type=int,
+        default=3,
+        help="Number of rounds per benchmark, taking the best result (default: 3)",
+    )
+    parser.add_argument(
+        "--warmup",
+        "-w",
+        type=int,
+        default=500,
+        help="Number of warmup iterations before timing (default: 500)",
     )
     parser.add_argument(
         "--transports",
@@ -380,7 +495,11 @@ def main():
     transports = [t.strip() for t in args.transports.split(",") if t.strip()]
 
     suite_data = run_all_benchmarks(
-        count=args.count, transports=transports, payload_size=args.payload_size
+        count=args.count,
+        transports=transports,
+        payload_size=args.payload_size,
+        rounds=args.rounds,
+        warmup=args.warmup,
     )
 
     if args.json:

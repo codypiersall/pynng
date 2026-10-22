@@ -51,9 +51,13 @@ def compare_benchmarks(
 
     lines = []
     lines.append("## ⚡ pynng Performance Benchmark Report\n")
+    rounds_info = ""
+    if "rounds" in pr_meta:
+        rounds_info = f" | **Rounds (best-of):** `{pr_meta['rounds']}`"
     lines.append(
         f"**Base:** `{base_meta.get('git_branch', 'base')}@{base_meta.get('git_commit', '')}` "
-        f"| **PR:** `{pr_meta.get('git_branch', 'pr')}@{pr_meta.get('git_commit', '')}`\n"
+        f"| **PR:** `{pr_meta.get('git_branch', 'pr')}@{pr_meta.get('git_commit', '')}`"
+        f"{rounds_info}\n"
     )
 
     lines.append("### 1. Throughput Benchmarks (Higher is better)")
