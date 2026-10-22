@@ -194,7 +194,8 @@ async def test_aio_free_cancels_pending():
         assert helper.aio is None
         with _aio_map_lock:
             assert cb_id not in _aio_map
-        helper.awaitable.close()
+        if helper.awaitable is not None:
+            helper.awaitable.close()
 
 
 @pytest.mark.asyncio
@@ -212,7 +213,8 @@ async def test_aio_free_cleans_map_when_aio_is_none():
         helper._free()
         with _aio_map_lock:
             assert cb_id not in _aio_map
-        helper.awaitable.close()
+        if helper.awaitable is not None:
+            helper.awaitable.close()
 
 
 def test_aio_map_multithreaded_access():

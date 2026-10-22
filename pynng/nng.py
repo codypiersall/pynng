@@ -138,9 +138,11 @@ class Socket(_base.Socket):
           Messages larger than this size will be silently dropped.  A size of 0
           indicates unlimited size.  The default size is 1 MB.
         * **recv_buffer_size** (int): The number of messages that the socket
-          will buffer on receive.  Corresponds to ``NNG_OPT_RECVBUF``.
+          will buffer on receive. Default is 128. For pub/sub sockets, messages
+          exceeding this limit are dropped; for other protocols, backpressure is applied.
         * **send_buffer_size** (int): The number of messages that the socket
-          will buffer on send.  Corresponds to ``NNG_OPT_SENDBUF``.
+          will buffer on send. Default is 128. For pub/sub sockets, messages
+          exceeding this limit are dropped; for other protocols, senders block or yield.
         * **name** (str): The socket name.  Corresponds to
           ``NNG_OPT_SOCKNAME``.  This is useful for debugging purposes.
         * **raw** (bool): A boolean, indicating whether the socket is raw or cooked.
@@ -281,7 +283,14 @@ class Socket(_base.Socket):
           block: If block is True (the default), the function will
             not return until the operation is completed or times out.
             If block is False, the function will raise ``pynng.TryAgain``
-            immediately if no data was sent.
+            immediately if no data was sent (such as when the send buffer is full).
+
+        .. note::
+
+            In asynchronous code (asyncio/Trio), avoid calling synchronous
+            ``send(data, block=True)`` when the send queue might fill, as it blocks
+            the event loop thread. Use :meth:`~Socket.asend` or non-blocking
+            ``send(data, block=False)`` instead.
         """
         _ensure_can_send(data)
         flags = 0
@@ -296,14 +305,22 @@ class Socket(_base.Socket):
 
     async def arecv(self):
         """The asynchronous version of :meth:`~Socket.recv`"""
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            return await aio.arecv()
+        msg = await self.arecv_msg()
+        return msg.bytes
 
     async def asend(self, data):
-        """Asynchronous version of :meth:`~Socket.send`."""
+        """Asynchronous version of :meth:`~Socket.send`.
+
+        Yields cooperatively to the event loop if the socket's send buffer
+        (:attr:`~Socket.send_buffer_size`) is full, resuming as soon as buffer
+        space becomes available without blocking other coroutines.
+        """
         _ensure_can_send(data)
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            return await aio.asend(data)
+        helper = self._acquire_send_helper()
+        try:
+            return await helper.asend(data)
+        finally:
+            self._release_send_helper(helper)
 
     def stats(self):
         """Get snapshot of statistics for this socket."""
@@ -489,6 +506,14 @@ class Pub0(Socket):
     Attempting to :meth:`~Socket.recv` with a Pub0 socket will raise a
     :class:`pynng.NotSupported` exception.
 
+    .. note::
+
+        Pub/Sub is a lossy, best-effort transport. If subscribers or network
+        pipes cannot keep pace with publications, messages exceeding
+        :attr:`~Socket.send_buffer_size` (default 128 messages) are silently
+        dropped to protect against producer stalling. Increase ``send_buffer_size``
+        (e.g., 512, 1024) to absorb bursty publication rates.
+
     See docs for :class:`Sub0` for an example.
 
     """
@@ -521,10 +546,13 @@ class Sub0(Socket):
     empty string (``b''``) means that all messages will match.  If a sub socket
     is not subscribed to any topics, no messages will be receieved.
 
-    .. Note ::
+    .. note::
 
-        pub/sub is a "best effort" transport; if you have a very high volume of
-        messages be prepared for some messages to be silently dropped.
+        Pub/Sub is a lossy, best-effort transport. If the subscriber's receive
+        loop falls behind incoming traffic, messages exceeding
+        :attr:`~Socket.recv_buffer_size` (default 128 messages) will be
+        silently dropped. Increase ``recv_buffer_size`` (e.g., 512, 1024) to
+        absorb spikes, and ensure the receive coroutine drains promptly.
 
     Attempting to :meth:`~Socket.send` with a Sub0 socket will raise a
     :class:`pynng.NotSupported` exception.
@@ -1042,12 +1070,18 @@ Socket._message_class = Message
 def _nng_pipe_cb(lib_pipe, event, arg):
     logger.debug("Pipe callback event {}".format(event))
 
-    # Get the Socket from the handle passed through the callback arguments.
-    # If the Socket has been GC'd and the handle is invalid, from_handle()
-    # will crash. Guard against this by catching exceptions.
-    try:
-        sock = ffi.from_handle(arg)
-    except (RuntimeError, ValueError, ffi.error):
+    if arg == ffi.NULL:
+        logger.info(
+            "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
+        )
+        return
+
+    arg_ptr = int(ffi.cast("uintptr_t", arg))
+    with _active_handles_lock:
+        ref = _active_handles.get(arg_ptr)
+        sock = ref() if ref is not None else None
+
+    if sock is None:
         logger.info(
             "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
         )

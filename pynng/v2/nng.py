@@ -141,27 +141,47 @@ class Socket(_base.Socket):
         """Send data on the socket.
 
         Args:
-            data: bytes or bytearray to send.
+            data: bytes, bytearray, memoryview, or buffer-protocol object to send.
             block: If True (default), blocks until sent or timeout.
-                If False, raises ``pynng.TryAgain`` if cannot send immediately.
+                If False, raises ``pynng.TryAgain`` if cannot send immediately
+                (such as when the send buffer is full).
+
+        .. note::
+
+            In asynchronous code (asyncio/Trio), avoid calling synchronous
+            ``send(data, block=True)`` when the send queue might fill, as it blocks
+            the event loop thread. Use :meth:`~Socket.asend` or non-blocking
+            ``send(data, block=False)`` instead.
         """
         _ensure_can_send(data)
         flags = 0
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
-        err = lib.nng_send(self.socket, data, len(data), flags)
+        if isinstance(data, bytes):
+            c_buf = data
+        else:
+            c_buf = ffi.from_buffer(data)
+        err = lib.nng_send(self.socket, c_buf, len(data), flags)
         check_err(err)
 
     async def arecv(self):
         """Asynchronous version of :meth:`recv`."""
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            return await aio.arecv()
+        msg = await self.arecv_msg()
+        return msg.bytes
 
     async def asend(self, data):
-        """Asynchronous version of :meth:`send`."""
+        """Asynchronous version of :meth:`send`.
+
+        Yields cooperatively to the event loop if the socket's send buffer
+        (:attr:`~Socket.send_buffer_size`) is full, resuming as soon as buffer
+        space becomes available without blocking other coroutines.
+        """
         _ensure_can_send(data)
-        with _aio.AIOHelper(self, self._async_backend) as aio:
-            return await aio.asend(data)
+        helper = self._acquire_send_helper()
+        try:
+            return await helper.asend(data)
+        finally:
+            self._release_send_helper(helper)
 
 
 class Bus0(Socket):
@@ -345,9 +365,11 @@ class Surveyor0(Socket):
         Returns:
             list[bytes]: All responses received before timeout.
         """
-        old_timeout = self.recv_timeout
+        old_recv_timeout = self.recv_timeout
+        old_survey_time = self.survey_time
         if timeout is not None:
             self.recv_timeout = timeout
+            self.survey_time = timeout
 
         try:
             await self.asend(data)
@@ -362,7 +384,12 @@ class Surveyor0(Socket):
                     break
             return responses
         finally:
-            self.recv_timeout = old_timeout
+            try:
+                if timeout is not None:
+                    self.recv_timeout = old_recv_timeout
+                    self.survey_time = old_survey_time
+            except Closed:
+                pass
 
 
 class Respondent0(Socket):
