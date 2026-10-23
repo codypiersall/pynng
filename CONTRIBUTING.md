@@ -5,17 +5,27 @@ get set up for development and walk you through the contribution workflow.
 
 ## Getting Started
 
+### Where to Contribute
+
+Looking for a place to start?
+
+- **GitHub Issues**: Browsing open [GitHub Issues](https://github.com/codypiersall/pynng/issues) is a great place to start, especially issues labeled [`good first issue`](https://github.com/codypiersall/pynng/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [`help wanted`](https://github.com/codypiersall/pynng/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22). If you find a bug or have a suggestion, feel free to open a new issue to discuss it first.
+- **Project Roadmap**: Check out our [Roadmap](ROADMAP.md) for prioritized near-term features, bug fixes, and architectural goals across both NNG v1 and v2 runtimes.
+- **Discussions**: Start or join conversations in GitHub Discussions or existing issue threads to coordinate before submitting large PRs.
+
 ### Prerequisites
 
 - Python 3.10+
 - CMake 3.26+
 - ninja-build
 - libclang (for building from source -- headerkit uses it to parse NNG's C headers)
-  - Ubuntu/Debian: `sudo apt install ninja-build libclang-dev`
-  - macOS: Xcode command line tools (usually sufficient)
-  - RHEL/CentOS/Fedora: `sudo dnf install clang-devel` (or `yum` on older systems)
-  - Alpine: `apk add clang-dev`
-  - Windows: LLVM (installed automatically during CI builds)
+  - Recommended: `python -m headerkit.install_libclang` (works across platforms without root)
+  - Or via system packages:
+    - Ubuntu/Debian: `sudo apt install ninja-build libclang-dev`
+    - macOS: Xcode command line tools (usually sufficient)
+    - RHEL/CentOS/Fedora: `sudo dnf install clang-devel`
+    - Alpine: `apk add clang-dev`
+    - Windows: LLVM (or via `python -m headerkit.install_libclang`)
 
 ### Development Setup
 
@@ -33,11 +43,29 @@ This will:
 3. Compile the CFFI extension module
 4. Install test dependencies (pytest, pytest-asyncio, pytest-trio, trio)
 
-#### Speeding Up Rebuilds
+#### Speeding Up Rebuilds (sccache & Local Sources)
+
+Building NNG, mbedTLS, and the CFFI extensions from scratch can take time. You can dramatically accelerate local compile times using **sccache** (compiler caching) and local source clones:
+
+##### 1. Enable compiler caching with `sccache` (Recommended)
+
+[`sccache`](https://github.com/mozilla/sccache) acts as a drop-in compiler wrapper for GCC, Clang, and MSVC, caching precompiled C object files so recompilations are nearly instantaneous:
+
+- **macOS**: `brew install sccache`
+- **Linux**: `sudo apt install sccache` (or `cargo install sccache`)
+- **Windows**: `winget install Mozilla.sccache`
+
+Once installed, tell CMake to use it as the compiler launcher:
+
+```bash
+export CMAKE_C_COMPILER_LAUNCHER=sccache
+pip install -e '.[dev]'
+```
+
+##### 2. Cache or reuse CMake dependencies locally
 
 By default, CMake's `FetchContent` downloads NNG and mbedTLS from GitHub during
-the build. To speed up development iteration, you can point the build to local
-clones instead:
+the build. To avoid re-downloading across rebuilds or clean environments, you can point CMake to local clones:
 
 ```bash
 # Clone once locally
@@ -48,6 +76,17 @@ git clone https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
 pip install -e . \
   -C cmake.define.FETCHCONTENT_SOURCE_DIR_NNG=$HOME/deps/nng \
   -C cmake.define.FETCHCONTENT_SOURCE_DIR_MBEDTLS=$HOME/deps/mbedtls
+```
+
+#### Testing Free-Threaded Python (PEP 703)
+
+`pynng` supports free-threaded CPython (Python 3.13t and 3.14t with the GIL disabled):
+
+```bash
+uv venv --python 3.13t .venv-freethreaded
+source .venv-freethreaded/bin/activate
+uv pip install -e '.[dev]'
+pytest test
 ```
 
 ### Running Tests
@@ -118,6 +157,7 @@ function documentation.
 |----------|---------|---------|
 | `smoketest` | Run tests on Python 3.10-3.14 (Ubuntu) | Push, PR |
 | `cibuildwheel` | Build wheels for all platforms, publish releases | Push, PR, Release |
+| `benchmarks` | Performance regression testing and throughput benchmarks | Push, PR |
 | `check-nng` | Check for NNG upstream updates | Daily |
 | `check-python` | Check for new Python versions | Weekly (Monday) |
 | `pre-commit-autoupdate` | Update pre-commit hooks | Weekly (Tuesday) |
