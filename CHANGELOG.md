@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pynng.nng_fini()` function and `nng_fini_at_exit` setting for explicit runtime finalization control
 
 ### Changed
+- Enable `__slots__` on hot-path `Message`, `Request`, `Stat`, and `SockAddr` model classes to eliminate per-instance `__dict__` allocation overhead
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
 - Migrate build system from setuptools/CMake to scikit-build-core with headerkit for C header generation
 - Replace handwritten CFFI bindings with auto-generated bindings from nng headers via headerkit
