@@ -12,7 +12,7 @@ import threading
 
 import pynng
 from pynng._nng_v2 import ffi, lib
-from pynng.exceptions import check_err
+from pynng.exceptions import check_err, Closed
 from pynng._base import (
     _ensure_can_send,
     _do_callbacks,

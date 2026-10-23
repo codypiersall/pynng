@@ -1070,18 +1070,12 @@ Socket._message_class = Message
 def _nng_pipe_cb(lib_pipe, event, arg):
     logger.debug("Pipe callback event {}".format(event))
 
-    if arg == ffi.NULL:
-        logger.info(
-            "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
-        )
-        return
-
-    arg_ptr = int(ffi.cast("uintptr_t", arg))
-    with _active_handles_lock:
-        ref = _active_handles.get(arg_ptr)
-        sock = ref() if ref is not None else None
-
-    if sock is None:
+    # Get the Socket from the handle passed through the callback arguments.
+    # If the Socket has been GC'd and the handle is invalid, from_handle()
+    # will crash. Guard against this by catching exceptions.
+    try:
+        sock = ffi.from_handle(arg)
+    except (RuntimeError, ValueError, ffi.error):
         logger.info(
             "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
         )

@@ -155,6 +155,8 @@ def _sliced_aio_recv(recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_REC
             if err == lib.NNG_ETIMEDOUT:
                 if deadline is not None and time.monotonic() >= deadline:
                     check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
+                if cur_slice > 10 and elapsed_slice < (cur_slice * 0.8) / 1000.0:
+                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
                 continue
 
             check_err(err, lib=lib, ffi=ffi)
@@ -209,7 +211,7 @@ def _do_callbacks(pipe, callbacks):
         try:
             cb(pipe)
         except Exception:
-            msg = "Exception raised in pipe callback {!r}"
+            msg = "Exception raised in pre pipe connect callback {!r}"
             logger.exception(msg.format(cb))
 
 
@@ -556,12 +558,10 @@ class Socket:
 
         handle = _ffi.new_handle(self)
         self._handle = handle
-        handle_ptr = int(_ffi.cast("uintptr_t", handle))
         version_tag = self._version_tag
         sock_id = _lib.nng_socket_id(self.socket)
         with _active_handles_lock:
             _active_handles[(version_tag, sock_id)] = weakref.ref(self)
-            _active_handles[handle_ptr] = weakref.ref(self)
 
         for event in (
             _lib.NNG_PIPE_EV_ADD_PRE,
@@ -671,11 +671,6 @@ class Socket:
             ref = _active_handles.get(key)
             if ref is not None and (ref() is self or ref() is None):
                 del _active_handles[key]
-            if hasattr(self, "_handle") and self._handle:
-                handle_ptr = int(self._ffi.cast("uintptr_t", self._handle))
-                h_ref = _active_handles.get(handle_ptr)
-                if h_ref is not None and (h_ref() is self or h_ref() is None):
-                    del _active_handles[handle_ptr]
         self._listeners = {}
         self._dialers = {}
         while self._recv_pool:
@@ -829,26 +824,42 @@ class Socket:
             )
             msg._mem_freed = True
 
+    _MAX_POOL_SIZE = 32
+
     def _acquire_recv_helper(self):
         pool = self._recv_pool
-        if pool:
-            return pool.pop()
+        while pool:
+            helper = pool.pop()
+            if helper.is_valid_for_current_loop():
+                return helper
+            helper._free()
         return _aio.AIOHelper(self, self._async_backend)
 
     def _release_recv_helper(self, helper):
-        if not self._socket_closed and helper._mpsc_engine is not None:
+        if (
+            not self._socket_closed
+            and len(self._recv_pool) < self._MAX_POOL_SIZE
+            and helper.is_valid_for_current_loop()
+        ):
             self._recv_pool.append(helper)
         else:
             helper._free()
 
     def _acquire_send_helper(self):
         pool = self._send_pool
-        if pool:
-            return pool.pop()
+        while pool:
+            helper = pool.pop()
+            if helper.is_valid_for_current_loop():
+                return helper
+            helper._free()
         return _aio.AIOHelper(self, self._async_backend)
 
     def _release_send_helper(self, helper):
-        if not self._socket_closed and helper._mpsc_engine is not None:
+        if (
+            not self._socket_closed
+            and len(self._send_pool) < self._MAX_POOL_SIZE
+            and helper.is_valid_for_current_loop()
+        ):
             self._send_pool.append(helper)
         else:
             helper._free()
@@ -1330,26 +1341,42 @@ class Context:
     def _ffi(self):
         return self._socket._ffi
 
+    _MAX_POOL_SIZE = 32
+
     def _acquire_recv_helper(self):
         pool = self._recv_pool
-        if pool:
-            return pool.pop()
+        while pool:
+            helper = pool.pop()
+            if helper.is_valid_for_current_loop():
+                return helper
+            helper._free()
         return _aio.AIOHelper(self, self._socket._async_backend)
 
     def _release_recv_helper(self, helper):
-        if self._context is not None and helper._mpsc_engine is not None:
+        if (
+            self._context is not None
+            and len(self._recv_pool) < self._MAX_POOL_SIZE
+            and helper.is_valid_for_current_loop()
+        ):
             self._recv_pool.append(helper)
         else:
             helper._free()
 
     def _acquire_send_helper(self):
         pool = self._send_pool
-        if pool:
-            return pool.pop()
+        while pool:
+            helper = pool.pop()
+            if helper.is_valid_for_current_loop():
+                return helper
+            helper._free()
         return _aio.AIOHelper(self, self._socket._async_backend)
 
     def _release_send_helper(self, helper):
-        if self._context is not None and helper._mpsc_engine is not None:
+        if (
+            self._context is not None
+            and len(self._send_pool) < self._MAX_POOL_SIZE
+            and helper.is_valid_for_current_loop()
+        ):
             self._send_pool.append(helper)
         else:
             helper._free()
@@ -1468,7 +1495,6 @@ class Context:
 
     def send_msg(self, msg, block=True):
         """Synchronously send the :class:`Message` ``msg`` on the context."""
-        ctx = self.context
         _ffi = self._ffi
         _lib = self._lib
         from .exceptions import check_err, TryAgain
@@ -1486,7 +1512,7 @@ class Context:
                 _lib.nng_aio_set_msg(aio, msg._nng_msg)
                 if not block:
                     _lib.nng_aio_set_timeout(aio, 0)
-                _lib.nng_ctx_send(ctx, aio)
+                _lib.nng_ctx_send(self.context, aio)
                 _lib.nng_aio_wait(aio)
                 res = _lib.nng_aio_result(aio)
                 if res != 0:
@@ -1560,17 +1586,14 @@ class Context:
     @property
     def context(self):
         """Return the underlying nng object."""
-        if self._context is None:
-            from .exceptions import Closed
-            raise Closed("Context closed", 2)
         return self._context[0]
 
     def __del__(self):
+        if _is_nng_finalized():
+            return
         try:
-            if _is_nng_finalized():
-                return
             self.close()
-        except (TypeError, AttributeError, ImportError, NNGException):
+        except (TypeError, AttributeError, NNGException):
             pass
 
     async def asend_msg(self, msg):

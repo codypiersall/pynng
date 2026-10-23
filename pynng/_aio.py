@@ -5,6 +5,7 @@ Helpers for AIO functions
 import asyncio
 import os
 import threading
+import weakref
 
 import sniffio
 
@@ -19,14 +20,13 @@ _aio_map = {}
 _aio_map_lock = threading.Lock()
 
 
-class _DummyAwaitable:
-    def __await__(self):
-        if False:
-            yield
-        return None
+def _make_notify_cb(engine_ref):
+    def _cb():
+        engine = engine_ref()
+        if engine is not None:
+            engine._on_notify()
 
-    def close(self):
-        pass
+    return _cb
 
 
 class MPSCAIOEngine:
@@ -38,7 +38,7 @@ class MPSCAIOEngine:
     """
 
     __slots__ = (
-        "_loop",
+        "_loop_ref",
         "_lib",
         "_ffi",
         "_closed",
@@ -49,49 +49,78 @@ class MPSCAIOEngine:
         "_slot_counter",
         "_batch_size",
         "_batch_buf",
+        "__weakref__",
     )
 
-    _loop_engines = {}
+    _loop_engines = weakref.WeakKeyDictionary()
     _lock = threading.Lock()
 
     def __init__(self, loop, lib, ffi):
-        self._loop = loop
+        self._loop_ref = weakref.ref(loop)
         self._lib = lib
         self._ffi = ffi
         self._closed = False
+        self._read_fd = -1
+        self._write_fd = -1
         self._queue = ffi.NULL
         r, w = os.pipe()
-        os.set_blocking(r, False)
-        os.set_blocking(w, False)
-        self._read_fd = r
-        self._write_fd = w
-        self._queue = lib.pynng_mpsc_queue_new(w)
-        self._slots = {}
-        self._slot_counter = 0
-        self._batch_size = 256
-        self._batch_buf = ffi.new(f"uintptr_t[{self._batch_size}]")
-        self._loop.add_reader(self._read_fd, self._on_notify)
+        try:
+            os.set_blocking(r, False)
+            os.set_blocking(w, False)
+            self._read_fd = r
+            self._write_fd = w
+            self._queue = lib.pynng_mpsc_queue_new(w)
+            self._slots = {}
+            self._slot_counter = 0
+            self._batch_size = 256
+            self._batch_buf = ffi.new(f"uintptr_t[{self._batch_size}]")
+            loop.add_reader(self._read_fd, _make_notify_cb(weakref.ref(self)))
+        except BaseException:
+            self.close()
+            if self._queue != ffi.NULL:
+                lib.pynng_mpsc_queue_free(self._queue)
+                self._queue = ffi.NULL
+            raise
+
+    @property
+    def _loop(self):
+        return self._loop_ref()
 
     @classmethod
     def get_for_loop(cls, loop, lib, ffi):
-        if not hasattr(loop, "add_reader"):
+        if loop is None or loop.is_closed() or not hasattr(loop, "add_reader"):
             return None
         with cls._lock:
-            key = (id(loop), id(lib))
-            engine = cls._loop_engines.get(key)
+            # Opportunistically close engines belonging to closed event loops
+            for existing_loop, by_lib in list(cls._loop_engines.items()):
+                if existing_loop.is_closed():
+                    for eng in by_lib.values():
+                        eng.close()
+                    cls._loop_engines.pop(existing_loop, None)
+
+            by_lib = cls._loop_engines.get(loop)
+            if by_lib is None:
+                by_lib = {}
+                cls._loop_engines[loop] = by_lib
+            lib_key = id(lib)
+            engine = by_lib.get(lib_key)
             if engine is None or engine._closed:
                 try:
                     engine = cls(loop, lib, ffi)
-                    cls._loop_engines[key] = engine
-                except (AttributeError, NotImplementedError, OSError):
+                    by_lib[lib_key] = engine
+                except (AttributeError, NotImplementedError, OSError, RuntimeError):
                     return None
             return engine
 
     def _on_notify(self):
+        if self._closed or self._read_fd < 0:
+            return
         try:
             os.read(self._read_fd, 65536)
-        except BlockingIOError:
+        except (BlockingIOError, OSError):
             pass
+        if self._queue == self._ffi.NULL:
+            return
         while True:
             count = self._lib.pynng_mpsc_drain_batch(
                 self._queue, self._batch_buf, self._batch_size
@@ -106,6 +135,8 @@ class MPSCAIOEngine:
 
     def register(self, fut):
         self._slot_counter = (self._slot_counter + 1) & 0x7FFFFFFF
+        if self._slot_counter == 0:
+            self._slot_counter = 1
         slot_id = self._slot_counter
         self._slots[slot_id] = fut
         return slot_id
@@ -117,12 +148,17 @@ class MPSCAIOEngine:
         if self._closed:
             return
         self._closed = True
+        if self._queue != self._ffi.NULL and hasattr(
+            self._lib, "pynng_mpsc_queue_close"
+        ):
+            self._lib.pynng_mpsc_queue_close(self._queue)
+        loop = self._loop_ref() if hasattr(self, "_loop_ref") else None
         if self._read_fd >= 0:
-            try:
-                self._loop.remove_reader(self._read_fd)
-            except (RuntimeError, KeyError, ValueError, AttributeError):
-                # Loop closed or reader already unregistered during shutdown
-                pass
+            if loop is not None and not loop.is_closed():
+                try:
+                    loop.remove_reader(self._read_fd)
+                except (RuntimeError, KeyError, ValueError, AttributeError, OSError):
+                    pass
             try:
                 os.close(self._read_fd)
             except OSError:
@@ -135,16 +171,24 @@ class MPSCAIOEngine:
             except OSError:
                 pass
             self._write_fd = -1
-        if self._queue != self._ffi.NULL:
-            self._lib.pynng_mpsc_queue_free(self._queue)
-            self._queue = self._ffi.NULL
-        for fut in self._slots.values():
-            if not fut.done():
-                fut.cancel()
-        self._slots.clear()
+
+        if hasattr(self, "_slots"):
+            for fut in list(self._slots.values()):
+                if not fut.done():
+                    try:
+                        fut.cancel()
+                    except RuntimeError:
+                        pass
+            self._slots.clear()
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+            if getattr(self, "_queue", None) not in (None, self._ffi.NULL):
+                self._lib.pynng_mpsc_queue_free(self._queue)
+                self._queue = self._ffi.NULL
+        except Exception:
+            pass
 
 
 @ffi.def_extern()
@@ -172,6 +216,7 @@ def asyncio_helper(aio):
 
     """
     _lib = aio._lib
+    _ffi = aio._ffi
     loop = asyncio.get_running_loop()
     fut = loop.create_future()
 
@@ -189,7 +234,7 @@ def asyncio_helper(aio):
         err = _lib.nng_aio_result(aio.aio)
         if already_called_nng_aio_cancel or err == _lib.NNG_ECANCELED:
             raise asyncio.CancelledError
-        check_err(err)
+        check_err(err, lib=_lib, ffi=_ffi)
 
     def _set_future_finished(fut):
         if not fut.done():
@@ -206,6 +251,7 @@ def trio_helper(aio):
     import trio
 
     _lib = aio._lib
+    _ffi = aio._ffi
 
     token = trio.lowlevel.current_trio_token()
     task = trio.lowlevel.current_task()
@@ -237,7 +283,7 @@ def trio_helper(aio):
             # This operation was successfully cancelled.
             # Call the function Trio gave us, which raises the proper Trio cancellation exception
             raise_cancel_fn()
-        check_err(err)
+        check_err(err, lib=_lib, ffi=_ffi)
 
     return wait_for_aio(), resumer
 
@@ -266,6 +312,8 @@ class AIOHelper:
         "_mpsc_engine",
         "_aio_entry",
         "_current_slot",
+        "_current_fut",
+        "_sending",
         "cb_arg",
         "awaitable",
         "obj",
@@ -277,7 +325,7 @@ class AIOHelper:
         "async_backend",
     )
 
-    def __init__(self, obj, async_backend, _lib=None, _ffi=None):
+    def __init__(self, obj, async_backend, _lib=None, _ffi=None, *, _use_mpsc=True):
         # set to None now so we can know if we need to free it later
         # This should be at the top of __init__ so that __del__ doesn't raise
         # an unexpected AttributeError if something funky happens
@@ -285,6 +333,8 @@ class AIOHelper:
         self._mpsc_engine = None
         self._aio_entry = None
         self._current_slot = None
+        self._current_fut = None
+        self._sending = False
         self.cb_arg = None
         self.awaitable = None
 
@@ -340,7 +390,7 @@ class AIOHelper:
         self.async_backend = async_backend
 
         # Attempt to use wait-free MPSC queue under asyncio
-        if async_backend == "asyncio":
+        if _use_mpsc and async_backend == "asyncio":
             try:
                 loop = asyncio.get_running_loop()
                 if hasattr(_lib, "pynng_native_aio_complete"):
@@ -353,15 +403,14 @@ class AIOHelper:
                 _ffi.NULL, 0, self._mpsc_engine._queue
             )
             aio_p = _ffi.new("nng_aio **")
-            _lib.nng_aio_alloc(
-                aio_p, _lib.pynng_native_aio_complete, self._aio_entry
+            check_err(
+                _lib.nng_aio_alloc(
+                    aio_p, _lib.pynng_native_aio_complete, self._aio_entry
+                ),
+                lib=_lib,
+                ffi=_ffi,
             )
             self.aio = aio_p[0]
-            cb_obj = object()
-            self.cb_arg = cb_obj
-            with _aio_map_lock:
-                _aio_map[id(cb_obj)] = cb_obj
-            self.awaitable = _DummyAwaitable()
         else:
             self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
             aio_p = _ffi.new("nng_aio **")
@@ -369,32 +418,80 @@ class AIOHelper:
                 _aio_map[id(self.cb_arg)] = self.cb_arg
             idarg = id(self.cb_arg)
             as_void = _ffi.cast("void *", idarg)
-            _lib.nng_aio_alloc(aio_p, _lib._async_complete, as_void)
+            try:
+                check_err(
+                    _lib.nng_aio_alloc(aio_p, _lib._async_complete, as_void),
+                    lib=_lib,
+                    ffi=_ffi,
+                )
+            except BaseException:
+                with _aio_map_lock:
+                    _aio_map.pop(idarg, None)
+                raise
             self.aio = aio_p[0]
 
-    async def _wait_for_aio(self):
+    def is_valid_for_current_loop(self):
+        engine = self._mpsc_engine
+        if engine is None or engine._closed or self.aio is None or self._aio_entry is None:
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return (
+            engine._loop is loop
+            and not loop.is_closed()
+            and self._current_slot is None
+            and not self._sending
+            and bool(self._lib.pynng_aio_entry_is_idle(self._aio_entry))
+        )
+
+    def _prepare_aio(self):
         if self._mpsc_engine is not None:
             loop = self._mpsc_engine._loop
+            if loop is None or loop.is_closed():
+                raise RuntimeError("Event loop is closed")
             fut = loop.create_future()
             slot = self._mpsc_engine.register(fut)
             self._current_slot = slot
+            self._current_fut = fut
             self._lib.pynng_aio_entry_set_slot_id(self._aio_entry, slot)
+
+    def _cleanup_prepared_aio(self):
+        if self._mpsc_engine is not None:
+            if self._current_slot is not None:
+                self._mpsc_engine.unregister(self._current_slot)
+                self._current_slot = None
+            self._current_fut = None
+            if self._aio_entry is not None:
+                self._lib.pynng_aio_entry_set_slot_id(self._aio_entry, 0)
+
+    async def _wait_for_aio(self):
+        if self._mpsc_engine is not None:
+            fut = self._current_fut
             _lib = self._lib
             already_cancelled = False
-            while True:
-                try:
-                    await asyncio.shield(fut)
-                except asyncio.CancelledError:
-                    if not already_cancelled:
-                        _lib.nng_aio_cancel(self.aio)
-                        already_cancelled = True
-                else:
-                    break
-            self._current_slot = None
+            try:
+                while True:
+                    try:
+                        await asyncio.shield(fut)
+                    except asyncio.CancelledError:
+                        if not already_cancelled:
+                            _lib.nng_aio_cancel(self.aio)
+                            already_cancelled = True
+                    else:
+                        break
+            finally:
+                if self._current_slot is not None:
+                    self._mpsc_engine.unregister(self._current_slot)
+                    self._current_slot = None
+                self._current_fut = None
+                if self._aio_entry is not None:
+                    _lib.pynng_aio_entry_set_slot_id(self._aio_entry, 0)
             err = _lib.nng_aio_result(self.aio)
             if already_cancelled or err == _lib.NNG_ECANCELED:
                 raise asyncio.CancelledError
-            check_err(err)
+            check_err(err, lib=_lib, ffi=self._ffi)
         else:
             await self.awaitable
 
@@ -405,15 +502,21 @@ class AIOHelper:
     async def arecv_msg(self):
         _lib = self._lib
         _ffi = self._ffi
-        check_err(self._lib_arecv(self._nng_obj, self.aio))
+        self._prepare_aio()
+        try:
+            check_err(self._lib_arecv(self._nng_obj, self.aio), lib=_lib, ffi=_ffi)
+        except BaseException:
+            self._cleanup_prepared_aio()
+            raise
         try:
             await self._wait_for_aio()
         except BaseException:
             msg = _lib.nng_aio_get_msg(self.aio)
             if msg != _ffi.NULL:
+                _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
                 _lib.nng_msg_free(msg)
             raise
-        check_err(_lib.nng_aio_result(self.aio))
+        check_err(_lib.nng_aio_result(self.aio), lib=_lib, ffi=_ffi)
         msg = _lib.nng_aio_get_msg(self.aio)
         from ._base import Message, Socket, Context
 
@@ -432,21 +535,34 @@ class AIOHelper:
         _lib = self._lib
         _ffi = self._ffi
         msg_p = _ffi.new("nng_msg **")
-        check_err(_lib.nng_msg_alloc(msg_p, 0))
+        check_err(_lib.nng_msg_alloc(msg_p, 0), lib=_lib, ffi=_ffi)
         msg = msg_p[0]
         try:
             if isinstance(data, bytes):
                 buf = data
             else:
                 buf = _ffi.from_buffer(data)
-            check_err(_lib.nng_msg_append(msg, buf, len(data)))
-            check_err(_lib.nng_aio_set_msg(self.aio, msg))
-            check_err(self._lib_asend(self._nng_obj, self.aio))
+            check_err(_lib.nng_msg_append(msg, buf, len(data)), lib=_lib, ffi=_ffi)
+            self._prepare_aio()
+            _lib.nng_aio_set_msg(self.aio, msg)
+            self._sending = True
+            check_err(self._lib_asend(self._nng_obj, self.aio), lib=_lib, ffi=_ffi)
         except BaseException:
+            self._sending = False
+            self._cleanup_prepared_aio()
             _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
             _lib.nng_msg_free(msg)
             raise
-        await self._wait_for_aio()
+        try:
+            await self._wait_for_aio()
+        except BaseException:
+            leftover = _lib.nng_aio_get_msg(self.aio)
+            if leftover != _ffi.NULL:
+                _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
+                _lib.nng_msg_free(leftover)
+            raise
+        finally:
+            self._sending = False
 
     async def asend_msg(self, msg):
         """
@@ -456,15 +572,28 @@ class AIOHelper:
         _lib = self._lib
         _ffi = self._ffi
         msg._ensure_can_send()
+        self._prepare_aio()
         _lib.nng_aio_set_msg(self.aio, msg._nng_msg)
         msg._mem_freed = True
+        self._sending = True
         try:
-            check_err(self._lib_asend(self._nng_obj, self.aio))
+            check_err(self._lib_asend(self._nng_obj, self.aio), lib=_lib, ffi=_ffi)
         except BaseException:
+            self._sending = False
+            self._cleanup_prepared_aio()
             _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
             _lib.nng_msg_free(msg._nng_msg)
             raise
-        await self._wait_for_aio()
+        try:
+            await self._wait_for_aio()
+        except BaseException:
+            leftover = _lib.nng_aio_get_msg(self.aio)
+            if leftover != _ffi.NULL:
+                _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
+                _lib.nng_msg_free(leftover)
+            raise
+        finally:
+            self._sending = False
 
     def _free(self):
         """
@@ -486,18 +615,31 @@ class AIOHelper:
         if self._current_slot is not None and self._mpsc_engine is not None:
             self._mpsc_engine.unregister(self._current_slot)
             self._current_slot = None
+        self._current_fut = None
 
         if self.aio is not None:
             _lib = self._lib
+            _ffi = self._ffi
             # Cancel in-flight AIO before freeing to prevent deadlock during GC.
             _lib.nng_aio_cancel(self.aio)
             _lib.nng_aio_wait(self.aio)
+            if self._sending:
+                leftover = _lib.nng_aio_get_msg(self.aio)
+                if leftover != _ffi.NULL:
+                    _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
+                    _lib.nng_msg_free(leftover)
+                self._sending = False
             _lib.nng_aio_free(self.aio)
             self.aio = None
 
         if self._aio_entry is not None:
             self._lib.pynng_aio_entry_free(self._aio_entry)
             self._aio_entry = None
+
+        if self._mpsc_engine is not None:
+            loop = self._mpsc_engine._loop
+            if loop is None or loop.is_closed():
+                self._mpsc_engine.close()
 
         if self.cb_arg is not None:
             with _aio_map_lock:
@@ -539,7 +681,7 @@ class DeviceAIO:
         "_sock2",
     )
 
-    def __init__(self, s1, s2=None, async_backend=None):
+    def __init__(self, s1, s2=None, async_backend=None, *, _use_mpsc=True):
         self.aio = None
         self._mpsc_engine = None
         self._aio_entry = None
@@ -568,11 +710,13 @@ class DeviceAIO:
                 "The async backend {} is not currently supported.".format(async_backend)
             )
 
-        if async_backend == "asyncio":
+        if _use_mpsc and async_backend == "asyncio":
             try:
                 loop = asyncio.get_running_loop()
                 if hasattr(self._lib, "pynng_native_aio_complete"):
-                    self._mpsc_engine = MPSCAIOEngine.get_for_loop(loop, self._lib, self._ffi)
+                    self._mpsc_engine = MPSCAIOEngine.get_for_loop(
+                        loop, self._lib, self._ffi
+                    )
             except RuntimeError:
                 pass
 
@@ -581,19 +725,14 @@ class DeviceAIO:
                 self._ffi.NULL, 0, self._mpsc_engine._queue
             )
             aio_p = self._ffi.new("nng_aio **")
-            self._lib.nng_aio_alloc(
-                aio_p, self._lib.pynng_native_aio_complete, self._aio_entry
+            check_err(
+                self._lib.nng_aio_alloc(
+                    aio_p, self._lib.pynng_native_aio_complete, self._aio_entry
+                ),
+                lib=self._lib,
+                ffi=self._ffi,
             )
             self.aio = aio_p[0]
-            cb_obj = object()
-            self.cb_arg = cb_obj
-            with _aio_map_lock:
-                _aio_map[id(cb_obj)] = cb_obj
-
-            async def _dummy():
-                pass
-
-            self.awaitable = _dummy()
         else:
             self.awaitable, self.cb_arg = AIOHelper._aio_helper_map[async_backend](self)
             aio_p = self._ffi.new("nng_aio **")
@@ -601,24 +740,53 @@ class DeviceAIO:
                 _aio_map[id(self.cb_arg)] = self.cb_arg
             idarg = id(self.cb_arg)
             as_void = self._ffi.cast("void *", idarg)
-            self._lib.nng_aio_alloc(aio_p, self._lib._async_complete, as_void)
+            try:
+                check_err(
+                    self._lib.nng_aio_alloc(aio_p, self._lib._async_complete, as_void),
+                    lib=self._lib,
+                    ffi=self._ffi,
+                )
+            except BaseException:
+                with _aio_map_lock:
+                    _aio_map.pop(idarg, None)
+                raise
             self.aio = aio_p[0]
 
     async def run(self):
         try:
-            self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
             if self._mpsc_engine is not None:
                 loop = self._mpsc_engine._loop
+                if loop is None or loop.is_closed():
+                    raise RuntimeError("Event loop is closed")
                 fut = loop.create_future()
                 slot = self._mpsc_engine.register(fut)
                 self._current_slot = slot
                 self._lib.pynng_aio_entry_set_slot_id(self._aio_entry, slot)
+                self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
+                _lib = self._lib
+                already_cancelled = False
                 try:
-                    await fut
+                    while True:
+                        try:
+                            await asyncio.shield(fut)
+                        except asyncio.CancelledError:
+                            if not already_cancelled:
+                                _lib.nng_aio_cancel(self.aio)
+                                already_cancelled = True
+                        else:
+                            break
                 finally:
-                    self._current_slot = None
-                check_err(self._lib.nng_aio_result(self.aio))
+                    if self._current_slot is not None:
+                        self._mpsc_engine.unregister(self._current_slot)
+                        self._current_slot = None
+                    if self._aio_entry is not None:
+                        _lib.pynng_aio_entry_set_slot_id(self._aio_entry, 0)
+                err = _lib.nng_aio_result(self.aio)
+                if already_cancelled or err == _lib.NNG_ECANCELED:
+                    raise asyncio.CancelledError
+                check_err(err, lib=_lib, ffi=self._ffi)
             else:
+                self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
                 await self.awaitable
         finally:
             self._free()
@@ -651,6 +819,11 @@ class DeviceAIO:
             self._lib.pynng_aio_entry_free(self._aio_entry)
             self._aio_entry = None
 
+        if self._mpsc_engine is not None:
+            loop = self._mpsc_engine._loop
+            if loop is None or loop.is_closed():
+                self._mpsc_engine.close()
+
         if self.cb_arg is not None:
             with _aio_map_lock:
                 _aio_map.pop(id(self.cb_arg), None)
@@ -671,4 +844,3 @@ class DeviceAIO:
 
     def __del__(self):
         self._free()
-
