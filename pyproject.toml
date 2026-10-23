@@ -77,8 +77,9 @@ version_file = "pynng/_version.py"
 build-frontend = "build[uv]"
 test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio", "headerkit>=0.9.0"]
 # test_build.py tests the build system (header parsing via libclang), not the installed wheel.
-# It runs in smoketest (source checkout with build deps); cibuildwheel tests the installed wheel.
-test-command = "pytest {project}/test --ignore={project}/test/test_build.py"
+# test_check_nng_updates.py tests repo maintenance scripts, not the installed wheel.
+# Both run in smoketest/CI; cibuildwheel tests the installed wheel.
+test-command = "pytest {project}/test --ignore={project}/test/test_build.py --ignore={project}/test/test_check_nng_updates.py"
 
 # cp314t-win*: https://github.com/python/cpython/issues/127294
 # *-win32: 32-bit Python can't load 64-bit libclang during build
