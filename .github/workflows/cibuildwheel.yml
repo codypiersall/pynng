@@ -9,10 +9,8 @@ on:
     paths:
       - 'pynng/**'
       - 'build_pynng.py'
-      - 'preprocess.py'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'stubs/**'
       - 'patches/**'
       - '.github/workflows/cibuildwheel.yml'
   pull_request:
@@ -20,10 +18,8 @@ on:
     paths:
       - 'pynng/**'
       - 'build_pynng.py'
-      - 'preprocess.py'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'stubs/**'
       - 'patches/**'
       - '.github/workflows/cibuildwheel.yml'
   release:
@@ -69,8 +65,22 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
 
+      - name: Set up sccache
+        uses: mozilla/sccache-action@v0.0.11
+
+      - name: Configure sccache cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.os == 'Windows' && '~/AppData/Local/Mozilla/sccache' || '~/.cache/sccache' }}
+          key: ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
+            ${{ matrix.os }}-sccache-
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.3.1
+        env:
+          CIBW_ENVIRONMENT: CMAKE_C_COMPILER_LAUNCHER=sccache SCCACHE_DIRECT=true
 
       - uses: actions/upload-artifact@v7
         with:
