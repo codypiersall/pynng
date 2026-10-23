@@ -759,6 +759,46 @@ class Socket:
             self._ffi.memmove(c_buf, body, nbytes)
         return nbytes
 
+    def recv_nowait(self):
+        """Receive data on the socket without blocking.
+
+        Equivalent to ``recv(block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if no message is available.
+        """
+        return self.recv(block=False)
+
+    def send_nowait(self, data):
+        """Send data on the socket without blocking.
+
+        Equivalent to ``send(data, block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if the send buffer is full.
+        """
+        return self.send(data, block=False)
+
+    def recv_msg_nowait(self):
+        """Receive a :class:`Message` on the socket without blocking.
+
+        Equivalent to ``recv_msg(block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if no message is available.
+        """
+        return self.recv_msg(block=False)
+
+    def send_msg_nowait(self, msg):
+        """Send a :class:`Message` on the socket without blocking.
+
+        Equivalent to ``send_msg(msg, block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if the send buffer is full.
+        """
+        return self.send_msg(msg, block=False)
+
+    def recv_into_nowait(self, buffer):
+        """Receive data directly into the provided writable buffer without blocking.
+
+        Equivalent to ``recv_into(buffer, block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if no message is available.
+        """
+        return self.recv_into(buffer, block=False)
+
     def send_msg(self, msg, block=True):
         """Send the :class:`Message` ``msg`` on the socket."""
         _lib = self._lib
@@ -769,7 +809,11 @@ class Socket:
             flags |= _lib.NNG_FLAG_NONBLOCK
         with msg._mem_freed_lock:
             msg._ensure_can_send()
-            check_err(_lib.nng_sendmsg(self.socket, msg._nng_msg, flags))
+            check_err(
+                _lib.nng_sendmsg(self.socket, msg._nng_msg, flags),
+                lib=_lib,
+                ffi=self._ffi,
+            )
             msg._mem_freed = True
 
     async def asend_msg(self, msg):
@@ -1253,31 +1297,42 @@ class Context:
         with _aio.AIOHelper(self, self._socket._async_backend) as aio:
             return await aio.asend(data)
 
-    def recv_msg(self):
+    def recv_msg(self, block=True):
         """Synchronously receive a :class:`Message` using this context."""
         _check_fork()
         _ffi = self._ffi
         _lib = self._lib
+        from .exceptions import Timeout, TryAgain
 
-        nng_msg = _sliced_aio_recv(
-            _lib.nng_ctx_recv, self.context, _lib, _ffi, self.recv_timeout
-        )
+        if not block:
+            timeout = 0
+        else:
+            timeout = self.recv_timeout
+
+        try:
+            nng_msg = _sliced_aio_recv(
+                _lib.nng_ctx_recv, self.context, _lib, _ffi, timeout
+            )
+        except Timeout:
+            if not block:
+                raise TryAgain("No message available immediately on context", _lib.NNG_EAGAIN)
+            raise
         msg_cls = self._socket._message_class or Message
         msg = msg_cls(nng_msg, _lib=_lib, _ffi=_ffi)
         self._socket._try_associate_msg_with_pipe(msg)
         return msg
 
-    def recv(self):
+    def recv(self, block=True):
         """Synchronously receive data on this context."""
-        msg = self.recv_msg()
+        msg = self.recv_msg(block=block)
         return msg.bytes
 
-    def recv_into(self, buffer):
+    def recv_into(self, buffer, block=True):
         """Receive data directly into the provided writable buffer."""
         m = memoryview(buffer)
         if m.readonly:
             raise BufferError("buffer must be writable")
-        msg = self.recv_msg()
+        msg = self.recv_msg(block=block)
         with msg._mem_freed_lock:
             body = self._lib.nng_msg_body(msg._nng_msg)
             msg_len = self._lib.nng_msg_len(msg._nng_msg)
@@ -1285,6 +1340,46 @@ class Context:
             c_buf = self._ffi.from_buffer(m)
             self._ffi.memmove(c_buf, body, nbytes)
         return nbytes
+
+    def recv_nowait(self):
+        """Receive data using this context without blocking.
+
+        Equivalent to ``recv(block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if no message is available.
+        """
+        return self.recv(block=False)
+
+    def send_nowait(self, data):
+        """Send data using this context without blocking.
+
+        Equivalent to ``send(data, block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if the send buffer is full.
+        """
+        return self.send(data, block=False)
+
+    def recv_msg_nowait(self):
+        """Receive a :class:`Message` using this context without blocking.
+
+        Equivalent to ``recv_msg(block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if no message is available.
+        """
+        return self.recv_msg(block=False)
+
+    def send_msg_nowait(self, msg):
+        """Send a :class:`Message` using this context without blocking.
+
+        Equivalent to ``send_msg(msg, block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if the send buffer is full.
+        """
+        return self.send_msg(msg, block=False)
+
+    def recv_into_nowait(self, buffer):
+        """Receive data directly into buffer using this context without blocking.
+
+        Equivalent to ``recv_into(buffer, block=False)``. Raises :class:`pynng.TryAgain`
+        immediately if no message is available.
+        """
+        return self.recv_into(buffer, block=False)
 
     async def arecv_into(self, buffer):
         """Asynchronously receive data directly into the provided writable buffer."""
@@ -1300,27 +1395,40 @@ class Context:
             self._ffi.memmove(c_buf, body, nbytes)
         return nbytes
 
-    def send_msg(self, msg):
+    def send_msg(self, msg, block=True):
         """Synchronously send the :class:`Message` ``msg`` on the context."""
         _ffi = self._ffi
         _lib = self._lib
-        from .exceptions import check_err
+        from .exceptions import check_err, TryAgain
 
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             aio_p = _ffi.new("nng_aio **")
-            check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL))
+            check_err(
+                _lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL),
+                lib=_lib,
+                ffi=_ffi,
+            )
             aio = aio_p[0]
             try:
-                check_err(_lib.nng_aio_set_msg(aio, msg._nng_msg))
-                check_err(_lib.nng_ctx_send(self.context, aio))
+                _lib.nng_aio_set_msg(aio, msg._nng_msg)
+                if not block:
+                    _lib.nng_aio_set_timeout(aio, 0)
+                _lib.nng_ctx_send(self.context, aio)
+                _lib.nng_aio_wait(aio)
+                res = _lib.nng_aio_result(aio)
+                if res != 0:
+                    # nng retains the message on the aio when send fails; detach it
+                    # so Message retains ownership and frees it in __del__ (or allows retry).
+                    _lib.nng_aio_set_msg(aio, _ffi.NULL)
+                    if not block and res == _lib.NNG_ETIMEDOUT:
+                        raise TryAgain("Context send buffer full", _lib.NNG_EAGAIN)
+                    check_err(res, lib=_lib, ffi=_ffi)
                 msg._mem_freed = True
-                check_err(_lib.nng_aio_wait(aio))
-                check_err(_lib.nng_aio_result(aio))
             finally:
                 _lib.nng_aio_free(aio)
 
-    def send(self, data):
+    def send(self, data, block=True):
         """
         Synchronously send data on the context.
 
@@ -1328,7 +1436,7 @@ class Context:
         _ensure_can_send(data)
         msg_cls = self._socket._message_class or Message
         msg = msg_cls(data, _lib=self._lib, _ffi=self._ffi)
-        return self.send_msg(msg)
+        return self.send_msg(msg, block=block)
 
     def close(self):
         """Close this context."""
