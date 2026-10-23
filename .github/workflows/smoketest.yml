@@ -8,21 +8,19 @@ on:
     paths:
       - 'pynng/**'
       - 'build_pynng.py'
-      - 'preprocess.py'
       - 'test/**'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'stubs/**'
+      - 'patches/**'
       - '.github/workflows/smoketest.yml'
   pull_request:
     paths:
       - 'pynng/**'
       - 'build_pynng.py'
-      - 'preprocess.py'
       - 'test/**'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'stubs/**'
+      - 'patches/**'
       - '.github/workflows/smoketest.yml'
 
 concurrency:
@@ -52,9 +50,21 @@ jobs:
           architecture: x64
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
+      - name: Set up sccache
+        uses: mozilla/sccache-action@v0.0.11
+      - name: Configure sccache cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
+            ${{ matrix.os }}-sccache-
       - run: sudo apt update
       - run: sudo apt install -y ninja-build libclang-dev
       - name: Build wheel
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: sccache
         run: uv build --wheel -o dist/
       - name: Upload wheel
         if: matrix.os == 'ubuntu-latest'
