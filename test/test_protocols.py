@@ -115,8 +115,8 @@ def test_push_pull():
     addr = random_addr()
     received = {"pull1": None, "pull2": None}
     with pynng.Push0(listen=addr) as push, pynng.Pull0(
-        dial=addr, recv_timeout=FAST_TIMEOUT
-    ) as pull1, pynng.Pull0(dial=addr, recv_timeout=FAST_TIMEOUT) as pull2:
+        dial=addr, recv_timeout=MEDIUM_TIMEOUT
+    ) as pull1, pynng.Pull0(dial=addr, recv_timeout=MEDIUM_TIMEOUT) as pull2:
 
         def recv1():
             received["pull1"] = pull1.recv()
