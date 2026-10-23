@@ -783,7 +783,7 @@ class Surveyor0(Socket):
                 try:
                     response = await self.arecv()
                     responses.append(response)
-                except pynng.Timeout:
+                except (Timeout, BadState):
                     break
             return responses
         finally:
