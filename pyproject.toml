@@ -81,7 +81,7 @@ enable = ["pypy"]
 # Build cp312 (which produces the universal abi3 wheel for standard CPython)
 # plus the free-threaded wheels (cp314t, cp315t) and PyPy 3.11 across all architectures.
 build = "cp312-* cp314t-* cp315t-* pp311-*"
-test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio", "headerkit>=0.47.6"]
+test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio"]
 # test_build.py tests the build system (header parsing via libclang), not the installed wheel.
 # test_check_nng_updates.py tests repo maintenance scripts, not the installed wheel.
 # Both run in smoketest/CI; cibuildwheel tests the installed wheel.
@@ -90,7 +90,8 @@ test-command = "pytest {project}/test --ignore={project}/test/test_build.py --ig
 # *-win32: 32-bit Python can't load 64-bit libclang during build
 # *i686: 32-bit manylinux containers lack package managers for libclang
 # cp*-macosx_arm64: CPython macOS wheels are already built as universal2
-skip = "*-win32 *i686 cp*-macosx_arm64"
+# pp*-win*: PyPy on Windows does not support building MSVC C-extensions
+skip = "*-win32 *i686 cp*-macosx_arm64 pp*-win*"
 
 build-verbosity = 1
 
@@ -108,6 +109,7 @@ environment = { PATH = "C:\\Program Files\\LLVM\\bin;$PATH" }
 [tool.cibuildwheel.macos]
 # Build universal2 for CPython and native arm64 for PyPy (which lacks universal2 binaries)
 archs = ["universal2", "arm64"]
+test-skip = "*_universal2:x86_64"
 before-build = "uv run --python 3.12 --no-project --with 'headerkit>=0.47.6' python -m headerkit.install_libclang --skip-verify"
 
 environment = { CMAKE_OSX_ARCHITECTURES = "x86_64;arm64" }

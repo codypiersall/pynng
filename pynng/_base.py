@@ -101,7 +101,9 @@ _SENTINEL = object()
 _RECV_SLICE_MS = 100  # Slice duration for interruptable recv loop (ms)
 
 
-def _sliced_aio_recv(recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_RECV_SLICE_MS):
+def _sliced_aio_recv(
+    recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_RECV_SLICE_MS
+):
     """Perform an interruptable receive using nng_aio with sliced timeouts.
 
     CFFI releases the GIL when blocking in C. If a thread waits in a long or
@@ -427,6 +429,13 @@ class PointerOption(_NNGOption):
 
     _setter = options._setopt_ptr
 
+    def __set__(self, instance, value):
+        super().__set__(instance, value)
+        if instance is not None and value is not None:
+            if not hasattr(instance, "_pointer_option_refs"):
+                instance._pointer_option_refs = {}
+            instance._pointer_option_refs[self.option] = value
+
 
 class NotImplementedOption(_NNGOption):
     """Represents a currently un-implemented option in Python."""
@@ -677,6 +686,8 @@ class Socket:
             self._recv_pool.pop()._free()
         while self._send_pool:
             self._send_pool.pop()._free()
+        if hasattr(self, "_pointer_option_refs"):
+            self._pointer_option_refs.clear()
 
     def __del__(self):
         if _is_nng_finalized():
@@ -714,9 +725,7 @@ class Socket:
                     timeout = st
                 else:
                     timeout = min(timeout, st)
-            raw_msg = _sliced_aio_recv(
-                recv_fn, self.socket, _lib, _ffi, timeout
-            )
+            raw_msg = _sliced_aio_recv(recv_fn, self.socket, _lib, _ffi, timeout)
 
         msg_cls = self._message_class or Message
         msg = msg_cls(raw_msg, _lib=_lib, _ffi=_ffi)
@@ -1111,6 +1120,8 @@ class Dialer:
         """
         self._lib.nng_dialer_close(self.dialer)
         self.socket._dialers.pop(self.id, None)
+        if hasattr(self, "_pointer_option_refs"):
+            self._pointer_option_refs.clear()
 
     @property
     def id(self):
@@ -1170,6 +1181,8 @@ class Listener:
         """
         self._lib.nng_listener_close(self.listener)
         self.socket._listeners.pop(self.id, None)
+        if hasattr(self, "_pointer_option_refs"):
+            self._pointer_option_refs.clear()
 
     @property
     def id(self):
@@ -1413,7 +1426,9 @@ class Context:
             )
         except Timeout:
             if not block:
-                raise TryAgain("No message available immediately on context", _lib.NNG_EAGAIN)
+                raise TryAgain(
+                    "No message available immediately on context", _lib.NNG_EAGAIN
+                )
             raise
         msg_cls = self._socket._message_class or Message
         msg = msg_cls(nng_msg, _lib=_lib, _ffi=_ffi)
@@ -1546,6 +1561,8 @@ class Context:
             self._recv_pool.pop()._free()
         while self._send_pool:
             self._send_pool.pop()._free()
+        if hasattr(self, "_pointer_option_refs"):
+            self._pointer_option_refs.clear()
         if self._context is not None:
             # check that nng still has a reference
             if _lib.nng_ctx_id(self.context) != -1:

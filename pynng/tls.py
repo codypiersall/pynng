@@ -96,8 +96,8 @@ class TLSConfig:
             if _is_nng_finalized():
                 self._tls_config = None
                 return
-            if getattr(self, "_tls_config", None) is not None:
-                cfg = self._tls_config
+            cfg = getattr(self, "_tls_config", None)
+            if cfg:
                 self._tls_config = None
                 pynng.lib.nng_tls_config_free(cfg)
         except (TypeError, AttributeError):
