@@ -468,6 +468,7 @@ class Message(_base.Message):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
 
+    __slots__ = ()
     _lib = lib
     _ffi = ffi
 

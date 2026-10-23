@@ -26,7 +26,7 @@ _STAT_UNIT_NAMES = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class Stat(Mapping):
     """A structured representation of an NNG runtime statistic.
 

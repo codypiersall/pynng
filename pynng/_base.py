@@ -1413,6 +1413,15 @@ class Message:
     which CFFI bindings to use. If not provided, falls back to v1 defaults.
     """
 
+    __slots__ = (
+        "__lib",
+        "__ffi",
+        "_mem_freed",
+        "_mem_freed_lock",
+        "_nng_msg",
+        "_pipe",
+    )
+
     def __init__(self, data, pipe=None, *, _lib=None, _ffi=None):
         # Resolve lib/ffi: explicit args > pipe's socket > v1 default
         if _lib is None or _ffi is None:

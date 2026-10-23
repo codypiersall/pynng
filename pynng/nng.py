@@ -1032,7 +1032,7 @@ class Message(_base.Message):
 
     """
 
-    pass
+    __slots__ = ()
 
 
 Socket._message_class = Message
