@@ -47,8 +47,8 @@ jobs:
 
       - name: Install system build dependencies
         run: |
-          sudo apt update
-          sudo apt install -y ninja-build libclang-dev
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build libclang-dev
 
       - name: Stage benchmark harness
         run: |
