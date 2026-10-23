@@ -28,6 +28,29 @@ def test_socket_recv_nowait_empty_raises_tryagain():
             s1.recv_into_nowait(buf)
 
 
+def test_socket_send_nowait_blocked_raises_tryagain_and_preserves_msg():
+    """Verify send_nowait and send_msg_nowait raise TryAgain when unable to send and keep msg retryable."""
+    addr = "inproc://test-nowait-send-blocked"
+    with pynng.Req0() as req:
+        with pytest.raises(pynng.TryAgain):
+            req.send_nowait(b"unconnected")
+
+        msg = pynng.Message(b"retryable-socket-msg")
+        with pytest.raises(pynng.TryAgain):
+            req.send_msg_nowait(msg)
+
+        # Message ownership must remain with Python so it can be inspected and retried
+        assert not msg._mem_freed
+        assert msg.bytes == b"retryable-socket-msg"
+
+        with pynng.Rep0(listen=addr) as rep:
+            req.dial(addr, block=True)
+            poll_nowait(lambda: req.send_msg_nowait(msg))
+            assert msg._mem_freed
+            assert poll_nowait(rep.recv_nowait) == b"retryable-socket-msg"
+
+
+
 def test_socket_send_recv_nowait():
     """Verify send_nowait and recv_nowait roundtrip."""
     addr = "inproc://test-nowait-2"
@@ -86,6 +109,46 @@ def test_context_recv_nowait_empty_raises_tryagain():
         buf = bytearray(16)
         with pytest.raises(pynng.TryAgain):
             ctx.recv_into_nowait(buf)
+
+
+def test_context_send_nowait_blocked_raises_tryagain_and_preserves_msg():
+    """Verify Context send_nowait and send_msg_nowait raise TryAgain when blocked and keep msg retryable."""
+    addr = "inproc://test-nowait-ctx-send-blocked"
+    with pynng.Req0() as req:
+        ctx_req = req.new_context()
+        with pytest.raises(pynng.TryAgain):
+            ctx_req.send_nowait(b"unconnected")
+
+        msg = pynng.Message(b"retryable-ctx-msg")
+        with pytest.raises(pynng.TryAgain):
+            ctx_req.send_msg_nowait(msg)
+
+        # Message ownership must remain with Python after failed non-blocking send
+        assert not msg._mem_freed
+        assert msg.bytes == b"retryable-ctx-msg"
+
+        with pynng.Rep0(listen=addr) as rep:
+            ctx_rep = rep.new_context()
+            req.dial(addr, block=True)
+            poll_nowait(lambda: ctx_req.send_msg_nowait(msg))
+            assert msg._mem_freed
+            assert poll_nowait(ctx_rep.recv_nowait) == b"retryable-ctx-msg"
+            ctx_rep.close()
+        ctx_req.close()
+
+
+def test_context_send_timeout_preserves_msg():
+    """Verify blocking Context.send_msg detaches msg on Timeout so it does not leak or poison msg."""
+    with pynng.Req0() as req:
+        ctx = req.new_context()
+        ctx.send_timeout = 20
+        msg = pynng.Message(b"timeout-ctx-msg")
+        with pytest.raises(pynng.Timeout):
+            ctx.send_msg(msg)
+        assert not msg._mem_freed
+        assert msg.bytes == b"timeout-ctx-msg"
+        ctx.close()
+
 
 
 def test_context_send_recv_nowait():

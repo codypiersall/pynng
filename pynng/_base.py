@@ -809,7 +809,11 @@ class Socket:
             flags |= _lib.NNG_FLAG_NONBLOCK
         with msg._mem_freed_lock:
             msg._ensure_can_send()
-            check_err(_lib.nng_sendmsg(self.socket, msg._nng_msg, flags))
+            check_err(
+                _lib.nng_sendmsg(self.socket, msg._nng_msg, flags),
+                lib=_lib,
+                ffi=self._ffi,
+            )
             msg._mem_freed = True
 
     async def asend_msg(self, msg):
@@ -1397,22 +1401,30 @@ class Context:
         _lib = self._lib
         from .exceptions import check_err, TryAgain
 
-        timeout = 0 if not block else (self.send_timeout if self.send_timeout is not None else _lib.NNG_DURATION_DEFAULT)
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             aio_p = _ffi.new("nng_aio **")
-            check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL))
+            check_err(
+                _lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL),
+                lib=_lib,
+                ffi=_ffi,
+            )
             aio = aio_p[0]
             try:
-                check_err(_lib.nng_aio_set_msg(aio, msg._nng_msg))
-                _lib.nng_aio_set_timeout(aio, timeout)
-                check_err(_lib.nng_ctx_send(self.context, aio))
-                msg._mem_freed = True
+                _lib.nng_aio_set_msg(aio, msg._nng_msg)
+                if not block:
+                    _lib.nng_aio_set_timeout(aio, 0)
+                _lib.nng_ctx_send(self.context, aio)
                 _lib.nng_aio_wait(aio)
                 res = _lib.nng_aio_result(aio)
-                if not block and res == _lib.NNG_ETIMEDOUT:
-                    raise TryAgain("Context send buffer full", _lib.NNG_EAGAIN)
-                check_err(res)
+                if res != 0:
+                    # nng retains the message on the aio when send fails; detach it
+                    # so Message retains ownership and frees it in __del__ (or allows retry).
+                    _lib.nng_aio_set_msg(aio, _ffi.NULL)
+                    if not block and res == _lib.NNG_ETIMEDOUT:
+                        raise TryAgain("Context send buffer full", _lib.NNG_EAGAIN)
+                    check_err(res, lib=_lib, ffi=_ffi)
+                msg._mem_freed = True
             finally:
                 _lib.nng_aio_free(aio)
 
