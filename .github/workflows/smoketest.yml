@@ -60,8 +60,7 @@ jobs:
           restore-keys: |
             ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
             ${{ matrix.os }}-sccache-
-      - run: sudo apt-get update -qq
-      - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev
+      - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build libclang-dev)
       - name: Build wheel
         env:
           CMAKE_C_COMPILER_LAUNCHER: sccache
@@ -120,8 +119,7 @@ jobs:
           architecture: x64
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
-      - run: sudo apt-get update -qq
-      - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev
+      - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build libclang-dev)
       - name: "Build with PYNNG_TLS_ENGINE=${{ matrix.tls-engine }}"
         run: >
           uv pip install --system -v -e '.[dev]'
