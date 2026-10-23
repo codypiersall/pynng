@@ -26,6 +26,96 @@ import re
 import subprocess
 import sys
 
+
+def _transform_headerkit_clang_source(path: str, text: str) -> str:
+    """Adapt headerkit._clang source files to work around PyPy ctypes incompatibilities."""
+    if path.endswith("cindex.py"):
+        # 1. Bind _compat_c_interop_string before FUNCTION_LIST is populated at import time.
+        text = text.replace(
+            "class c_interop_string(c_char_p):",
+            "from headerkit._clang import _compat_c_interop_string as c_interop_string\n"
+            "class _unused_c_interop_string:",
+        )
+        text = text.replace(
+            'return b.decode("utf8")',
+            "return (None if not (ptr := c_void_p.value.__get__(x) if isinstance(x, c_void_p)"
+            " else getattr(x, 'value', None)) else ctypes.string_at(ptr).decode('utf8'))",
+        )
+        # 2. Copy callback struct/pointer arguments off the C stack before storing in Python lists.
+        text = text.replace(
+            "child._tu = self._tu",
+            "child = Cursor.from_buffer_copy(child); child._tu = self._tu",
+        )
+        text = text.replace(
+            "field._tu = self._tu",
+            "field = Cursor.from_buffer_copy(field); field._tu = self._tu",
+        )
+        text = text.replace(
+            "base._tu = self._tu",
+            "base = Cursor.from_buffer_copy(base); base._tu = self._tu",
+        )
+        text = text.replace(
+            "method._tu = self._tu",
+            "method = Cursor.from_buffer_copy(method); method._tu = self._tu",
+        )
+        text = text.replace(
+            "loc = lptr.contents",
+            "loc = SourceLocation.from_buffer_copy(lptr.contents)",
+        )
+        text = text.replace(
+            "File(fobj)",
+            "File(c_object_p.from_buffer_copy(fobj))",
+        )
+        # 3. libclang's clang_equalCursors mutates X.data[1] = 0 in place; under ARM64 AAPCS64
+        # PyPy's _rawffi passes self._buffer by pointer without copying, clobbering Cursor state.
+        text = text.replace(
+            "conf.lib.clang_equalCursors(self, other)",
+            "conf.lib.clang_equalCursors("
+            "Cursor.from_buffer_copy(self), Cursor.from_buffer_copy(other))",
+        )
+    return text
+
+
+if sys.implementation.name == "pypy":
+    import importlib.abc
+
+    class _PyPyHeaderkitClangLoader(importlib.abc.SourceLoader):
+        """SourceLoader that adapts headerkit._clang's ctypes bindings for PyPy."""
+
+        def __init__(self, fullname: str, path: str) -> None:
+            self.fullname = fullname
+            self.path = path
+
+        def get_filename(self, fullname: str) -> str:
+            return self.path
+
+        def get_data(self, path: str | bytes) -> bytes:
+            with open(path, "rb") as f:
+                data = f.read()
+            text = _transform_headerkit_clang_source(str(path), data.decode("utf-8"))
+            return text.encode("utf-8")
+
+        def get_code(self, fullname: str):
+            source = self.get_data(self.path)
+            return compile(source, self.path, "exec", dont_inherit=True)
+
+    class _PyPyHeaderkitClangFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path, target=None):
+            if fullname == "headerkit._clang" or fullname.startswith("headerkit._clang."):
+                for finder in sys.meta_path:
+                    if isinstance(finder, _PyPyHeaderkitClangFinder):
+                        continue
+                    find_spec = getattr(finder, "find_spec", None)
+                    if find_spec is None:
+                        continue
+                    spec = find_spec(fullname, path, target)
+                    if spec is not None and spec.origin and spec.origin.endswith(".py"):
+                        spec.loader = _PyPyHeaderkitClangLoader(fullname, spec.origin)
+                        return spec
+            return None
+
+    sys.meta_path.insert(0, _PyPyHeaderkitClangFinder())
+
 from headerkit.backends import get_backend
 from headerkit.writers.cffi import header_to_cffi
 
@@ -258,6 +348,9 @@ def _get_nng_include_dir() -> str:
     return include_dir
 
 
+_CDEF_MEMO: dict[tuple[tuple[tuple[str, float], ...], str, tuple[str, ...]], tuple[str, list[str]]] = {}
+
+
 def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tuple[str, list[str]]:
     """Parse NNG headers and generate CFFI cdef declarations.
 
@@ -291,6 +384,14 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
         h for h in headers if os.path.exists(os.path.join(include_dir, h))
     ]
     header_paths = [os.path.join(include_dir, h) for h in existing]
+    memo_key = (
+        tuple((h, os.path.getmtime(p)) for h, p in zip(existing, header_paths)),
+        include_dir,
+        tuple(exclude_patterns),
+    )
+    if memo_key in _CDEF_MEMO:
+        cached_cdef, cached_existing = _CDEF_MEMO[memo_key]
+        return cached_cdef, list(cached_existing)
     build_script = os.path.join(_SCRIPT_DIR, "build_pynng.py")
 
     # Check cache freshness
@@ -319,13 +420,16 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
 {includes}
 """
 
-    # Parse with headerkit libclang backend
+    # Parse with headerkit libclang backend (umbrella.h already includes all
+    # target headers and project_prefixes=(include_dir,) extracts declarations
+    # from all of them in a single TranslationUnit pass).
     backend = get_backend("libclang")
     header = backend.parse(
         umbrella,
         "umbrella.h",
         include_dirs=[include_dir],
         project_prefixes=(include_dir,),
+        recursive_includes=False,
     )
 
     # Convert IR to CFFI cdef string
@@ -365,6 +469,7 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
         except Exception as exc:
             logger.debug("Failed to save cdef cache: %s", exc)
 
+    _CDEF_MEMO[memo_key] = (cdef, list(existing))
     return cdef, existing
 
 

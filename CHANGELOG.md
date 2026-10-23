@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `socket.pipe_events()` returns an async iterator of `PipeEvent` objects for consuming pipe connect/disconnect events (`async for event in socket.pipe_events()`)
 
 - Support Python 3.15 in package classifiers and CI smoketest matrix
+- Support PyPy 3.11 in CI smoketest matrix, `cibuildwheel` release builds, and PyPI implementation classifiers
 - `pynng.nng_fini()` function and `nng_fini_at_exit` setting for explicit runtime finalization control
 
 ### Changed
