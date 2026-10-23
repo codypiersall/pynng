@@ -22,15 +22,16 @@ async def main():
     s1 = pynng.Req0()
     ctx = s1.new_context()
     aio = AIOHelper(s0, async_backend="asyncio")
-    # Trigger finalization
-    pynng.nng_fini()
-    # Trigger garbage collection/destruction of remaining objects
-    del aio
-    del ctx
-    del s1
-    del s0
+    return s0, s1, ctx, aio
 
-asyncio.run(main())
+s0, s1, ctx, aio = asyncio.run(main())
+# Trigger finalization
+pynng.nng_fini()
+# Trigger garbage collection/destruction of remaining objects
+del aio
+del ctx
+del s1
+del s0
 print("SHUTDOWN_OK")
 """
     proc = subprocess.run(

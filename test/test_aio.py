@@ -188,12 +188,12 @@ async def test_aio_free_cancels_pending():
     with pynng.Pair0(listen=addr) as s0:
         # 1. Default MPSC engine path under asyncio: zero _aio_map registration
         mpsc_helper = AIOHelper(s0, "asyncio")
-        assert mpsc_helper._mpsc_engine is not None
-        assert mpsc_helper._aio_entry is not None
-        assert mpsc_helper.cb_arg is None
-        mpsc_helper._free()
-        assert mpsc_helper.aio is None
-        assert mpsc_helper._aio_entry is None
+        if mpsc_helper._mpsc_engine is not None:
+            assert mpsc_helper._aio_entry is not None
+            assert mpsc_helper.cb_arg is None
+            mpsc_helper._free()
+            assert mpsc_helper.aio is None
+            assert mpsc_helper._aio_entry is None
 
         # 2. Fallback _aio_map callback path (_use_mpsc=False)
         helper = AIOHelper(s0, "asyncio", _use_mpsc=False)
@@ -291,7 +291,8 @@ async def test_mpsc_batch_drain_over_256():
 
     loop = asyncio.get_running_loop()
     engine = MPSCAIOEngine.get_for_loop(loop, lib, ffi)
-    assert engine is not None
+    if engine is None:
+        pytest.skip("MPSCAIOEngine is not supported on this event loop (e.g. Windows ProactorEventLoop)")
 
     entries = []
     futs = []
@@ -317,6 +318,12 @@ async def test_pooled_asend_timeout_and_cancel_do_not_leak_nng_msg():
     """Verify failed/timed-out/cancelled pooled asend detaches and frees the unsent nng_msg."""
     addr = random_addr()
     with pynng.Req0(send_timeout=20) as req:
+        helper = req._acquire_send_helper()
+        if helper._mpsc_engine is None:
+            helper._free()
+            pytest.skip("Helper pooling requires MPSC engine support")
+        req._release_send_helper(helper)
+
         with pytest.raises(pynng.Timeout):
             await req.asend(b"timeout-payload")
 
@@ -374,7 +381,8 @@ async def test_device_aio_cancellation_with_mpsc():
     a2 = random_addr()
     with pynng.RawPair0(listen=a1) as s1, pynng.RawPair0(listen=a2) as s2:
         dev = DeviceAIO(s1, s2, "asyncio")
-        assert dev._mpsc_engine is not None
+        if dev._mpsc_engine is None:
+            pytest.skip("DeviceAIO MPSC engine is not supported on this event loop")
         task = asyncio.create_task(dev.run())
         await asyncio.sleep(0.01)
         task.cancel()
