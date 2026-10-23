@@ -428,12 +428,227 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
     callbacks = """
         extern "Python" void _async_complete(void *);
         extern "Python" void _nng_pipe_cb(nng_pipe, nng_pipe_ev, void *);
+
+        typedef struct pynng_aio_entry pynng_aio_entry_t;
+        typedef struct pynng_mpsc_queue pynng_mpsc_queue_t;
+
+        pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd);
+        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q);
+        void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
+        pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q);
+        void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id);
+        void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q);
+        int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
+        void pynng_aio_entry_free(pynng_aio_entry_t *e);
+        void pynng_native_aio_complete(void *arg);
+        int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries);
     """
 
     ffi = FFI()
 
     # Build set_source includes from the existing headers returned by generate_cdef()
     source_includes = "\n".join(f"        #include <{h}>" for h in existing_headers)
+
+    mpsc_source = """
+        #include <stdatomic.h>
+        #include <stdint.h>
+        #include <stdlib.h>
+
+        #if defined(_WIN32)
+          #include <windows.h>
+          #include <io.h>
+        #else
+          #include <unistd.h>
+          #include <fcntl.h>
+        #endif
+
+        typedef struct pynng_aio_entry {
+            void *aio;
+            _Atomic(uintptr_t) slot_id;
+            void *queue;
+            _Atomic(struct pynng_aio_entry *) next;
+            _Atomic(int) state; /* 0 = IDLE, 1 = QUEUED, 2 = FREED */
+        } pynng_aio_entry_t;
+
+        typedef struct pynng_mpsc_queue {
+            _Atomic(pynng_aio_entry_t *) head;
+            pynng_aio_entry_t *tail;
+            pynng_aio_entry_t stub;
+            _Atomic(int) write_fd;
+        } pynng_mpsc_queue_t;
+
+        static inline void pynng_mpsc_init(pynng_mpsc_queue_t *q, int wfd) {
+            atomic_init(&q->stub.next, NULL);
+            q->stub.aio = NULL;
+            atomic_init(&q->stub.slot_id, 0);
+            q->stub.queue = q;
+            atomic_init(&q->stub.state, 0);
+            atomic_init(&q->head, &q->stub);
+            q->tail = &q->stub;
+            atomic_init(&q->write_fd, wfd);
+        }
+
+        pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
+            pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)malloc(sizeof(pynng_mpsc_queue_t));
+            if (q) {
+                pynng_mpsc_init(q, write_fd);
+            }
+            return q;
+        }
+
+        /* WAIT-FREE MPSC PUSH - Zero GIL! Called directly by nng worker threads */
+        void pynng_native_aio_complete(void *arg) {
+            pynng_aio_entry_t *entry = (pynng_aio_entry_t *)arg;
+            if (!entry) return;
+            pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)entry->queue;
+            if (!q) return;
+
+            /* Atomically transition IDLE (0) -> QUEUED (1).
+               If already QUEUED (1) or FREED (2), do not push a second time. */
+            int expected = 0;
+            if (!atomic_compare_exchange_strong_explicit(
+                    &entry->state, &expected, 1,
+                    memory_order_acq_rel, memory_order_acquire)) {
+                return;
+            }
+
+            /* Dmitry Vyukov wait-free MPSC push: O(1), no loops, no contention */
+            atomic_store_explicit(&entry->next, NULL, memory_order_relaxed);
+            pynng_aio_entry_t *prev = atomic_exchange_explicit(&q->head, entry, memory_order_acq_rel);
+            atomic_store_explicit(&prev->next, entry, memory_order_release);
+
+            int wfd = atomic_load_explicit(&q->write_fd, memory_order_acquire);
+            if (wfd >= 0) {
+                char b = 1;
+        #if defined(_WIN32)
+                (void)_write(wfd, &b, 1);
+        #else
+                (void)write(wfd, &b, 1);
+        #endif
+            }
+        }
+
+        static inline void pynng_mpsc_push_internal(pynng_mpsc_queue_t *q, pynng_aio_entry_t *node) {
+            atomic_store_explicit(&node->next, NULL, memory_order_relaxed);
+            pynng_aio_entry_t *prev = atomic_exchange_explicit(&q->head, node, memory_order_acq_rel);
+            atomic_store_explicit(&prev->next, node, memory_order_release);
+        }
+
+        static inline pynng_aio_entry_t *pynng_mpsc_pop(pynng_mpsc_queue_t *q) {
+            pynng_aio_entry_t *tail = q->tail;
+            pynng_aio_entry_t *next = atomic_load_explicit(&tail->next, memory_order_acquire);
+
+            if (tail == &q->stub) {
+                if (!next) {
+                    return NULL;
+                }
+                q->tail = next;
+                tail = next;
+                next = atomic_load_explicit(&next->next, memory_order_acquire);
+            }
+
+            if (next) {
+                q->tail = next;
+                return tail;
+            }
+
+            pynng_aio_entry_t *head = atomic_load_explicit(&q->head, memory_order_acquire);
+            if (tail != head) {
+                return NULL;
+            }
+
+            pynng_mpsc_push_internal(q, &q->stub);
+            next = atomic_load_explicit(&tail->next, memory_order_acquire);
+            if (next) {
+                q->tail = next;
+                return tail;
+            }
+            return NULL;
+        }
+
+        static inline void pynng_mpsc_drain_freed(pynng_mpsc_queue_t *q) {
+            pynng_aio_entry_t *entry;
+            while ((entry = pynng_mpsc_pop(q)) != NULL) {
+                int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
+                if (prev_state == 2) {
+                    free(entry);
+                }
+            }
+        }
+
+        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
+            if (q) {
+                atomic_store_explicit(&q->write_fd, -1, memory_order_release);
+                pynng_mpsc_drain_freed(q);
+            }
+        }
+
+        void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q) {
+            if (q) {
+                atomic_store_explicit(&q->write_fd, -1, memory_order_release);
+                pynng_mpsc_drain_freed(q);
+                free(q);
+            }
+        }
+
+        int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries) {
+            if (!q || !out_slot_ids || max_entries <= 0) return 0;
+            int count = 0;
+            while (count < max_entries) {
+                pynng_aio_entry_t *entry = pynng_mpsc_pop(q);
+                if (!entry) {
+                    break;
+                }
+                uintptr_t slot_id = atomic_load_explicit(&entry->slot_id, memory_order_acquire);
+                int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
+                if (prev_state == 2) {
+                    free(entry);
+                } else if (slot_id != 0) {
+                    out_slot_ids[count++] = slot_id;
+                }
+            }
+            return count;
+        }
+
+        pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q) {
+            pynng_aio_entry_t *e = (pynng_aio_entry_t *)malloc(sizeof(pynng_aio_entry_t));
+            if (e) {
+                e->aio = aio;
+                atomic_init(&e->slot_id, slot_id);
+                e->queue = q;
+                atomic_init(&e->next, NULL);
+                atomic_init(&e->state, 0);
+            }
+            return e;
+        }
+
+        void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id) {
+            if (e) {
+                atomic_store_explicit(&e->slot_id, slot_id, memory_order_release);
+            }
+        }
+
+        void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q) {
+            if (e) {
+                e->queue = q;
+            }
+        }
+
+        int pynng_aio_entry_is_idle(pynng_aio_entry_t *e) {
+            if (!e) return 0;
+            return atomic_load_explicit(&e->state, memory_order_acquire) == 0;
+        }
+
+        void pynng_aio_entry_free(pynng_aio_entry_t *e) {
+            if (e) {
+                atomic_store_explicit(&e->slot_id, 0, memory_order_release);
+                int prev_state = atomic_exchange_explicit(&e->state, 2, memory_order_acq_rel);
+                if (prev_state == 0) {
+                    free(e);
+                }
+            }
+        }
+    """
 
     ffi.set_source(
         module_name,
@@ -445,6 +660,7 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
                without tags. CFFI emits sizeof(enum ...); define tags to make them complete. */
             enum nng_pipe_ev {{ _nng_pipe_ev_dummy = 0 }};
             enum nng_err {{ _nng_err_dummy = 0 }};
+{mpsc_source}
         """,
         include_dirs=[nng_include_dir],
     )
