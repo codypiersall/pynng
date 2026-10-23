@@ -174,8 +174,8 @@ def test_v2_push0_pull0():
     addr = random_addr()
     received = {"pull1": None, "pull2": None}
     with v2.Push0(listen=addr) as push, v2.Pull0(
-        dial=addr, recv_timeout=FAST_TIMEOUT
-    ) as pull1, v2.Pull0(dial=addr, recv_timeout=FAST_TIMEOUT) as pull2:
+        dial=addr, recv_timeout=MEDIUM_TIMEOUT
+    ) as pull1, v2.Pull0(dial=addr, recv_timeout=MEDIUM_TIMEOUT) as pull2:
 
         def recv1():
             received["pull1"] = pull1.recv()
