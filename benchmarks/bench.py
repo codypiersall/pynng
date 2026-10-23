@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import gc
+import itertools
 import json
 import os
 import platform
@@ -20,6 +21,8 @@ import time
 from typing import Any, Dict, List
 
 import pynng
+
+_ADDR_COUNTER = itertools.count()
 
 
 def get_git_info() -> Dict[str, str]:
@@ -46,14 +49,28 @@ def get_git_info() -> Dict[str, str]:
 
 def make_addr(transport: str, test_id: str) -> str:
     """Generate a clean address for a given transport."""
+    seq = next(_ADDR_COUNTER)
     if transport == "inproc":
-        return f"inproc://bench-{test_id}"
+        return f"inproc://bench-{test_id}-{seq}"
     elif transport == "ipc":
-        path = os.path.join(tempfile.gettempdir(), f"pynng-bench-{test_id}.ipc")
+        path = os.path.join(
+            tempfile.gettempdir(), f"pynng-bench-{os.getpid()}-{test_id}-{seq}.ipc"
+        )
         return f"ipc://{path}"
     elif transport == "tcp":
         return "tcp://127.0.0.1:0"
     raise ValueError(f"Unknown transport: {transport}")
+
+
+def cleanup_ipc_addr(transport: str, addr: str) -> None:
+    """Remove temporary IPC socket file if present."""
+    if transport == "ipc" and addr.startswith("ipc://"):
+        path = addr[len("ipc://") :]
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -62,23 +79,22 @@ def make_addr(transport: str, test_id: str) -> str:
 async def bench_async_stream(
     transport: str, count: int, payload_size: int, warmup: int = 500, rounds: int = 3
 ) -> Dict[str, Any]:
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    if rounds < 1:
+        raise ValueError("rounds must be >= 1")
     test_id = f"stream-{int(time.time() * 1000)}"
     addr = make_addr(transport, test_id)
     payload = b"X" * payload_size
 
-    with pynng.Pair0(listen=addr) as s1:
-        if transport == "tcp":
-            try:
-                s1.tcp_nodelay = True
-            except Exception:
-                pass
-        dial_addr = s1.listeners[0].url if transport == "tcp" else addr
-        with pynng.Pair0(dial=dial_addr) as s2:
+    try:
+        with pynng.Pair0() as s1, pynng.Pair0() as s2:
             if transport == "tcp":
-                try:
-                    s2.tcp_nodelay = True
-                except Exception:
-                    pass
+                s1.tcp_nodelay = True
+                s2.tcp_nodelay = True
+            s1.listen(addr)
+            dial_addr = s1.listeners[0].url if transport == "tcp" else addr
+            s2.dial(dial_addr, block=True)
 
             # Warmup
             async def warmup_run():
@@ -113,6 +129,8 @@ async def bench_async_stream(
                         gc.enable()
 
             elapsed = min(elapsed_times)
+    finally:
+        cleanup_ipc_addr(transport, addr)
 
     msgs_per_sec = count / elapsed
     mb_per_sec = (count * payload_size) / (elapsed * 1024 * 1024)
@@ -137,23 +155,22 @@ async def bench_async_stream(
 async def bench_async_pingpong(
     transport: str, count: int, payload_size: int, warmup: int = 1000, rounds: int = 3
 ) -> Dict[str, Any]:
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    if rounds < 1:
+        raise ValueError("rounds must be >= 1")
     test_id = f"pingpong-{int(time.time() * 1000)}"
     addr = make_addr(transport, test_id)
     payload = b"P" * payload_size
 
-    with pynng.Pair0(listen=addr) as s1:
-        if transport == "tcp":
-            try:
-                s1.tcp_nodelay = True
-            except Exception:
-                pass
-        dial_addr = s1.listeners[0].url if transport == "tcp" else addr
-        with pynng.Pair0(dial=dial_addr) as s2:
+    try:
+        with pynng.Pair0() as s1, pynng.Pair0() as s2:
             if transport == "tcp":
-                try:
-                    s2.tcp_nodelay = True
-                except Exception:
-                    pass
+                s1.tcp_nodelay = True
+                s2.tcp_nodelay = True
+            s1.listen(addr)
+            dial_addr = s1.listeners[0].url if transport == "tcp" else addr
+            s2.dial(dial_addr, block=True)
 
             # Echo server coroutine
             stop_server = False
@@ -163,7 +180,7 @@ async def bench_async_pingpong(
                     try:
                         msg = await s2.arecv()
                         await s2.asend(msg)
-                    except Exception:
+                    except (pynng.Closed, asyncio.CancelledError):
                         break
 
             server_task = asyncio.create_task(echo_server())
@@ -205,6 +222,8 @@ async def bench_async_pingpong(
                 await server_task
             except asyncio.CancelledError:
                 pass
+    finally:
+        cleanup_ipc_addr(transport, addr)
 
     best_latencies.sort()
     n = len(best_latencies)
@@ -241,9 +260,15 @@ async def bench_async_pingpong(
 async def bench_async_context_fanin(
     count: int, num_contexts: int = 4, payload_size: int = 64, warmup: int = 500, rounds: int = 3
 ) -> Dict[str, Any]:
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    if num_contexts < 1:
+        raise ValueError("num_contexts must be >= 1")
+    if rounds < 1:
+        raise ValueError("rounds must be >= 1")
     addr = make_addr("inproc", f"ctx-fanin-{int(time.time() * 1000)}")
     payload = b"C" * payload_size
-    items_per_ctx = count // num_contexts
+    items_per_ctx = max(1, count // num_contexts)
 
     with pynng.Rep0(listen=addr) as rep, pynng.Req0(dial=addr) as req:
         rep_contexts = [rep.new_context() for _ in range(num_contexts)]
@@ -318,23 +343,22 @@ async def bench_async_context_fanin(
 def bench_sync_stream(
     transport: str, count: int, payload_size: int, warmup: int = 500, rounds: int = 3
 ) -> Dict[str, Any]:
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    if rounds < 1:
+        raise ValueError("rounds must be >= 1")
     test_id = f"sync-{int(time.time() * 1000)}"
     addr = make_addr(transport, test_id)
     payload = b"S" * payload_size
 
-    with pynng.Pair0(listen=addr) as s1:
-        if transport == "tcp":
-            try:
-                s1.tcp_nodelay = True
-            except Exception:
-                pass
-        dial_addr = s1.listeners[0].url if transport == "tcp" else addr
-        with pynng.Pair0(dial=dial_addr) as s2:
+    try:
+        with pynng.Pair0() as s1, pynng.Pair0() as s2:
             if transport == "tcp":
-                try:
-                    s2.tcp_nodelay = True
-                except Exception:
-                    pass
+                s1.tcp_nodelay = True
+                s2.tcp_nodelay = True
+            s1.listen(addr)
+            dial_addr = s1.listeners[0].url if transport == "tcp" else addr
+            s2.dial(dial_addr, block=True)
 
             for _ in range(warmup):
                 s1.send(payload)
@@ -357,6 +381,8 @@ def bench_sync_stream(
                         gc.enable()
 
             elapsed = min(elapsed_times)
+    finally:
+        cleanup_ipc_addr(transport, addr)
 
     msgs_per_sec = count / elapsed
     mb_per_sec = (count * payload_size) / (elapsed * 1024 * 1024)
