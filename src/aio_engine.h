@@ -65,6 +65,10 @@ pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
     if (q) {
         size_t initial_cap = 256;
         q->entries = (pynng_aio_entry_t **)malloc(initial_cap * sizeof(pynng_aio_entry_t *));
+        if (!q->entries) {
+            free(q);
+            return NULL;
+        }
         q->capacity = initial_cap;
         q->head = 0;
         q->tail = 0;
