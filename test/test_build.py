@@ -25,6 +25,7 @@ if _PROJECT_ROOT not in sys.path:
 
 try:
     from pynng._nng import ffi, lib
+
     _has_compiled_nng = True
 except ImportError:
     _has_compiled_nng = False
@@ -307,7 +308,13 @@ class TestGenerateCdef:
         from build_pynng import generate_cdef
 
         cdef, _headers = generate_cdef()
-        for func in ["nng_send", "nng_recv", "nng_close", "nng_aio_alloc", "nng_ctx_open"]:
+        for func in [
+            "nng_send",
+            "nng_recv",
+            "nng_close",
+            "nng_aio_alloc",
+            "nng_ctx_open",
+        ]:
             assert func in cdef, f"Missing function {func} in cdef"
 
 
@@ -330,9 +337,7 @@ class TestUmbrellaHeader:
         from build_pynng import NNG_HEADERS, generate_cdef
 
         existing = [
-            h
-            for h in NNG_HEADERS
-            if os.path.exists(os.path.join(_NNG_INCLUDE_DIR, h))
+            h for h in NNG_HEADERS if os.path.exists(os.path.join(_NNG_INCLUDE_DIR, h))
         ]
         assert len(existing) > 0, "No NNG headers found"
 
@@ -516,20 +521,93 @@ class TestPyPyHeaderkitCompat:
 
         transformed = _transform_headerkit_clang_source(cindex_path, raw_source)
         compile(transformed, cindex_path, "exec")
-        assert "from headerkit._clang import _compat_c_interop_string as c_interop_string" in transformed
-        assert "child = Cursor.from_buffer_copy(child); child._tu = self._tu" in transformed
-        assert "field = Cursor.from_buffer_copy(field); field._tu = self._tu" in transformed
-        assert "base = Cursor.from_buffer_copy(base); base._tu = self._tu" in transformed
-        assert "method = Cursor.from_buffer_copy(method); method._tu = self._tu" in transformed
+        assert (
+            "from headerkit._clang import _compat_c_interop_string as c_interop_string"
+            in transformed
+        )
+        assert (
+            "child = Cursor.from_buffer_copy(child); child._tu = self._tu"
+            in transformed
+        )
+        assert (
+            "field = Cursor.from_buffer_copy(field); field._tu = self._tu"
+            in transformed
+        )
+        assert (
+            "base = Cursor.from_buffer_copy(base); base._tu = self._tu" in transformed
+        )
+        assert (
+            "method = Cursor.from_buffer_copy(method); method._tu = self._tu"
+            in transformed
+        )
         assert "loc = SourceLocation.from_buffer_copy(lptr.contents)" in transformed
         assert "File(c_object_p.from_buffer_copy(fobj))" in transformed
-        assert "Cursor.from_buffer_copy(self), Cursor.from_buffer_copy(other)" in transformed
+        assert (
+            "Cursor.from_buffer_copy(self), Cursor.from_buffer_copy(other)"
+            in transformed
+        )
 
     def test_transform_unrelated_file_is_unchanged(self):
         """Negative control: files other than __init__.py and cindex.py are untouched."""
         from build_pynng import _transform_headerkit_clang_source
 
         sample = "class c_interop_string(c_char_p):\n    return x.value\n"
-        assert _transform_headerkit_clang_source("/tmp/other_module.py", sample) == sample
+        assert (
+            _transform_headerkit_clang_source("/tmp/other_module.py", sample) == sample
+        )
 
 
+class TestAioEngineHeader:
+    """Verify that the standalone pure C AIO completion engine header is valid."""
+
+    def test_aio_engine_header_exists_and_contains_declarations(self):
+        import build_pynng
+
+        header_path = build_pynng._AIO_ENGINE_H
+        assert os.path.isfile(header_path), f"Header not found: {header_path}"
+
+        with open(header_path, encoding="utf-8") as f:
+            content = f.read()
+
+        # Invariants: Include guards, structs, and C API functions
+        assert "#ifndef PYNNG_AIO_ENGINE_H" in content
+        assert "#define PYNNG_AIO_ENGINE_H" in content
+        assert "typedef struct pynng_aio_entry" in content
+        assert "typedef struct pynng_mpsc_queue" in content
+
+        required_symbols = [
+            "pynng_mpsc_queue_new",
+            "pynng_mpsc_queue_close",
+            "pynng_mpsc_queue_free",
+            "pynng_aio_entry_new",
+            "pynng_aio_entry_set_slot_id",
+            "pynng_aio_entry_set_queue",
+            "pynng_aio_entry_is_idle",
+            "pynng_aio_entry_free",
+            "pynng_native_aio_complete",
+            "pynng_mpsc_drain_batch",
+        ]
+        for sym in required_symbols:
+            assert sym in content, f"Symbol {sym} missing from aio_engine.h"
+            assert sym in build_pynng._AIO_ENGINE_CDEF, (
+                f"Symbol {sym} missing from _AIO_ENGINE_CDEF"
+            )
+
+    @_skip_no_compiled_nng
+    def test_compiled_nng_has_aio_engine_symbols(self):
+        """Verify compiled _nng extension exports all AIO engine functions."""
+        required_symbols = [
+            "pynng_mpsc_queue_new",
+            "pynng_mpsc_queue_close",
+            "pynng_mpsc_queue_free",
+            "pynng_aio_entry_new",
+            "pynng_aio_entry_set_slot_id",
+            "pynng_aio_entry_set_queue",
+            "pynng_aio_entry_is_idle",
+            "pynng_aio_entry_free",
+            "pynng_native_aio_complete",
+            "pynng_mpsc_drain_batch",
+        ]
+        for sym in required_symbols:
+            assert hasattr(lib, sym), f"_nng.lib missing AIO symbol {sym}"
+            assert callable(getattr(lib, sym)), f"_nng.lib.{sym} is not callable"

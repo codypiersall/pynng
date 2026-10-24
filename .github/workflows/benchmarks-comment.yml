@@ -1,0 +1,78 @@
+name: Post Benchmark Comment
+
+on:
+  workflow_run:
+    workflows: ["Performance Benchmarks"]
+    types:
+      - completed
+
+permissions:
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Download PR benchmark artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: pr_benchmark
+          path: pr_benchmark
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Post or update PR comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'pr_benchmark/report.md';
+            const nrPath = 'pr_benchmark/NR';
+            if (!fs.existsSync(reportPath) || !fs.existsSync(nrPath)) {
+              core.info('No benchmark report or PR number artifact found; skipping comment.');
+              return;
+            }
+            const report = fs.readFileSync(reportPath, 'utf8');
+            const nrStr = fs.readFileSync(nrPath, 'utf8').trim();
+            const issue_number = parseInt(nrStr, 10);
+            if (!issue_number || isNaN(issue_number)) {
+              core.warning(`Invalid PR number: ${nrStr}`);
+              return;
+            }
+
+            const botHeader = '## ⚡ pynng Performance Benchmark Report';
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+              });
+
+              const botComment = comments.find(comment =>
+                comment.user.type === 'Bot' && comment.body.includes(botHeader)
+              );
+
+              if (botComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: report
+                });
+                core.info(`Updated benchmark comment on PR #${issue_number}`);
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue_number,
+                  body: report
+                });
+                core.info(`Created benchmark comment on PR #${issue_number}`);
+              }
+            } catch (err) {
+              core.warning(`Failed to post benchmark comment on PR #${issue_number}: ${err.message}`);
+            }
