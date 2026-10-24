@@ -519,6 +519,7 @@ class AIOHelper:
             raise
         check_err(_lib.nng_aio_result(self.aio), lib=_lib, ffi=_ffi)
         msg = _lib.nng_aio_get_msg(self.aio)
+        _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
         from ._base import Message, Socket, Context
 
         # Use the socket's message class if available

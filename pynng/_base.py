@@ -148,7 +148,9 @@ def _sliced_aio_recv(
                 continue
 
             check_err(err, lib=lib, ffi=ffi)
-            return lib.nng_aio_get_msg(aio)
+            raw_msg = lib.nng_aio_get_msg(aio)
+            lib.nng_aio_set_msg(aio, ffi.NULL)
+            return raw_msg
     except BaseException:
         lib.nng_aio_cancel(aio)
         lib.nng_aio_wait(aio)
