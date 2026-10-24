@@ -112,8 +112,26 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
 
-      # Step 4: Post or update sticky comment on the PR (only if running on a PR and report exists)
-      - name: Post PR Benchmark Comment
+      # Step 4: Save benchmark report artifact for PR commenter workflow
+      - name: Save PR Benchmark Artifact
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p pr_benchmark
+          if [ -f report.md ]; then
+            cp report.md pr_benchmark/
+            echo "${{ github.event.pull_request.number }}" > pr_benchmark/NR
+          fi
+
+      - name: Upload PR Benchmark Artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr_benchmark
+          path: pr_benchmark/
+          retention-days: 1
+
+      # Fallback in case workflow_run is disabled or running from the origin repo directly
+      - name: Post PR Benchmark Comment (Same-repo fallback)
         if: github.event_name == 'pull_request'
         continue-on-error: true
         uses: actions/github-script@v9
@@ -152,5 +170,5 @@ jobs:
                 });
               }
             } catch (err) {
-              core.warning(`Could not post PR comment (fork PR token restriction): ${err.message}`);
+              core.warning(`Could not post PR comment directly (fork PR restriction, delegated to workflow_run): ${err.message}`);
             }
