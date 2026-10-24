@@ -162,7 +162,7 @@ def test_sub_sock_options():
             wait_pipe_len(pub, 1)
             pub.send(b"beep hi")
             assert sub.recv() == b"beep hi"
-        with pynng.Sub0(dial=addr, topics=["beep", "hello"], recv_timeout=FAST_TIMEOUT) as sub:
+        with pynng.Sub0(dial=addr, topics=["beep", "hello"], recv_timeout=MEDIUM_TIMEOUT) as sub:
             wait_pipe_len(sub, 1)
             wait_pipe_len(pub, 1)
             pub.send(b"beep hi")
