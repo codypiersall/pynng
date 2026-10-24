@@ -56,7 +56,7 @@ set_property(CACHE PYNNG_TLS_ENGINE PROPERTY STRINGS mbed wolf openssl none)
 
 # Repository URLs and versions
 set(NNG_REPO "https://github.com/nanomsg/nng" CACHE STRING "URL of the NNG repository")
-set(NNG_REV "v1.11" CACHE STRING "Revision of NNG to use")
+set(NNG_REV "v1.12.5" CACHE STRING "Revision of NNG to use")
 
 set(MBEDTLS_REPO "https://github.com/ARMmbed/mbedtls.git" CACHE STRING "URL of the mbedTLS repository")
 set(MBEDTLS_REV "v3.6.5" CACHE STRING "Revision of mbedTLS to use")
@@ -227,27 +227,11 @@ elseif(WIN32)
 endif()
 
 # Download NNG
-# Patch fixes two issues not yet backported to NNG v1.x (v2.x has them on main):
-#   1. mbedTLS 3.6.3+ requires explicit mbedtls_ssl_set_hostname(NULL) call
-#      when skipping hostname verification (CVE-2025-27809)
-#   2. AIO task_abort race condition (upstream issue #2208)
-# Remove this patch when upgrading to an NNG release that includes both fixes.
-if(NNG_REV STREQUAL "v1.11")
-  set(_NNG_V1_PATCH_ARGS
-    PATCH_COMMAND ${CMAKE_COMMAND}
-      -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/nng-mbedtls-hostname.patch
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/idempotent_patch.cmake
-  )
-else()
-  set(_NNG_V1_PATCH_ARGS "")
-endif()
-
 FetchContent_Declare(
   nng
   GIT_REPOSITORY ${NNG_REPO}
   GIT_TAG ${NNG_REV}
   GIT_SHALLOW TRUE
-  ${_NNG_V1_PATCH_ARGS}
 )
 
 # ============================================

@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pynng.nng_fini()` function and `nng_fini_at_exit` setting for explicit runtime finalization control
 
 ### Changed
+- Upgrade bundled v1 NNG from v1.11 to v1.12.5, incorporating upstream fixes for large IOV scatter/gather transfers, mbedTLS CVE-2025-27809, and AIO task abort race conditions while removing obsolete patch files
 - Extract native C completion queue engine from `build_pynng.py` into standalone `src/aio_engine.h` header for improved maintainability, modularity, and compiler diagnostics
 - Enable `__slots__` on hot-path `Message`, `Request`, `Stat`, and `SockAddr` model classes to eliminate per-instance `__dict__` allocation overhead
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads

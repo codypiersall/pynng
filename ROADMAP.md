@@ -33,9 +33,6 @@ This document outlines the planned direction, active initiatives, architectural 
 - Unify internal FFI representations so `TLSConfig` instances can be seamlessly applied to both v1 and v2 native endpoints without CFFI type mismatch.
 - Add dedicated `test/test_v2_tls.py` suite covering TLS client/server negotiation in v2.
 
-#### 3. Upstream NNG v1 Bugfix Revision Bump
-- Bump v1 CMake `NNG_REV` from `v1.11` to `v1.12.3` to incorporate upstream fixes for large IOV scatter/gather transfers and platform-specific socket edge cases.
-
 ---
 
 ### 🟢 Medium-Term
@@ -87,6 +84,7 @@ This document outlines the planned direction, active initiatives, architectural 
 ## Completed Milestones (Since v0.9.0)
 
 ### 1. Build Modernization & Dual-Version Architecture
+- [x] **Upstream NNG v1.12.5 Upgrade**: Bumped bundled v1 NNG from `v1.11` to `v1.12.5`, incorporating upstream fixes for large IOV scatter/gather transfers, mbedTLS CVE-2025-27809, and AIO task abort race conditions while eliminating legacy patch files.
 - [x] **Scikit-Build-Core Build Backend**: Migrated from legacy `setup.py` / `setuptools` to `scikit-build-core` and PEP 517.
 - [x] **Automated CFFI Generation via Headerkit**: Replaced fragile handwritten CFFI bindings with automated parsing and header generation via `headerkit`.
 - [x] **NNG v2.0.0 Dual-Version Coexistence**: Full dual-module architecture supporting nng v2.0.0 GA alongside v1 under `pynng.v2` and `_nng_v2`.
