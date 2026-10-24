@@ -1,6 +1,9 @@
 import pynng
 
-from ._finalized import is_nng_finalized as _is_nng_finalized
+from ._finalized import (
+    is_nng_finalized as _is_nng_finalized,
+    retain_closed as _retain_closed,
+)
 
 
 class TLSConfig:
@@ -71,6 +74,7 @@ class TLSConfig:
         tls_config_p = pynng.ffi.new("nng_tls_config **")
         pynng.check_err(pynng.lib.nng_tls_config_alloc(tls_config_p, mode))
         self._tls_config = tls_config_p[0]
+        _retain_closed(self)
 
         if server_name is not None:
             self.set_server_name(server_name)

@@ -1,5 +1,6 @@
 import gc
 import platform
+import time
 
 import pytest
 
@@ -11,6 +12,13 @@ from conftest import FAST_TIMEOUT
 # All TLS tests are v1-only because v2 uses endpoint-level TLS configuration
 # (different API). v2 TLS tests should be added when the v2 TLS API is finalized.
 pytestmark = [pytest.mark.nng_v1]
+
+
+@pytest.fixture(autouse=True)
+def _drain_reaper_threads():
+    """Ensure nng background reaper threads finish tearing down TLS contexts."""
+    yield
+    time.sleep(0.05)
 
 SERVER_CERT = """
 -----BEGIN CERTIFICATE-----

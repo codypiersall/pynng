@@ -24,7 +24,10 @@ import sniffio
 from . import options
 from . import _aio
 from .exceptions import NNGException
-from ._finalized import is_nng_finalized as _is_nng_finalized
+from ._finalized import (
+    is_nng_finalized as _is_nng_finalized,
+    retain_closed as _retain_closed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +72,6 @@ def _check_fork():
 _active_handles = {}
 _active_handles_lock = threading.Lock()
 
-# Retain closed sockets and pointer options (e.g. TLSConfig) in a FIFO buffer
-# so that NNG background reaper threads (tls_reap, listener_reap, dialer_reap)
-# finish tearing down C-level mbedTLS structures before Python GC finalizes them.
-_RETAIN_CLOSED_MAX = 64
-_closed_objects_retained = collections.deque(maxlen=_RETAIN_CLOSED_MAX)
-_closed_objects_lock = threading.Lock()
-
-
-def _retain_closed(obj):
-    if obj is not None:
-        with _closed_objects_lock:
-            _closed_objects_retained.append(obj)
 
 
 PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
