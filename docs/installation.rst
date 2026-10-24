@@ -68,13 +68,13 @@ Available options:
      - ``https://github.com/nanomsg/nng``
      - Git URL of the NNG repository to build from
    * - ``NNG_REV``
-     - ``v1.11``
+     - ``v1.12.5``
      - Git tag, branch, or commit of NNG to use
    * - ``MBEDTLS_REPO``
      - ``https://github.com/ARMmbed/mbedtls.git``
      - Git URL of the mbedTLS repository
    * - ``MBEDTLS_REV``
-     - ``v3.6.3.1``
+     - ``v3.6.5``
      - Git tag, branch, or commit of mbedTLS to use
 
 Multiple options can be combined:
