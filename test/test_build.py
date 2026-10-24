@@ -495,3 +495,41 @@ class TestV2Differences:
     def test_v2_has_flag_nonblock(self):
         assert hasattr(self.v2.lib, "NNG_FLAG_NONBLOCK")
 
+
+class TestPyPyHeaderkitCompat:
+    """Verify PyPy ctypes compatibility transforms for headerkit._clang."""
+
+    @pytest.fixture(autouse=True)
+    def _require_headerkit(self):
+        pytest.importorskip("headerkit")
+
+    def test_transform_cindex_py_compiles_and_copies_callback_cursors(self):
+        import headerkit._clang
+        from build_pynng import _transform_headerkit_clang_source
+
+        clang_dir = os.path.dirname(os.path.abspath(headerkit._clang.__file__))
+        cindex_files = sorted(glob.glob(os.path.join(clang_dir, "v*", "cindex.py")))
+        assert len(cindex_files) >= 1
+        cindex_path = cindex_files[-1]
+        with open(cindex_path, encoding="utf-8") as f:
+            raw_source = f.read()
+
+        transformed = _transform_headerkit_clang_source(cindex_path, raw_source)
+        compile(transformed, cindex_path, "exec")
+        assert "from headerkit._clang import _compat_c_interop_string as c_interop_string" in transformed
+        assert "child = Cursor.from_buffer_copy(child); child._tu = self._tu" in transformed
+        assert "field = Cursor.from_buffer_copy(field); field._tu = self._tu" in transformed
+        assert "base = Cursor.from_buffer_copy(base); base._tu = self._tu" in transformed
+        assert "method = Cursor.from_buffer_copy(method); method._tu = self._tu" in transformed
+        assert "loc = SourceLocation.from_buffer_copy(lptr.contents)" in transformed
+        assert "File(c_object_p.from_buffer_copy(fobj))" in transformed
+        assert "Cursor.from_buffer_copy(self), Cursor.from_buffer_copy(other)" in transformed
+
+    def test_transform_unrelated_file_is_unchanged(self):
+        """Negative control: files other than __init__.py and cindex.py are untouched."""
+        from build_pynng import _transform_headerkit_clang_source
+
+        sample = "class c_interop_string(c_char_p):\n    return x.value\n"
+        assert _transform_headerkit_clang_source("/tmp/other_module.py", sample) == sample
+
+

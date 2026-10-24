@@ -26,6 +26,96 @@ import re
 import subprocess
 import sys
 
+
+def _transform_headerkit_clang_source(path: str, text: str) -> str:
+    """Adapt headerkit._clang source files to work around PyPy ctypes incompatibilities."""
+    if path.endswith("cindex.py"):
+        # 1. Bind _compat_c_interop_string before FUNCTION_LIST is populated at import time.
+        text = text.replace(
+            "class c_interop_string(c_char_p):",
+            "from headerkit._clang import _compat_c_interop_string as c_interop_string\n"
+            "class _unused_c_interop_string:",
+        )
+        text = text.replace(
+            'return b.decode("utf8")',
+            "return (None if not (ptr := c_void_p.value.__get__(x) if isinstance(x, c_void_p)"
+            " else getattr(x, 'value', None)) else ctypes.string_at(ptr).decode('utf8'))",
+        )
+        # 2. Copy callback struct/pointer arguments off the C stack before storing in Python lists.
+        text = text.replace(
+            "child._tu = self._tu",
+            "child = Cursor.from_buffer_copy(child); child._tu = self._tu",
+        )
+        text = text.replace(
+            "field._tu = self._tu",
+            "field = Cursor.from_buffer_copy(field); field._tu = self._tu",
+        )
+        text = text.replace(
+            "base._tu = self._tu",
+            "base = Cursor.from_buffer_copy(base); base._tu = self._tu",
+        )
+        text = text.replace(
+            "method._tu = self._tu",
+            "method = Cursor.from_buffer_copy(method); method._tu = self._tu",
+        )
+        text = text.replace(
+            "loc = lptr.contents",
+            "loc = SourceLocation.from_buffer_copy(lptr.contents)",
+        )
+        text = text.replace(
+            "File(fobj)",
+            "File(c_object_p.from_buffer_copy(fobj))",
+        )
+        # 3. libclang's clang_equalCursors mutates X.data[1] = 0 in place; under ARM64 AAPCS64
+        # PyPy's _rawffi passes self._buffer by pointer without copying, clobbering Cursor state.
+        text = text.replace(
+            "conf.lib.clang_equalCursors(self, other)",
+            "conf.lib.clang_equalCursors("
+            "Cursor.from_buffer_copy(self), Cursor.from_buffer_copy(other))",
+        )
+    return text
+
+
+if sys.implementation.name == "pypy":
+    import importlib.abc
+
+    class _PyPyHeaderkitClangLoader(importlib.abc.SourceLoader):
+        """SourceLoader that adapts headerkit._clang's ctypes bindings for PyPy."""
+
+        def __init__(self, fullname: str, path: str) -> None:
+            self.fullname = fullname
+            self.path = path
+
+        def get_filename(self, fullname: str) -> str:
+            return self.path
+
+        def get_data(self, path: str | bytes) -> bytes:
+            with open(path, "rb") as f:
+                data = f.read()
+            text = _transform_headerkit_clang_source(str(path), data.decode("utf-8"))
+            return text.encode("utf-8")
+
+        def get_code(self, fullname: str):
+            source = self.get_data(self.path)
+            return compile(source, self.path, "exec", dont_inherit=True)
+
+    class _PyPyHeaderkitClangFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path, target=None):
+            if fullname == "headerkit._clang" or fullname.startswith("headerkit._clang."):
+                for finder in sys.meta_path:
+                    if isinstance(finder, _PyPyHeaderkitClangFinder):
+                        continue
+                    find_spec = getattr(finder, "find_spec", None)
+                    if find_spec is None:
+                        continue
+                    spec = find_spec(fullname, path, target)
+                    if spec is not None and spec.origin and spec.origin.endswith(".py"):
+                        spec.loader = _PyPyHeaderkitClangLoader(fullname, spec.origin)
+                        return spec
+            return None
+
+    sys.meta_path.insert(0, _PyPyHeaderkitClangFinder())
+
 from headerkit.backends import get_backend
 from headerkit.writers.cffi import header_to_cffi
 
@@ -258,6 +348,9 @@ def _get_nng_include_dir() -> str:
     return include_dir
 
 
+_CDEF_MEMO: dict[tuple[tuple[tuple[str, float], ...], str, tuple[str, ...]], tuple[str, list[str]]] = {}
+
+
 def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tuple[str, list[str]]:
     """Parse NNG headers and generate CFFI cdef declarations.
 
@@ -291,6 +384,14 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
         h for h in headers if os.path.exists(os.path.join(include_dir, h))
     ]
     header_paths = [os.path.join(include_dir, h) for h in existing]
+    memo_key = (
+        tuple((h, os.path.getmtime(p)) for h, p in zip(existing, header_paths)),
+        include_dir,
+        tuple(exclude_patterns),
+    )
+    if memo_key in _CDEF_MEMO:
+        cached_cdef, cached_existing = _CDEF_MEMO[memo_key]
+        return cached_cdef, list(cached_existing)
     build_script = os.path.join(_SCRIPT_DIR, "build_pynng.py")
 
     # Check cache freshness
@@ -319,13 +420,16 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
 {includes}
 """
 
-    # Parse with headerkit libclang backend
+    # Parse with headerkit libclang backend (umbrella.h already includes all
+    # target headers and project_prefixes=(include_dir,) extracts declarations
+    # from all of them in a single TranslationUnit pass).
     backend = get_backend("libclang")
     header = backend.parse(
         umbrella,
         "umbrella.h",
         include_dirs=[include_dir],
         project_prefixes=(include_dir,),
+        recursive_includes=False,
     )
 
     # Convert IR to CFFI cdef string
@@ -365,6 +469,7 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
         except Exception as exc:
             logger.debug("Failed to save cdef cache: %s", exc)
 
+    _CDEF_MEMO[memo_key] = (cdef, list(existing))
     return cdef, existing
 
 
@@ -460,48 +565,61 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
         #else
           #include <unistd.h>
           #include <fcntl.h>
+          #include <pthread.h>
         #endif
 
         typedef struct pynng_aio_entry {
             void *aio;
             _Atomic(uintptr_t) slot_id;
             void *queue;
-            _Atomic(struct pynng_aio_entry *) next;
             _Atomic(int) state; /* 0 = IDLE, 1 = QUEUED, 2 = FREED */
         } pynng_aio_entry_t;
 
         typedef struct pynng_mpsc_queue {
-            _Atomic(pynng_aio_entry_t *) head;
-            pynng_aio_entry_t *tail;
-            pynng_aio_entry_t stub;
+            pynng_aio_entry_t **entries;
+            size_t capacity;
+            size_t head;
+            size_t tail;
+            size_t count;
             _Atomic(int) write_fd;
+        #if defined(_WIN32)
+            CRITICAL_SECTION cs;
+        #else
+            pthread_mutex_t lock;
+        #endif
         } pynng_mpsc_queue_t;
-
-        static inline void pynng_mpsc_init(pynng_mpsc_queue_t *q, int wfd) {
-            atomic_init(&q->stub.next, NULL);
-            q->stub.aio = NULL;
-            atomic_init(&q->stub.slot_id, 0);
-            q->stub.queue = q;
-            atomic_init(&q->stub.state, 0);
-            atomic_init(&q->head, &q->stub);
-            q->tail = &q->stub;
-            atomic_init(&q->write_fd, wfd);
-        }
 
         pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
             pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)malloc(sizeof(pynng_mpsc_queue_t));
             if (q) {
-                pynng_mpsc_init(q, write_fd);
+                size_t initial_cap = 256;
+                q->entries = (pynng_aio_entry_t **)malloc(initial_cap * sizeof(pynng_aio_entry_t *));
+                q->capacity = initial_cap;
+                q->head = 0;
+                q->tail = 0;
+                q->count = 0;
+                atomic_init(&q->write_fd, write_fd);
+        #if defined(_WIN32)
+                InitializeCriticalSection(&q->cs);
+        #else
+                pthread_mutex_init(&q->lock, NULL);
+        #endif
             }
             return q;
         }
 
-        /* WAIT-FREE MPSC PUSH - Zero GIL! Called directly by nng worker threads */
+        /* ZERO-GIL MPSC PUSH - Thread-safe, non-blocking on uncontended mutex */
         void pynng_native_aio_complete(void *arg) {
             pynng_aio_entry_t *entry = (pynng_aio_entry_t *)arg;
             if (!entry) return;
             pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)entry->queue;
             if (!q) return;
+
+        #if defined(_WIN32)
+            EnterCriticalSection(&q->cs);
+        #else
+            pthread_mutex_lock(&q->lock);
+        #endif
 
             /* Atomically transition IDLE (0) -> QUEUED (1).
                If already QUEUED (1) or FREED (2), do not push a second time. */
@@ -509,15 +627,43 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
             if (!atomic_compare_exchange_strong_explicit(
                     &entry->state, &expected, 1,
                     memory_order_acq_rel, memory_order_acquire)) {
+        #if defined(_WIN32)
+                LeaveCriticalSection(&q->cs);
+        #else
+                pthread_mutex_unlock(&q->lock);
+        #endif
                 return;
             }
 
-            /* Dmitry Vyukov wait-free MPSC push: O(1), no loops, no contention */
-            atomic_store_explicit(&entry->next, NULL, memory_order_relaxed);
-            pynng_aio_entry_t *prev = atomic_exchange_explicit(&q->head, entry, memory_order_acq_rel);
-            atomic_store_explicit(&prev->next, entry, memory_order_release);
+            if (q->count == q->capacity) {
+                size_t new_cap = q->capacity ? q->capacity * 2 : 256;
+                pynng_aio_entry_t **new_entries = (pynng_aio_entry_t **)malloc(new_cap * sizeof(pynng_aio_entry_t *));
+                if (new_entries) {
+                    for (size_t i = 0; i < q->count; i++) {
+                        new_entries[i] = q->entries[(q->tail + i) % q->capacity];
+                    }
+                    free(q->entries);
+                    q->entries = new_entries;
+                    q->tail = 0;
+                    q->head = q->count;
+                    q->capacity = new_cap;
+                }
+            }
+
+            if (q->count < q->capacity) {
+                q->entries[q->head] = entry;
+                q->head = (q->head + 1) % q->capacity;
+                q->count++;
+            }
 
             int wfd = atomic_load_explicit(&q->write_fd, memory_order_acquire);
+
+        #if defined(_WIN32)
+            LeaveCriticalSection(&q->cs);
+        #else
+            pthread_mutex_unlock(&q->lock);
+        #endif
+
             if (wfd >= 0) {
                 char b = 1;
         #if defined(_WIN32)
@@ -528,77 +674,63 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
             }
         }
 
-        static inline void pynng_mpsc_push_internal(pynng_mpsc_queue_t *q, pynng_aio_entry_t *node) {
-            atomic_store_explicit(&node->next, NULL, memory_order_relaxed);
-            pynng_aio_entry_t *prev = atomic_exchange_explicit(&q->head, node, memory_order_acq_rel);
-            atomic_store_explicit(&prev->next, node, memory_order_release);
-        }
+        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
+            if (!q) return;
+            atomic_store_explicit(&q->write_fd, -1, memory_order_release);
 
-        static inline pynng_aio_entry_t *pynng_mpsc_pop(pynng_mpsc_queue_t *q) {
-            pynng_aio_entry_t *tail = q->tail;
-            pynng_aio_entry_t *next = atomic_load_explicit(&tail->next, memory_order_acquire);
+        #if defined(_WIN32)
+            EnterCriticalSection(&q->cs);
+        #else
+            pthread_mutex_lock(&q->lock);
+        #endif
 
-            if (tail == &q->stub) {
-                if (!next) {
-                    return NULL;
-                }
-                q->tail = next;
-                tail = next;
-                next = atomic_load_explicit(&next->next, memory_order_acquire);
-            }
-
-            if (next) {
-                q->tail = next;
-                return tail;
-            }
-
-            pynng_aio_entry_t *head = atomic_load_explicit(&q->head, memory_order_acquire);
-            if (tail != head) {
-                return NULL;
-            }
-
-            pynng_mpsc_push_internal(q, &q->stub);
-            next = atomic_load_explicit(&tail->next, memory_order_acquire);
-            if (next) {
-                q->tail = next;
-                return tail;
-            }
-            return NULL;
-        }
-
-        static inline void pynng_mpsc_drain_freed(pynng_mpsc_queue_t *q) {
-            pynng_aio_entry_t *entry;
-            while ((entry = pynng_mpsc_pop(q)) != NULL) {
+            while (q->count > 0) {
+                pynng_aio_entry_t *entry = q->entries[q->tail];
+                q->tail = (q->tail + 1) % q->capacity;
+                q->count--;
                 int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
                 if (prev_state == 2) {
                     free(entry);
                 }
             }
-        }
 
-        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
-            if (q) {
-                atomic_store_explicit(&q->write_fd, -1, memory_order_release);
-                pynng_mpsc_drain_freed(q);
-            }
+        #if defined(_WIN32)
+            LeaveCriticalSection(&q->cs);
+        #else
+            pthread_mutex_unlock(&q->lock);
+        #endif
         }
 
         void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q) {
-            if (q) {
-                atomic_store_explicit(&q->write_fd, -1, memory_order_release);
-                pynng_mpsc_drain_freed(q);
-                free(q);
+            if (!q) return;
+            pynng_mpsc_queue_close(q);
+            if (q->entries) {
+                free(q->entries);
+                q->entries = NULL;
             }
+        #if defined(_WIN32)
+            DeleteCriticalSection(&q->cs);
+        #else
+            pthread_mutex_destroy(&q->lock);
+        #endif
+            free(q);
         }
 
         int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries) {
             if (!q || !out_slot_ids || max_entries <= 0) return 0;
+
+        #if defined(_WIN32)
+            EnterCriticalSection(&q->cs);
+        #else
+            pthread_mutex_lock(&q->lock);
+        #endif
+
             int count = 0;
-            while (count < max_entries) {
-                pynng_aio_entry_t *entry = pynng_mpsc_pop(q);
-                if (!entry) {
-                    break;
-                }
+            while (q->count > 0 && count < max_entries) {
+                pynng_aio_entry_t *entry = q->entries[q->tail];
+                q->tail = (q->tail + 1) % q->capacity;
+                q->count--;
+
                 uintptr_t slot_id = atomic_load_explicit(&entry->slot_id, memory_order_acquire);
                 int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
                 if (prev_state == 2) {
@@ -607,6 +739,13 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
                     out_slot_ids[count++] = slot_id;
                 }
             }
+
+        #if defined(_WIN32)
+            LeaveCriticalSection(&q->cs);
+        #else
+            pthread_mutex_unlock(&q->lock);
+        #endif
+
             return count;
         }
 
@@ -616,7 +755,6 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
                 e->aio = aio;
                 atomic_init(&e->slot_id, slot_id);
                 e->queue = q;
-                atomic_init(&e->next, NULL);
                 atomic_init(&e->state, 0);
             }
             return e;
@@ -640,12 +778,28 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
         }
 
         void pynng_aio_entry_free(pynng_aio_entry_t *e) {
-            if (e) {
-                atomic_store_explicit(&e->slot_id, 0, memory_order_release);
+            if (!e) return;
+            atomic_store_explicit(&e->slot_id, 0, memory_order_release);
+            pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)e->queue;
+            if (q) {
+        #if defined(_WIN32)
+                EnterCriticalSection(&q->cs);
+        #else
+                pthread_mutex_lock(&q->lock);
+        #endif
+
                 int prev_state = atomic_exchange_explicit(&e->state, 2, memory_order_acq_rel);
                 if (prev_state == 0) {
                     free(e);
                 }
+
+        #if defined(_WIN32)
+                LeaveCriticalSection(&q->cs);
+        #else
+                pthread_mutex_unlock(&q->lock);
+        #endif
+            } else {
+                free(e);
             }
         }
     """

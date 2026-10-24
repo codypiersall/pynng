@@ -24,6 +24,10 @@ import sniffio
 from . import options
 from . import _aio
 from .exceptions import NNGException
+from ._finalized import (
+    is_nng_finalized as _is_nng_finalized,
+    retain_closed as _retain_closed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,29 +67,11 @@ def _check_fork():
         )
 
 
-def _is_nng_finalized():
-    """Check whether NNG runtime has been finalized."""
-    try:
-        from . import nng as _nng_mod
-
-        if getattr(_nng_mod, "_finalized", False):
-            return True
-    except Exception:
-        pass
-    try:
-        import sys
-
-        v2_mod = sys.modules.get("pynng.v2")
-        if v2_mod is not None and getattr(v2_mod, "_finalized", False):
-            return True
-    except Exception:
-        pass
-    return False
-
 
 # Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
 _active_handles_lock = threading.Lock()
+
 
 
 PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
@@ -101,7 +87,9 @@ _SENTINEL = object()
 _RECV_SLICE_MS = 100  # Slice duration for interruptable recv loop (ms)
 
 
-def _sliced_aio_recv(recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_RECV_SLICE_MS):
+def _sliced_aio_recv(
+    recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_RECV_SLICE_MS
+):
     """Perform an interruptable receive using nng_aio with sliced timeouts.
 
     CFFI releases the GIL when blocking in C. If a thread waits in a long or
@@ -160,7 +148,9 @@ def _sliced_aio_recv(recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_REC
                 continue
 
             check_err(err, lib=lib, ffi=ffi)
-            return lib.nng_aio_get_msg(aio)
+            raw_msg = lib.nng_aio_get_msg(aio)
+            lib.nng_aio_set_msg(aio, ffi.NULL)
+            return raw_msg
     except BaseException:
         lib.nng_aio_cancel(aio)
         lib.nng_aio_wait(aio)
@@ -426,6 +416,14 @@ class PointerOption(_NNGOption):
     """Descriptor for setting pointer values"""
 
     _setter = options._setopt_ptr
+
+    def __set__(self, instance, value):
+        super().__set__(instance, value)
+        if instance is not None and value is not None:
+            if not hasattr(instance, "_pointer_option_refs"):
+                instance._pointer_option_refs = {}
+            instance._pointer_option_refs[self.option] = value
+            _retain_closed(value)
 
 
 class NotImplementedOption(_NNGOption):
@@ -714,9 +712,7 @@ class Socket:
                     timeout = st
                 else:
                     timeout = min(timeout, st)
-            raw_msg = _sliced_aio_recv(
-                recv_fn, self.socket, _lib, _ffi, timeout
-            )
+            raw_msg = _sliced_aio_recv(recv_fn, self.socket, _lib, _ffi, timeout)
 
         msg_cls = self._message_class or Message
         msg = msg_cls(raw_msg, _lib=_lib, _ffi=_ffi)
@@ -1413,7 +1409,9 @@ class Context:
             )
         except Timeout:
             if not block:
-                raise TryAgain("No message available immediately on context", _lib.NNG_EAGAIN)
+                raise TryAgain(
+                    "No message available immediately on context", _lib.NNG_EAGAIN
+                )
             raise
         msg_cls = self._socket._message_class or Message
         msg = msg_cls(nng_msg, _lib=_lib, _ffi=_ffi)

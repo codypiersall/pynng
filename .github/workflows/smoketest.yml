@@ -97,7 +97,44 @@ jobs:
       - name: Install wheel and test deps
         run: uv pip install --system dist/*.whl pytest pytest-asyncio pytest-trio trio
       - name: Run tests
-        run: pytest -v test
+        run: pytest -v test --ignore=test/test_build.py --ignore=test/test_check_nng_updates.py
+
+  pypy:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ 'pypy3.11' ]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+      - name: Set up sccache
+        uses: mozilla/sccache-action@v0.0.11
+      - name: Configure sccache cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: ubuntu-latest-pypy-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-${{ github.sha }}
+          restore-keys: |
+            ubuntu-latest-pypy-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
+            ubuntu-latest-pypy-sccache-
+      - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build libclang-dev)
+      - name: Build and install with test deps
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+        run: uv pip install --system -v -e '.[dev]'
+      - name: Run tests
+        run: pytest -v test --ignore=test/test_build.py --ignore=test/test_check_nng_updates.py
 
   tls-engines:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name

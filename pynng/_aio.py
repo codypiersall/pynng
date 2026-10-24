@@ -11,6 +11,7 @@ import sniffio
 
 from ._nng import ffi, lib
 from .exceptions import check_err
+from ._finalized import is_nng_finalized as _is_nng_finalized
 
 # global variable for mapping asynchronous operations with the Python data
 # assocated with them.  Key is id(obj), value is obj
@@ -518,6 +519,7 @@ class AIOHelper:
             raise
         check_err(_lib.nng_aio_result(self.aio), lib=_lib, ffi=_ffi)
         msg = _lib.nng_aio_get_msg(self.aio)
+        _lib.nng_aio_set_msg(self.aio, _ffi.NULL)
         from ._base import Message, Socket, Context
 
         # Use the socket's message class if available
@@ -600,8 +602,6 @@ class AIOHelper:
         Free resources allocated with nng
         """
         try:
-            from ._base import _is_nng_finalized
-
             if _is_nng_finalized():
                 self.aio = None
                 self._aio_entry = None
@@ -793,8 +793,6 @@ class DeviceAIO:
 
     def _free(self):
         try:
-            from ._base import _is_nng_finalized
-
             if _is_nng_finalized():
                 self.aio = None
                 self._aio_entry = None

@@ -14,6 +14,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
     "Topic :: Software Development :: Libraries",
     "Topic :: System :: Networking",
 ]
@@ -36,7 +38,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit>=0.9.0"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit>=0.47.6; python_version >= '3.11'"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinxcontrib-trio"]
 
 [project.urls]
@@ -50,7 +52,7 @@ requires = [
     "scikit-build-core>=0.8.0",
     "cffi",
     "cffi_buildtool",
-    "headerkit>=0.9.0",
+    "headerkit>=0.47.6; python_version >= '3.11'",
     "setuptools-scm",
 ]
 
@@ -75,10 +77,11 @@ version_file = "pynng/_version.py"
 
 [tool.cibuildwheel]
 build-frontend = "build[uv]"
-# Build cp310 (which produces the universal abi3 wheel for standard CPython)
-# plus the free-threaded wheels (cp314t, cp315t) across all architectures.
-build = "cp310-* cp314t-* cp315t-*"
-test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio", "headerkit>=0.9.0"]
+enable = ["pypy"]
+# Build cp312 (which produces the universal abi3 wheel for standard CPython)
+# plus the free-threaded wheels (cp314t, cp315t) and PyPy 3.11 across all architectures.
+build = "cp312-* cp314t-* cp315t-* pp311-*"
+test-requires = ["pytest", "pytest-asyncio", "pytest-trio", "trio"]
 # test_build.py tests the build system (header parsing via libclang), not the installed wheel.
 # test_check_nng_updates.py tests repo maintenance scripts, not the installed wheel.
 # Both run in smoketest/CI; cibuildwheel tests the installed wheel.
@@ -86,28 +89,34 @@ test-command = "pytest {project}/test --ignore={project}/test/test_build.py --ig
 
 # *-win32: 32-bit Python can't load 64-bit libclang during build
 # *i686: 32-bit manylinux containers lack package managers for libclang
-# PyPy and 32-bit builds are not enabled by default in cibuildwheel v3.
-skip = "*-win32 *i686"
+# cp*-macosx_arm64: CPython macOS wheels are already built as universal2
+# pp*-win*: PyPy on Windows does not support building MSVC C-extensions
+skip = "*-win32 *i686 cp*-macosx_arm64 pp*-win*"
 
 build-verbosity = 1
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
-before-build = "uv run --no-project --with 'headerkit>=0.9.0' python -m headerkit.install_libclang --skip-verify"
+before-build = "uv run --python 3.12 --no-project --with 'headerkit>=0.47.6' python -m headerkit.install_libclang --skip-verify"
 
 [tool.cibuildwheel.windows]
 # Windows builds fail because they try to use the same directory for different
 # architectures, and that's no good.
-before-build = "uv run --no-project --with \"headerkit>=0.9.0\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
+before-build = "uv run --python 3.12 --no-project --with \"headerkit>=0.47.6\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
 environment = { PATH = "C:\\Program Files\\LLVM\\bin;$PATH" }
 
 [tool.cibuildwheel.macos]
-# Specify universal2 building for macOS
-archs = ["universal2"]
-before-build = "uv run --no-project --with 'headerkit>=0.9.0' python -m headerkit.install_libclang --skip-verify"
+# Build universal2 for CPython and native arm64 for PyPy (which lacks universal2 binaries)
+archs = ["universal2", "arm64"]
+test-skip = "*_universal2:x86_64"
+before-build = "uv run --python 3.12 --no-project --with 'headerkit>=0.47.6' python -m headerkit.install_libclang --skip-verify"
 
 environment = { CMAKE_OSX_ARCHITECTURES = "x86_64;arm64" }
+
+[[tool.cibuildwheel.overrides]]
+select = "pp*-macosx_*"
+environment = { CMAKE_OSX_ARCHITECTURES = "arm64" }
 
 [tool.pytest.ini_options]
 addopts = "--capture=no --verbose"
