@@ -24,6 +24,7 @@ import sniffio
 from . import options
 from . import _aio
 from .exceptions import NNGException
+from ._finalized import is_nng_finalized as _is_nng_finalized
 
 logger = logging.getLogger(__name__)
 
@@ -63,29 +64,23 @@ def _check_fork():
         )
 
 
-def _is_nng_finalized():
-    """Check whether NNG runtime has been finalized."""
-    try:
-        from . import nng as _nng_mod
-
-        if getattr(_nng_mod, "_finalized", False):
-            return True
-    except Exception:
-        pass
-    try:
-        import sys
-
-        v2_mod = sys.modules.get("pynng.v2")
-        if v2_mod is not None and getattr(v2_mod, "_finalized", False):
-            return True
-    except Exception:
-        pass
-    return False
-
 
 # Keep CFFI socket handles alive for callbacks until socket close.
 _active_handles = {}
 _active_handles_lock = threading.Lock()
+
+# Retain closed sockets and pointer options (e.g. TLSConfig) in a FIFO buffer
+# so that NNG background reaper threads (tls_reap, listener_reap, dialer_reap)
+# finish tearing down C-level mbedTLS structures before Python GC finalizes them.
+_RETAIN_CLOSED_MAX = 64
+_closed_objects_retained = collections.deque(maxlen=_RETAIN_CLOSED_MAX)
+_closed_objects_lock = threading.Lock()
+
+
+def _retain_closed(obj):
+    if obj is not None:
+        with _closed_objects_lock:
+            _closed_objects_retained.append(obj)
 
 
 PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
@@ -435,6 +430,7 @@ class PointerOption(_NNGOption):
             if not hasattr(instance, "_pointer_option_refs"):
                 instance._pointer_option_refs = {}
             instance._pointer_option_refs[self.option] = value
+            _retain_closed(value)
 
 
 class NotImplementedOption(_NNGOption):
@@ -686,8 +682,6 @@ class Socket:
             self._recv_pool.pop()._free()
         while self._send_pool:
             self._send_pool.pop()._free()
-        if hasattr(self, "_pointer_option_refs"):
-            self._pointer_option_refs.clear()
 
     def __del__(self):
         if _is_nng_finalized():
@@ -1120,8 +1114,6 @@ class Dialer:
         """
         self._lib.nng_dialer_close(self.dialer)
         self.socket._dialers.pop(self.id, None)
-        if hasattr(self, "_pointer_option_refs"):
-            self._pointer_option_refs.clear()
 
     @property
     def id(self):
@@ -1181,8 +1173,6 @@ class Listener:
         """
         self._lib.nng_listener_close(self.listener)
         self.socket._listeners.pop(self.id, None)
-        if hasattr(self, "_pointer_option_refs"):
-            self._pointer_option_refs.clear()
 
     @property
     def id(self):
@@ -1561,8 +1551,6 @@ class Context:
             self._recv_pool.pop()._free()
         while self._send_pool:
             self._send_pool.pop()._free()
-        if hasattr(self, "_pointer_option_refs"):
-            self._pointer_option_refs.clear()
         if self._context is not None:
             # check that nng still has a reference
             if _lib.nng_ctx_id(self.context) != -1:

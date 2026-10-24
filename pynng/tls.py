@@ -1,5 +1,7 @@
 import pynng
 
+from ._finalized import is_nng_finalized as _is_nng_finalized
+
 
 class TLSConfig:
     """
@@ -91,13 +93,11 @@ class TLSConfig:
 
     def __del__(self):
         try:
-            from ._base import _is_nng_finalized
-
             if _is_nng_finalized():
                 self._tls_config = None
                 return
             cfg = getattr(self, "_tls_config", None)
-            if cfg:
+            if cfg is not None and cfg != pynng.ffi.NULL:
                 self._tls_config = None
                 pynng.lib.nng_tls_config_free(cfg)
         except (TypeError, AttributeError):
