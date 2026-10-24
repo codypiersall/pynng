@@ -101,7 +101,9 @@ if sys.implementation.name == "pypy":
 
     class _PyPyHeaderkitClangFinder(importlib.abc.MetaPathFinder):
         def find_spec(self, fullname, path, target=None):
-            if fullname == "headerkit._clang" or fullname.startswith("headerkit._clang."):
+            if fullname == "headerkit._clang" or fullname.startswith(
+                "headerkit._clang."
+            ):
                 for finder in sys.meta_path:
                     if isinstance(finder, _PyPyHeaderkitClangFinder):
                         continue
@@ -175,15 +177,36 @@ EXCLUDE_PATTERNS_V2 = [
     r"nng_stream_peer_cert",
     # Functions declared in v2 headers but not implemented in the library.
     # These cause LNK2019 on Windows (MSVC requires all symbols resolved).
-    r"nng_ctx_set$",              # nng_ctx_set (generic) removed; typed variants remain
-    r"nng_dialer_get_addr$",      # removed; nng_dialer_set_addr still exists
-    r"_uint64$",                  # uint64 typed accessors not implemented in v2
+    r"nng_ctx_set$",  # nng_ctx_set (generic) removed; typed variants remain
+    r"nng_dialer_get_addr$",  # removed; nng_dialer_set_addr still exists
+    r"_uint64$",  # uint64 typed accessors not implemented in v2
 ]
 
 # Path for the cached cdef file (placed next to build_pynng.py).
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(
-    __file__ if "__file__" in dir() else os.path.join(os.getcwd(), "build_pynng.py")
-))
+_SCRIPT_DIR = os.path.dirname(
+    os.path.abspath(
+        __file__ if "__file__" in dir() else os.path.join(os.getcwd(), "build_pynng.py")
+    )
+)
+_SRC_DIR = os.path.join(_SCRIPT_DIR, "src")
+_AIO_ENGINE_H = os.path.join(_SRC_DIR, "aio_engine.h")
+
+# CFFI cdef declarations for the pure C AIO completion engine (aio_engine.h).
+_AIO_ENGINE_CDEF = """
+        typedef struct pynng_aio_entry pynng_aio_entry_t;
+        typedef struct pynng_mpsc_queue pynng_mpsc_queue_t;
+
+        pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd);
+        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q);
+        void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
+        pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q);
+        void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id);
+        void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q);
+        int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
+        void pynng_aio_entry_free(pynng_aio_entry_t *e);
+        void pynng_native_aio_complete(void *arg);
+        int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries);
+"""
 
 
 def _validate_nng_include_dir(path: str) -> str | None:
@@ -201,9 +224,7 @@ def _detect_env_var() -> str | None:
         if result:
             logger.debug("NNG headers found via NNG_INCLUDE_DIR env var: %s", result)
         else:
-            logger.debug(
-                "NNG_INCLUDE_DIR set to %s but nng/nng.h not found there", val
-            )
+            logger.debug("NNG_INCLUDE_DIR set to %s but nng/nng.h not found there", val)
         return result
     return None
 
@@ -348,10 +369,14 @@ def _get_nng_include_dir() -> str:
     return include_dir
 
 
-_CDEF_MEMO: dict[tuple[tuple[tuple[str, float], ...], str, tuple[str, ...]], tuple[str, list[str]]] = {}
+_CDEF_MEMO: dict[
+    tuple[tuple[tuple[str, float], ...], str, tuple[str, ...]], tuple[str, list[str]]
+] = {}
 
 
-def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tuple[str, list[str]]:
+def generate_cdef(
+    headers=None, include_dir=None, exclude_patterns=None
+) -> tuple[str, list[str]]:
     """Parse NNG headers and generate CFFI cdef declarations.
 
     Args:
@@ -380,9 +405,7 @@ def generate_cdef(headers=None, include_dir=None, exclude_patterns=None) -> tupl
     elif headers == NNG_V2_HEADERS and exclude_patterns == EXCLUDE_PATTERNS_V2:
         cache_path = os.path.join(_SCRIPT_DIR, "_nng_v2_cdef_cache.txt")
 
-    existing = [
-        h for h in headers if os.path.exists(os.path.join(include_dir, h))
-    ]
+    existing = [h for h in headers if os.path.exists(os.path.join(include_dir, h))]
     header_paths = [os.path.join(include_dir, h) for h in existing]
     memo_key = (
         tuple((h, os.path.getmtime(p)) for h, p in zip(existing, header_paths)),
@@ -530,23 +553,10 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
         exclude_patterns=exclude_patterns,
     )
 
-    callbacks = """
+    callbacks = f"""
         extern "Python" void _async_complete(void *);
         extern "Python" void _nng_pipe_cb(nng_pipe, nng_pipe_ev, void *);
-
-        typedef struct pynng_aio_entry pynng_aio_entry_t;
-        typedef struct pynng_mpsc_queue pynng_mpsc_queue_t;
-
-        pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd);
-        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q);
-        void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
-        pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q);
-        void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id);
-        void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q);
-        int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
-        void pynng_aio_entry_free(pynng_aio_entry_t *e);
-        void pynng_native_aio_complete(void *arg);
-        int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries);
+{_AIO_ENGINE_CDEF}
     """
 
     ffi = FFI()
@@ -554,255 +564,9 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
     # Build set_source includes from the existing headers returned by generate_cdef()
     source_includes = "\n".join(f"        #include <{h}>" for h in existing_headers)
 
-    mpsc_source = """
-        #include <stdatomic.h>
-        #include <stdint.h>
-        #include <stdlib.h>
-
-        #if defined(_WIN32)
-          #include <windows.h>
-          #include <io.h>
-        #else
-          #include <unistd.h>
-          #include <fcntl.h>
-          #include <pthread.h>
-        #endif
-
-        typedef struct pynng_aio_entry {
-            void *aio;
-            _Atomic(uintptr_t) slot_id;
-            void *queue;
-            _Atomic(int) state; /* 0 = IDLE, 1 = QUEUED, 2 = FREED */
-        } pynng_aio_entry_t;
-
-        typedef struct pynng_mpsc_queue {
-            pynng_aio_entry_t **entries;
-            size_t capacity;
-            size_t head;
-            size_t tail;
-            size_t count;
-            _Atomic(int) write_fd;
-        #if defined(_WIN32)
-            CRITICAL_SECTION cs;
-        #else
-            pthread_mutex_t lock;
-        #endif
-        } pynng_mpsc_queue_t;
-
-        pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
-            pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)malloc(sizeof(pynng_mpsc_queue_t));
-            if (q) {
-                size_t initial_cap = 256;
-                q->entries = (pynng_aio_entry_t **)malloc(initial_cap * sizeof(pynng_aio_entry_t *));
-                q->capacity = initial_cap;
-                q->head = 0;
-                q->tail = 0;
-                q->count = 0;
-                atomic_init(&q->write_fd, write_fd);
-        #if defined(_WIN32)
-                InitializeCriticalSection(&q->cs);
-        #else
-                pthread_mutex_init(&q->lock, NULL);
-        #endif
-            }
-            return q;
-        }
-
-        /* ZERO-GIL MPSC PUSH - Thread-safe, non-blocking on uncontended mutex */
-        void pynng_native_aio_complete(void *arg) {
-            pynng_aio_entry_t *entry = (pynng_aio_entry_t *)arg;
-            if (!entry) return;
-            pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)entry->queue;
-            if (!q) return;
-
-        #if defined(_WIN32)
-            EnterCriticalSection(&q->cs);
-        #else
-            pthread_mutex_lock(&q->lock);
-        #endif
-
-            /* Atomically transition IDLE (0) -> QUEUED (1).
-               If already QUEUED (1) or FREED (2), do not push a second time. */
-            int expected = 0;
-            if (!atomic_compare_exchange_strong_explicit(
-                    &entry->state, &expected, 1,
-                    memory_order_acq_rel, memory_order_acquire)) {
-        #if defined(_WIN32)
-                LeaveCriticalSection(&q->cs);
-        #else
-                pthread_mutex_unlock(&q->lock);
-        #endif
-                return;
-            }
-
-            if (q->count == q->capacity) {
-                size_t new_cap = q->capacity ? q->capacity * 2 : 256;
-                pynng_aio_entry_t **new_entries = (pynng_aio_entry_t **)malloc(new_cap * sizeof(pynng_aio_entry_t *));
-                if (new_entries) {
-                    for (size_t i = 0; i < q->count; i++) {
-                        new_entries[i] = q->entries[(q->tail + i) % q->capacity];
-                    }
-                    free(q->entries);
-                    q->entries = new_entries;
-                    q->tail = 0;
-                    q->head = q->count;
-                    q->capacity = new_cap;
-                }
-            }
-
-            if (q->count < q->capacity) {
-                q->entries[q->head] = entry;
-                q->head = (q->head + 1) % q->capacity;
-                q->count++;
-            }
-
-            int wfd = atomic_load_explicit(&q->write_fd, memory_order_acquire);
-
-        #if defined(_WIN32)
-            LeaveCriticalSection(&q->cs);
-        #else
-            pthread_mutex_unlock(&q->lock);
-        #endif
-
-            if (wfd >= 0) {
-                char b = 1;
-        #if defined(_WIN32)
-                (void)_write(wfd, &b, 1);
-        #else
-                (void)write(wfd, &b, 1);
-        #endif
-            }
-        }
-
-        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
-            if (!q) return;
-            atomic_store_explicit(&q->write_fd, -1, memory_order_release);
-
-        #if defined(_WIN32)
-            EnterCriticalSection(&q->cs);
-        #else
-            pthread_mutex_lock(&q->lock);
-        #endif
-
-            while (q->count > 0) {
-                pynng_aio_entry_t *entry = q->entries[q->tail];
-                q->tail = (q->tail + 1) % q->capacity;
-                q->count--;
-                int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
-                if (prev_state == 2) {
-                    free(entry);
-                }
-            }
-
-        #if defined(_WIN32)
-            LeaveCriticalSection(&q->cs);
-        #else
-            pthread_mutex_unlock(&q->lock);
-        #endif
-        }
-
-        void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q) {
-            if (!q) return;
-            pynng_mpsc_queue_close(q);
-            if (q->entries) {
-                free(q->entries);
-                q->entries = NULL;
-            }
-        #if defined(_WIN32)
-            DeleteCriticalSection(&q->cs);
-        #else
-            pthread_mutex_destroy(&q->lock);
-        #endif
-            free(q);
-        }
-
-        int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries) {
-            if (!q || !out_slot_ids || max_entries <= 0) return 0;
-
-        #if defined(_WIN32)
-            EnterCriticalSection(&q->cs);
-        #else
-            pthread_mutex_lock(&q->lock);
-        #endif
-
-            int count = 0;
-            while (q->count > 0 && count < max_entries) {
-                pynng_aio_entry_t *entry = q->entries[q->tail];
-                q->tail = (q->tail + 1) % q->capacity;
-                q->count--;
-
-                uintptr_t slot_id = atomic_load_explicit(&entry->slot_id, memory_order_acquire);
-                int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
-                if (prev_state == 2) {
-                    free(entry);
-                } else if (slot_id != 0) {
-                    out_slot_ids[count++] = slot_id;
-                }
-            }
-
-        #if defined(_WIN32)
-            LeaveCriticalSection(&q->cs);
-        #else
-            pthread_mutex_unlock(&q->lock);
-        #endif
-
-            return count;
-        }
-
-        pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q) {
-            pynng_aio_entry_t *e = (pynng_aio_entry_t *)malloc(sizeof(pynng_aio_entry_t));
-            if (e) {
-                e->aio = aio;
-                atomic_init(&e->slot_id, slot_id);
-                e->queue = q;
-                atomic_init(&e->state, 0);
-            }
-            return e;
-        }
-
-        void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id) {
-            if (e) {
-                atomic_store_explicit(&e->slot_id, slot_id, memory_order_release);
-            }
-        }
-
-        void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q) {
-            if (e) {
-                e->queue = q;
-            }
-        }
-
-        int pynng_aio_entry_is_idle(pynng_aio_entry_t *e) {
-            if (!e) return 0;
-            return atomic_load_explicit(&e->state, memory_order_acquire) == 0;
-        }
-
-        void pynng_aio_entry_free(pynng_aio_entry_t *e) {
-            if (!e) return;
-            atomic_store_explicit(&e->slot_id, 0, memory_order_release);
-            pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)e->queue;
-            if (q) {
-        #if defined(_WIN32)
-                EnterCriticalSection(&q->cs);
-        #else
-                pthread_mutex_lock(&q->lock);
-        #endif
-
-                int prev_state = atomic_exchange_explicit(&e->state, 2, memory_order_acq_rel);
-                if (prev_state == 0) {
-                    free(e);
-                }
-
-        #if defined(_WIN32)
-                LeaveCriticalSection(&q->cs);
-        #else
-                pthread_mutex_unlock(&q->lock);
-        #endif
-            } else {
-                free(e);
-            }
-        }
-    """
+    include_dirs = [nng_include_dir]
+    if os.path.isdir(_SRC_DIR):
+        include_dirs.append(_SRC_DIR)
 
     ffi.set_source(
         module_name,
@@ -810,13 +574,14 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
             #define NNG_DECL
             #define NNG_STATIC_LIB
 {source_includes}
-            /* nng.h declares typedef enum { ... } nng_pipe_ev and nng_err anonymously
+            /* nng.h declares typedef enum {{ ... }} nng_pipe_ev and nng_err anonymously
                without tags. CFFI emits sizeof(enum ...); define tags to make them complete. */
             enum nng_pipe_ev {{ _nng_pipe_ev_dummy = 0 }};
             enum nng_err {{ _nng_err_dummy = 0 }};
-{mpsc_source}
+
+            #include "aio_engine.h"
         """,
-        include_dirs=[nng_include_dir],
+        include_dirs=include_dirs,
     )
 
     ffi.cdef(cdef_content + callbacks)

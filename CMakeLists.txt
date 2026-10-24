@@ -301,7 +301,7 @@ add_custom_command(
     "PYNNG_TLS_ENABLED=${_V1_TLS_ENABLED_INT}"
     ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE} --ffi-var=ffibuilder
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h
   COMMENT "Generating CFFI bindings for NNG"
   VERBATIM
 )
@@ -333,6 +333,7 @@ endif()
 
 # Include directories for Python and NNG headers
 target_include_directories(_nng PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${nng_SOURCE_DIR}/include
   ${Python_INCLUDE_DIRS})
 
@@ -536,7 +537,7 @@ if(BUILD_NNG_V2)
       "PYNNG_TLS_ENABLED=${_V2_TLS_ENABLED_INT}"
       ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE} --ffi-var=ffibuilder
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py nng_v2_build
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h nng_v2_build
     COMMENT "Generating CFFI bindings for NNG v2"
     VERBATIM
   )
@@ -563,6 +564,7 @@ if(BUILD_NNG_V2)
 
   # Include directories
   target_include_directories(_nng_v2 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${NNG_V2_INSTALL_DIR}/include
     ${Python_INCLUDE_DIRS})
 
