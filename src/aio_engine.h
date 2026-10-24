@@ -25,6 +25,9 @@
 extern "C" {
 #endif
 
+/* Constant wake-up byte passed to pipe write() to wake the asyncio event loop */
+static const char _pynng_wake_byte = 1;
+
 typedef struct pynng_aio_entry {
     void *aio;
     _Atomic(uintptr_t) slot_id;
@@ -133,11 +136,10 @@ void pynng_native_aio_complete(void *arg) {
 #endif
 
     if (wfd >= 0) {
-        char b = 1;
 #if defined(_WIN32)
-        (void)_write(wfd, &b, 1);
+        (void)_write(wfd, &_pynng_wake_byte, 1);
 #else
-        (void)write(wfd, &b, 1);
+        (void)write(wfd, &_pynng_wake_byte, 1);
 #endif
     }
 }
