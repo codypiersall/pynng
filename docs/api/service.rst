@@ -14,3 +14,4 @@ Request
 .. autoclass:: pynng.Request
    :members:
    :undoc-members:
+   :exclude-members: context, data
