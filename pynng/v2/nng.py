@@ -121,6 +121,9 @@ class Socket(_base.Socket):
 
         This method is idempotent and thread-safe. Uses ``nng_socket_close()``
         (the v2 API).
+
+        A call from a pipe callback returns at once, and the socket finishes
+        closing on another thread after the running pipe callbacks return.
         """
         self._do_close(lib.nng_socket_close)
 
@@ -350,6 +353,7 @@ class Surveyor0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_surveyor0_open
+    _nonblock_recv_first = False
     survey_time = MsOption("surveyor:survey-time")
 
     def __init__(self, *, survey_time=None, **kwargs):

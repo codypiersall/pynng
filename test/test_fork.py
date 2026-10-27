@@ -1,3 +1,4 @@
+import asyncio
 import multiprocessing as mp
 import os
 import subprocess
@@ -97,3 +98,44 @@ if __name__ == '__main__':
     )
     assert res.returncode == 0
     assert "SPAWN_OK" in res.stdout
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is only supported on POSIX")
+@pytest.mark.parametrize("on_context", [False, True], ids=["socket", "context"])
+@pytest.mark.parametrize("op", ["arecv", "asend_msg"])
+def test_fork_inherited_async_operation_raises_runtime_error(op, on_context):
+    """Async send and receive on an inherited socket or context raise RuntimeError."""
+    sock = pynng.Rep0()
+    target = sock.new_context() if on_context else sock
+    msg = pynng.Message(b"hello")
+
+    async def run_op():
+        if op == "arecv":
+            await target.arecv()
+        else:
+            await target.asend_msg(msg)
+
+    ctx = mp.get_context("fork")
+
+    def run_child(queue):
+        try:
+            asyncio.run(asyncio.wait_for(run_op(), 2))
+            queue.put("SUCCESS")
+        except RuntimeError as exc:
+            queue.put(f"RUNTIME_ERROR: {exc}")
+        except BaseException as exc:  # noqa: BLE001
+            queue.put(f"UNEXPECTED_EXCEPTION: {type(exc).__name__}: {exc}")
+
+    queue = ctx.Queue()
+    proc = ctx.Process(target=run_child, args=(queue,))
+    proc.start()
+    proc.join(timeout=10)
+    if proc.exitcode is None:
+        proc.kill()
+        proc.join()
+    sock.close()
+
+    assert proc.exitcode == 0
+    result = queue.get(timeout=2)
+    assert result.startswith("RUNTIME_ERROR")
+    assert "does not support fork()" in result

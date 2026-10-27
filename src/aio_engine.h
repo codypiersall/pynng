@@ -12,6 +12,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <nng/nng.h>
+#if NNG_MAJOR_VERSION < 2
+  #include <nng/supplemental/util/platform.h>
+#endif
+
 #if defined(_WIN32)
   #include <windows.h>
   #include <io.h>
@@ -299,6 +304,71 @@ void pynng_aio_entry_free(pynng_aio_entry_t *e) {
     } else {
         free(e);
     }
+}
+
+/* Synchronous receive: one nng_aio whose completion is signalled in C, so a
+   completion does not take the GIL. Python waits in short slices with
+   pynng_sync_recv_wait() so that it can run signal handlers between them. */
+typedef struct pynng_sync_recv {
+    nng_aio *aio;
+    nng_mtx *mtx;
+    nng_cv *cv;
+    int done;
+} pynng_sync_recv_t;
+
+int pynng_sync_recv_alloc(pynng_sync_recv_t **out);
+nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
+int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
+void pynng_sync_recv_free(pynng_sync_recv_t *r);
+
+static void _pynng_sync_recv_complete(void *arg) {
+    pynng_sync_recv_t *r = (pynng_sync_recv_t *)arg;
+    nng_mtx_lock(r->mtx);
+    r->done = 1;
+    nng_cv_wake(r->cv);
+    nng_mtx_unlock(r->mtx);
+}
+
+void pynng_sync_recv_free(pynng_sync_recv_t *r) {
+    if (!r) return;
+    /* nng_aio_free() waits for a running callback to return, and the
+       callback still holds the mutex after it sets done. */
+    if (r->aio) nng_aio_free(r->aio);
+    if (r->cv) nng_cv_free(r->cv);
+    if (r->mtx) nng_mtx_free(r->mtx);
+    free(r);
+}
+
+int pynng_sync_recv_alloc(pynng_sync_recv_t **out) {
+    int rv;
+    pynng_sync_recv_t *r = (pynng_sync_recv_t *)calloc(1, sizeof(*r));
+    *out = NULL;
+    if (!r) return NNG_ENOMEM;
+    if ((rv = nng_mtx_alloc(&r->mtx)) != 0 ||
+        (rv = nng_cv_alloc(&r->cv, r->mtx)) != 0 ||
+        (rv = nng_aio_alloc(&r->aio, _pynng_sync_recv_complete, r)) != 0) {
+        pynng_sync_recv_free(r);
+        return rv;
+    }
+    *out = r;
+    return 0;
+}
+
+nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r) {
+    return r->aio;
+}
+
+/* Returns 1 once the aio has completed, 0 if slice_ms passed first. */
+int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms) {
+    nng_time deadline = nng_clock() + (nng_time)slice_ms;
+    int done;
+    nng_mtx_lock(r->mtx);
+    while (!r->done) {
+        if (nng_cv_until(r->cv, deadline) == NNG_ETIMEDOUT) break;
+    }
+    done = r->done;
+    nng_mtx_unlock(r->mtx);
+    return done;
 }
 
 #ifdef __cplusplus

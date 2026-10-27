@@ -1,6 +1,7 @@
 """Tests for Surveyor0.asurvey() ergonomic method."""
 
 import asyncio
+import time
 
 import pynng
 import pytest
@@ -138,3 +139,30 @@ async def test_asurvey_uses_socket_recv_timeout():
         # Should complete quickly using the socket's recv_timeout
         responses = await surveyor.asurvey(b"hello?")
         assert responses == []
+
+
+def test_surveyor0_context_recv_raises_timeout_when_survey_expires(nng):
+    """A survey that ends with no response raises Timeout, not BadState."""
+    with nng.Surveyor0(survey_time=50) as surveyor:
+        ctx = surveyor.new_context()
+        ctx.send(b"anyone?")
+        t0 = time.monotonic()
+        with pytest.raises(nng.Timeout):
+            ctx.recv()
+        assert time.monotonic() - t0 < 2.0
+        ctx.close()
+
+
+@pytest.mark.parametrize("use_context", [False, True])
+def test_surveyor0_recv_timeout_shorter_than_survey_raises_timeout(
+    nng, use_context
+):
+    """recv_timeout ends a recv before the survey ends."""
+    with nng.Surveyor0(survey_time=5000) as surveyor:
+        target = surveyor.new_context() if use_context else surveyor
+        target.recv_timeout = 100
+        target.send(b"anyone?")
+        t0 = time.monotonic()
+        with pytest.raises(nng.Timeout):
+            target.recv()
+        assert time.monotonic() - t0 < 2.0

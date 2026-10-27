@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.10 EOL deprecation advisory in documentation and README
 - Modernize GitHub Actions workflows to Node 24-compatible actions
 - `post_pipe_remove` callbacks for a pipe now wait until the running `pre_pipe_connect` and `post_pipe_connect` callbacks for that pipe return, so a remove callback no longer runs at the same time as a connect callback for the same pipe
+- A synchronous receive (`recv()`, `recv_msg()`, `recv_into()`) on a socket or context now keeps one receive in flight until it completes, times out, or is interrupted. Before, it cancelled and restarted the receive every 100 ms, which ends a `Req0` request and a `Surveyor0` survey: a `Req0` receive on a socket or a context whose reply took longer than 100 ms raised `BadState`, and after about 100 ms a `Surveyor0` receive raised `Timeout` on a socket and `BadState` on a context, whatever the `survey_time`. Ctrl-C still interrupts a blocking receive
+- `Socket.close()` called from a pipe callback now returns at once, and the socket is closed on another thread when the running pipe callbacks have returned. Before, a close from a socket's own `post_pipe_connect` callback, or from a `post_pipe_remove` callback when no other thread was closing the socket, never returned
 
 ### Fixed
 - Prevent removed pipes from staying in `Socket.pipes` with nng v1: when `NNG_PIPE_EV_REM_POST` from the reaper thread reaches Python before `NNG_PIPE_EV_ADD_PRE` or `NNG_PIPE_EV_ADD_POST` for the same pipe, the late event is now dropped, so it no longer adds the pipe back or runs `post_pipe_connect` callbacks after `post_pipe_remove` callbacks. A message received from a removed pipe also no longer adds the pipe back
@@ -60,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent a use-after-free in the asyncio completion queue when `MPSCAIOEngine` is garbage-collected before the `AIOHelper` or `DeviceAIO` objects that use its queue. Each entry now holds a reference on the C queue, and the last reference frees it
 - Write the wake-up byte of the completion queue while the queue lock is held, so a completion that races with `MPSCAIOEngine.close()` cannot write to the wake-up pipe after its file descriptor is closed and possibly reused
 - Prevent `MPSCAIOEngine.register()` from reusing a slot id that is still pending when the 31-bit slot counter (mask `0x7FFFFFFF`) wraps around
+- `Rep0Service` workers no longer log an exception each time `recv_timeout` expires with no request
+- `Socket.asend_msg()`, `Socket.arecv_msg()`, `Context.asend_msg()` and `Context.arecv_msg()` (and so `arecv()`, `arecv_into()` and `async for`) now raise `RuntimeError` in a forked child, as the synchronous operations already did
 - Fix #108: Prevent process crash / NNG panic during Python interpreter shutdown by disabling unconditional `nng_fini()` at atexit (`nng_fini_at_exit = False`) and guarding `Socket`, `Context`, `Message`, `AIOHelper`, and `DeviceAIO` finalizers against calling deallocated NNG C state during GC
 - Fix #113: Prevent hard C aborts (`panic: nng is not fork-reentrant safe`) in forked child processes by detecting `fork()` and raising a descriptive Python `RuntimeError` directing users to `multiprocessing.set_start_method('spawn')`
 - Fix #104: Prevent `RuntimeError: cannot use unpack() on <cdata 'char *' NULL>` when receiving 0-byte messages via v1 `Socket.recv()`

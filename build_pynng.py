@@ -205,6 +205,13 @@ _AIO_ENGINE_CDEF = """
         void pynng_aio_entry_free(pynng_aio_entry_t *e);
         void pynng_native_aio_complete(void *arg);
         int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries);
+
+        typedef struct pynng_sync_recv pynng_sync_recv_t;
+
+        int pynng_sync_recv_alloc(pynng_sync_recv_t **out);
+        nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
+        int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
+        void pynng_sync_recv_free(pynng_sync_recv_t *r);
 """
 
 

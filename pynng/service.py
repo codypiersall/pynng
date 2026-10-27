@@ -12,7 +12,7 @@ import warnings
 import sniffio
 
 import pynng
-from .exceptions import Closed
+from .exceptions import Closed, Timeout
 
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,8 @@ class Rep0Service:
                 await replied_event.wait()
             except Closed:
                 break
+            except Timeout:
+                continue
             except Exception:
                 if not self._running:
                     break
@@ -208,6 +210,8 @@ class Rep0Service:
                 await replied_event.wait()
             except Closed:
                 break
+            except Timeout:
+                continue
             except Exception:
                 if not self._running:
                     break

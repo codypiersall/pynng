@@ -250,6 +250,9 @@ class Socket(_base.Socket):
 
         This method is idempotent and thread-safe. It may be called multiple
         times (e.g. via __exit__ and later __del__) without harm.
+
+        A call from a pipe callback returns at once, and the socket finishes
+        closing on another thread after the running pipe callbacks return.
         """
         self._do_close(lib.nng_close)
 
@@ -739,6 +742,7 @@ class Surveyor0(Socket):
 
     _opener = lib.nng_surveyor0_open
     _raw_opener = lib.nng_surveyor0_open_raw
+    _nonblock_recv_first = False
     survey_time = MsOption("surveyor:survey-time")
 
     def __init__(self, *, survey_time=None, raw=False, **kwargs):
