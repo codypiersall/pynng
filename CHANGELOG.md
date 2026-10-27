@@ -88,6 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AIOHelper._free()` potential deadlock during GC: cancel pending AIO operations before calling `nng_aio_free()` to prevent callback/GIL deadlock
 - Pipe callback list mutations now protected by `_pipe_notify_lock` for thread safety under free-threaded Python
 - Make `Socket.close()` idempotent and thread-safe with `_close_lock` and `_socket_closed` flag
+- Harden test suite against race conditions on free-threaded builds (coroutine cleanup on Windows, respondent post-connect wait) and ensure `wait_pipe_len()` waits until protocols have fully started connected pipes before sending messages
 - `_setopt_size` and `_setopt_ms` now check error returns from NNG C library instead of silently swallowing failures
 - `Message._buffer` raises `MessageStateError` after send instead of returning `None` (which caused confusing `TypeError`)
 - `_NNGOption.__get__` error message corrected from "cannot be set" to "is write-only"
