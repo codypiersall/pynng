@@ -251,6 +251,10 @@ b = pynng.Pair0(listen="inproc://device-at-exit-b")
 async def main():
     global dev
     dev = DeviceAIO(a, b, "asyncio", _default_lib=lib.lib, _default_ffi=lib.ffi)
+    # Without the MPSC engine (the Windows Proactor loop has no add_reader),
+    # the constructor makes the run() coroutine, and this script never runs it.
+    if dev.awaitable is not None:
+        dev.awaitable.close()
 
 
 asyncio.run(main())

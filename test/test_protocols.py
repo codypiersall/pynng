@@ -145,14 +145,18 @@ def test_push_pull():
 
 def test_surveyor_respondent():
     addr = random_addr()
-    with pynng.Surveyor0(listen=addr, recv_timeout=MEDIUM_TIMEOUT) as surveyor, pynng.Respondent0(
-        dial=addr, recv_timeout=MEDIUM_TIMEOUT
-    ) as resp1, pynng.Respondent0(dial=addr, recv_timeout=MEDIUM_TIMEOUT) as resp2:
+    # A pipe is in Socket.pipes from NNG_PIPE_EV_ADD_PRE, before Surveyor0
+    # starts it, and a survey sent then does not reach that peer.
+    started = threading.Semaphore(0)
+    with pynng.Surveyor0(recv_timeout=MEDIUM_TIMEOUT) as surveyor, pynng.Respondent0(
+        recv_timeout=MEDIUM_TIMEOUT
+    ) as resp1, pynng.Respondent0(recv_timeout=MEDIUM_TIMEOUT) as resp2:
+        surveyor.add_post_pipe_connect_cb(lambda pipe: started.release())
+        surveyor.listen(addr)
+        resp1.dial(addr)
+        resp2.dial(addr)
         query = b"hey how's it going buddy?"
-        # wait for sockets to connect
-        wait_pipe_len(surveyor, 2)
-        wait_pipe_len(resp1, 1)
-        wait_pipe_len(resp2, 1)
+        assert started.acquire(timeout=5) and started.acquire(timeout=5)
         surveyor.send(query)
         assert resp1.recv() == query
         assert resp2.recv() == query
