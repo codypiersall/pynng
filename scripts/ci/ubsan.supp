@@ -1,0 +1,10 @@
+# UBSan suppressions for scripts/ci/sanitizers.sh. Third-party code only.
+#
+# nng v1 sub0_ctx_subscribe and sub0_ctx_unsubscribe call
+# memcmp(topic->buf, buf, sz) with sz == 0 when the empty topic b"" is
+# subscribed, and topic->buf is NULL for that topic. A zero-length memcmp
+# reads nothing, so the null argument is benign. The installed extension is
+# stripped, so the function name does not symbolize; the entry matches the
+# source file that UBSan embeds at compile time instead. The pattern does not
+# match the nng v2 copy (_deps/nng_v2-src).
+nonnull-attribute:/_deps/nng-src/src/sp/protocol/pubsub0/sub.c

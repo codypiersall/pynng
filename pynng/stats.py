@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from ._base import Socket, _resolve_socket
 from ._nng import ffi, lib
 from .exceptions import check_err
 
@@ -107,32 +108,34 @@ class Stat(Mapping):
         return results
 
 
-def _extract_stat_value(st, st_type):
-    if st_type in (lib.NNG_STAT_LEVEL, lib.NNG_STAT_COUNTER, lib.NNG_STAT_ID):
-        return lib.nng_stat_value(st)
-    elif st_type == lib.NNG_STAT_STRING:
-        c_str = lib.nng_stat_string(st)
-        return ffi.string(c_str).decode("utf-8", "replace") if c_str != ffi.NULL else ""
-    elif st_type == lib.NNG_STAT_BOOLEAN:
-        return bool(lib.nng_stat_bool(st))
+def _extract_stat_value(st, st_type, _lib=lib, _ffi=ffi):
+    if st_type in (_lib.NNG_STAT_LEVEL, _lib.NNG_STAT_COUNTER, _lib.NNG_STAT_ID):
+        return _lib.nng_stat_value(st)
+    elif st_type == _lib.NNG_STAT_STRING:
+        c_str = _lib.nng_stat_string(st)
+        if c_str == _ffi.NULL:
+            return ""
+        return _ffi.string(c_str).decode("utf-8", "replace")
+    elif st_type == _lib.NNG_STAT_BOOLEAN:
+        return bool(_lib.nng_stat_bool(st))
     return None
 
 
-def _build_stat_node(st) -> Stat:
-    name_p = lib.nng_stat_name(st)
-    desc_p = lib.nng_stat_desc(st)
-    name = ffi.string(name_p).decode("utf-8", "replace") if name_p != ffi.NULL else ""
-    desc = ffi.string(desc_p).decode("utf-8", "replace") if desc_p != ffi.NULL else ""
-    st_type = lib.nng_stat_type(st)
-    st_unit = lib.nng_stat_unit(st)
-    val = _extract_stat_value(st, st_type)
-    ts = lib.nng_stat_timestamp(st)
+def _build_stat_node(st, _lib=lib, _ffi=ffi) -> Stat:
+    name_p = _lib.nng_stat_name(st)
+    desc_p = _lib.nng_stat_desc(st)
+    name = _ffi.string(name_p).decode("utf-8", "replace") if name_p != _ffi.NULL else ""
+    desc = _ffi.string(desc_p).decode("utf-8", "replace") if desc_p != _ffi.NULL else ""
+    st_type = _lib.nng_stat_type(st)
+    st_unit = _lib.nng_stat_unit(st)
+    val = _extract_stat_value(st, st_type, _lib=_lib, _ffi=_ffi)
+    ts = _lib.nng_stat_timestamp(st)
 
     children = []
-    child = lib.nng_stat_child(st)
-    while child != ffi.NULL:
-        children.append(_build_stat_node(child))
-        child = lib.nng_stat_next(child)
+    child = _lib.nng_stat_child(st)
+    while child != _ffi.NULL:
+        children.append(_build_stat_node(child, _lib=_lib, _ffi=_ffi))
+        child = _lib.nng_stat_next(child)
 
     return Stat(
         name=name,
@@ -153,32 +156,42 @@ def stats() -> Stat:
     Returns:
         Stat: Root node of the statistics tree.
     """
-    stat_p = ffi.new("nng_stat **")
-    check_err(lib.nng_stats_get(stat_p))
+    return _stats(lib, ffi)
+
+
+def _stats(_lib, _ffi) -> Stat:
+    stat_p = _ffi.new("nng_stat **")
+    check_err(_lib.nng_stats_get(stat_p), lib=_lib, ffi=_ffi)
     root = stat_p[0]
     try:
-        return _build_stat_node(root)
+        return _build_stat_node(root, _lib=_lib, _ffi=_ffi)
     finally:
-        lib.nng_stats_free(root)
+        _lib.nng_stats_free(root)
 
 
 def socket_stats(sock) -> Optional[Stat]:
     """Retrieve runtime statistics for a specific socket.
 
     Args:
-        sock: A :class:`~pynng.Socket` instance.
+        sock: A :class:`~pynng.Socket` instance or an ``nng_socket`` handle.
 
     Returns:
         Stat: The socket's stat subtree, or None if not found.
     """
-    stat_p = ffi.new("nng_stat **")
-    check_err(lib.nng_stats_get(stat_p))
+    return _socket_stats(sock, lib, ffi)
+
+
+def _socket_stats(sock, default_lib, default_ffi):
+    if not isinstance(sock, Socket):
+        sock = getattr(sock, "socket", sock)
+    _lib, _ffi, nng_sock = _resolve_socket(sock, default_lib, default_ffi)
+    stat_p = _ffi.new("nng_stat **")
+    check_err(_lib.nng_stats_get(stat_p), lib=_lib, ffi=_ffi)
     root = stat_p[0]
     try:
-        nng_sock = sock.socket if hasattr(sock, "socket") else sock
-        s_stat = lib.nng_stat_find_socket(root, nng_sock)
-        if s_stat == ffi.NULL:
+        s_stat = _lib.nng_stat_find_socket(root, nng_sock)
+        if s_stat == _ffi.NULL:
             return None
-        return _build_stat_node(s_stat)
+        return _build_stat_node(s_stat, _lib=_lib, _ffi=_ffi)
     finally:
-        lib.nng_stats_free(root)
+        _lib.nng_stats_free(root)

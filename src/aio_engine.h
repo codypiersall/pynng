@@ -12,6 +12,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <nng/nng.h>
+#if NNG_MAJOR_VERSION < 2
+  #include <nng/supplemental/util/platform.h>
+#endif
+
 #if defined(_WIN32)
   #include <windows.h>
   #include <io.h>
@@ -41,7 +46,9 @@ typedef struct pynng_mpsc_queue {
     size_t head;
     size_t tail;
     size_t count;
+    int closed;
     _Atomic(int) write_fd;
+    _Atomic(size_t) refcount;
 #if defined(_WIN32)
     CRITICAL_SECTION cs;
 #else
@@ -49,12 +56,32 @@ typedef struct pynng_mpsc_queue {
 #endif
 } pynng_mpsc_queue_t;
 
+/* Each entry holds one reference on its queue and the owner holds one, so the
+   queue outlives MPSCAIOEngine when cyclic GC finalizes it before the
+   AIOHelper/DeviceAIO objects whose entries use it. */
+static void _pynng_mpsc_queue_retain(pynng_mpsc_queue_t *q) {
+    atomic_fetch_add_explicit(&q->refcount, 1, memory_order_relaxed);
+}
+
+/* Must be called without the queue lock held: the last release destroys it. */
+static void _pynng_mpsc_queue_release(pynng_mpsc_queue_t *q, size_t n) {
+    if (n == 0) return;
+    if (atomic_fetch_sub_explicit(&q->refcount, n, memory_order_acq_rel) == n) {
+#if defined(_WIN32)
+        DeleteCriticalSection(&q->cs);
+#else
+        pthread_mutex_destroy(&q->lock);
+#endif
+        free(q->entries);
+        free(q);
+    }
+}
+
 pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd);
 void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q);
 void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
 pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q);
 void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id);
-void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q);
 int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
 void pynng_aio_entry_free(pynng_aio_entry_t *e);
 void pynng_native_aio_complete(void *arg);
@@ -73,7 +100,9 @@ pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
         q->head = 0;
         q->tail = 0;
         q->count = 0;
+        q->closed = 0;
         atomic_init(&q->write_fd, write_fd);
+        atomic_init(&q->refcount, 1);
 #if defined(_WIN32)
         InitializeCriticalSection(&q->cs);
 #else
@@ -99,7 +128,7 @@ void pynng_native_aio_complete(void *arg) {
     /* Atomically transition IDLE (0) -> QUEUED (1).
        If already QUEUED (1) or FREED (2), do not push a second time. */
     int expected = 0;
-    if (!atomic_compare_exchange_strong_explicit(
+    if (q->closed || !atomic_compare_exchange_strong_explicit(
             &entry->state, &expected, 1,
             memory_order_acq_rel, memory_order_acquire)) {
 #if defined(_WIN32)
@@ -131,14 +160,10 @@ void pynng_native_aio_complete(void *arg) {
         q->count++;
     }
 
+    /* Written under the lock: pynng_mpsc_queue_close() takes the lock, so once
+       it returns the owner can close the fd and no write can reach a reused
+       descriptor. The fd is non-blocking. */
     int wfd = atomic_load_explicit(&q->write_fd, memory_order_acquire);
-
-#if defined(_WIN32)
-    LeaveCriticalSection(&q->cs);
-#else
-    pthread_mutex_unlock(&q->lock);
-#endif
-
     if (wfd >= 0) {
 #if defined(_WIN32)
         (void)_write(wfd, &_pynng_wake_byte, 1);
@@ -146,17 +171,26 @@ void pynng_native_aio_complete(void *arg) {
         (void)write(wfd, &_pynng_wake_byte, 1);
 #endif
     }
+
+#if defined(_WIN32)
+    LeaveCriticalSection(&q->cs);
+#else
+    pthread_mutex_unlock(&q->lock);
+#endif
 }
 
 void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
     if (!q) return;
-    atomic_store_explicit(&q->write_fd, -1, memory_order_release);
+    size_t freed = 0;
 
 #if defined(_WIN32)
     EnterCriticalSection(&q->cs);
 #else
     pthread_mutex_lock(&q->lock);
 #endif
+
+    q->closed = 1;
+    atomic_store_explicit(&q->write_fd, -1, memory_order_release);
 
     while (q->count > 0) {
         pynng_aio_entry_t *entry = q->entries[q->tail];
@@ -165,6 +199,7 @@ void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
         int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
         if (prev_state == 2) {
             free(entry);
+            freed++;
         }
     }
 
@@ -173,21 +208,14 @@ void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q) {
 #else
     pthread_mutex_unlock(&q->lock);
 #endif
+
+    _pynng_mpsc_queue_release(q, freed);
 }
 
 void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q) {
     if (!q) return;
     pynng_mpsc_queue_close(q);
-    if (q->entries) {
-        free(q->entries);
-        q->entries = NULL;
-    }
-#if defined(_WIN32)
-    DeleteCriticalSection(&q->cs);
-#else
-    pthread_mutex_destroy(&q->lock);
-#endif
-    free(q);
+    _pynng_mpsc_queue_release(q, 1);
 }
 
 int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries) {
@@ -200,6 +228,7 @@ int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int m
 #endif
 
     int count = 0;
+    size_t freed = 0;
     while (q->count > 0 && count < max_entries) {
         pynng_aio_entry_t *entry = q->entries[q->tail];
         q->tail = (q->tail + 1) % q->capacity;
@@ -209,6 +238,7 @@ int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int m
         int prev_state = atomic_exchange_explicit(&entry->state, 0, memory_order_acq_rel);
         if (prev_state == 2) {
             free(entry);
+            freed++;
         } else if (slot_id != 0) {
             out_slot_ids[count++] = slot_id;
         }
@@ -220,6 +250,7 @@ int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int m
     pthread_mutex_unlock(&q->lock);
 #endif
 
+    _pynng_mpsc_queue_release(q, freed);
     return count;
 }
 
@@ -228,6 +259,7 @@ pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_
     if (e) {
         e->aio = aio;
         atomic_init(&e->slot_id, slot_id);
+        if (q) _pynng_mpsc_queue_retain(q);
         e->queue = q;
         atomic_init(&e->state, 0);
     }
@@ -237,12 +269,6 @@ pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_
 void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id) {
     if (e) {
         atomic_store_explicit(&e->slot_id, slot_id, memory_order_release);
-    }
-}
-
-void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q) {
-    if (e) {
-        e->queue = q;
     }
 }
 
@@ -262,19 +288,87 @@ void pynng_aio_entry_free(pynng_aio_entry_t *e) {
         pthread_mutex_lock(&q->lock);
 #endif
 
+        /* A QUEUED entry is freed by whoever unlinks it from the queue. */
         int prev_state = atomic_exchange_explicit(&e->state, 2, memory_order_acq_rel);
-        if (prev_state == 0) {
-            free(e);
-        }
 
 #if defined(_WIN32)
         LeaveCriticalSection(&q->cs);
 #else
         pthread_mutex_unlock(&q->lock);
 #endif
+
+        if (prev_state == 0) {
+            free(e);
+            _pynng_mpsc_queue_release(q, 1);
+        }
     } else {
         free(e);
     }
+}
+
+/* Synchronous receive: one nng_aio whose completion is signalled in C, so a
+   completion does not take the GIL. Python waits in short slices with
+   pynng_sync_recv_wait() so that it can run signal handlers between them. */
+typedef struct pynng_sync_recv {
+    nng_aio *aio;
+    nng_mtx *mtx;
+    nng_cv *cv;
+    int done;
+} pynng_sync_recv_t;
+
+int pynng_sync_recv_alloc(pynng_sync_recv_t **out);
+nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
+int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
+void pynng_sync_recv_free(pynng_sync_recv_t *r);
+
+static void _pynng_sync_recv_complete(void *arg) {
+    pynng_sync_recv_t *r = (pynng_sync_recv_t *)arg;
+    nng_mtx_lock(r->mtx);
+    r->done = 1;
+    nng_cv_wake(r->cv);
+    nng_mtx_unlock(r->mtx);
+}
+
+void pynng_sync_recv_free(pynng_sync_recv_t *r) {
+    if (!r) return;
+    /* nng_aio_free() waits for a running callback to return, and the
+       callback still holds the mutex after it sets done. */
+    if (r->aio) nng_aio_free(r->aio);
+    if (r->cv) nng_cv_free(r->cv);
+    if (r->mtx) nng_mtx_free(r->mtx);
+    free(r);
+}
+
+int pynng_sync_recv_alloc(pynng_sync_recv_t **out) {
+    int rv;
+    pynng_sync_recv_t *r = (pynng_sync_recv_t *)calloc(1, sizeof(*r));
+    *out = NULL;
+    if (!r) return NNG_ENOMEM;
+    if ((rv = nng_mtx_alloc(&r->mtx)) != 0 ||
+        (rv = nng_cv_alloc(&r->cv, r->mtx)) != 0 ||
+        (rv = nng_aio_alloc(&r->aio, _pynng_sync_recv_complete, r)) != 0) {
+        pynng_sync_recv_free(r);
+        return rv;
+    }
+    *out = r;
+    return 0;
+}
+
+nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r) {
+    return r->aio;
+}
+
+/* Returns 1 once the aio has completed, 0 if slice_ms passed first. */
+int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms) {
+    nng_time deadline = nng_clock() + (nng_time)slice_ms;
+    int done;
+    nng_mtx_lock(r->mtx);
+    while (!r->done) {
+        if (nng_cv_until(r->cv, deadline) == NNG_ETIMEDOUT) break;
+    }
+    done = r->done;
+    nng_mtx_unlock(r->mtx);
+    return done;
 }
 
 #ifdef __cplusplus

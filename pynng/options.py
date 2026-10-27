@@ -235,14 +235,14 @@ def _getopt_sockaddr(py_obj, option):
 
 
 def _setopt_ptr(py_obj, option, value):
+    _lib, _ffi = _resolve_lib_ffi(py_obj)
     if isinstance(value, pynng.tls.TLSConfig):
-        value_ptr = value._tls_config
+        value_ptr = value._config_for(_lib, _ffi)
     else:
         msg = "Invalid value {} of type {}.  Expected TLSConfig."
         msg = msg.format(value, type(value))
         raise ValueError(msg)
 
-    _lib, _ffi = _resolve_lib_ffi(py_obj)
     from ._base import to_char
     option_char = to_char(option, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "ptr", "set")

@@ -1,4 +1,6 @@
 # provide the API
+import sys as _sys
+import types as _types
 from importlib.metadata import version, PackageNotFoundError
 
 try:
@@ -44,8 +46,8 @@ from .nng import (
     device,
     adevice,
     nng_fini,
-    nng_fini_at_exit,
 )
+from . import nng as _nng_module
 
 from .stats import stats, Stat
 from .service import Rep0Service, Request  # noqa: F401
@@ -88,3 +90,18 @@ from .exceptions import (
     check_err,
     MessageStateError,
 )
+
+
+class _PynngModule(_types.ModuleType):
+    # The atexit handler reads pynng.nng.nng_fini_at_exit. A plain copy here
+    # would make "pynng.nng_fini_at_exit = True" have no effect.
+    @property
+    def nng_fini_at_exit(self):
+        return _nng_module.nng_fini_at_exit
+
+    @nng_fini_at_exit.setter
+    def nng_fini_at_exit(self, value):
+        _nng_module.nng_fini_at_exit = value
+
+
+_sys.modules[__name__].__class__ = _PynngModule

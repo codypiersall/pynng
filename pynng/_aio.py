@@ -15,10 +15,22 @@ from ._finalized import is_nng_finalized as _is_nng_finalized
 
 # global variable for mapping asynchronous operations with the Python data
 # assocated with them.  Key is id(obj), value is obj
+# No lock guards it: AIOHelper.__del__ updates it, and a finalizer can run
+# while its thread holds any lock. Each access is one dict operation, which is
+# atomic with and without the GIL.
 _aio_map = {}
 
-# Lock protecting _aio_map. Plain dict operations are atomic under the GIL,
-_aio_map_lock = threading.Lock()
+# Marks the threads inside _base._device_section(), which holds the device lock.
+_device_section_thread = threading.local()
+
+
+def _in_device_section():
+    """Return True if this thread can hold the device lock.
+
+    A finalizer can run inside a device section, so a finalizer that needs
+    the lock must hand that work to another thread when this returns True.
+    """
+    return getattr(_device_section_thread, "depth", 0) > 0
 
 
 def _make_notify_cb(engine_ref):
@@ -135,9 +147,12 @@ class MPSCAIOEngine:
                     fut.set_result(None)
 
     def register(self, fut):
-        self._slot_counter = (self._slot_counter + 1) & 0x7FFFFFFF
-        if self._slot_counter == 0:
-            self._slot_counter = 1
+        while True:
+            self._slot_counter = (self._slot_counter + 1) & 0x7FFFFFFF
+            if self._slot_counter == 0:
+                self._slot_counter = 1
+            if self._slot_counter not in self._slots:
+                break
         slot_id = self._slot_counter
         self._slots[slot_id] = fut
         return slot_id
@@ -203,8 +218,7 @@ def _async_complete(void_p):
     assert isinstance(void_p, ffi.CData)
     id = int(ffi.cast("size_t", void_p))
 
-    with _aio_map_lock:
-        rescheduler = _aio_map.pop(id, None)
+    rescheduler = _aio_map.pop(id, None)
     if rescheduler is None:
         return
     rescheduler()
@@ -415,8 +429,7 @@ class AIOHelper:
         else:
             self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
             aio_p = _ffi.new("nng_aio **")
-            with _aio_map_lock:
-                _aio_map[id(self.cb_arg)] = self.cb_arg
+            _aio_map[id(self.cb_arg)] = self.cb_arg
             idarg = id(self.cb_arg)
             as_void = _ffi.cast("void *", idarg)
             try:
@@ -426,8 +439,7 @@ class AIOHelper:
                     ffi=_ffi,
                 )
             except BaseException:
-                with _aio_map_lock:
-                    _aio_map.pop(idarg, None)
+                _aio_map.pop(idarg, None)
                 raise
             self.aio = aio_p[0]
 
@@ -606,8 +618,7 @@ class AIOHelper:
                 self.aio = None
                 self._aio_entry = None
                 if self.cb_arg is not None:
-                    with _aio_map_lock:
-                        _aio_map.pop(id(self.cb_arg), None)
+                    _aio_map.pop(id(self.cb_arg), None)
                 return
         except (ImportError, AttributeError):
             pass
@@ -642,8 +653,7 @@ class AIOHelper:
                 self._mpsc_engine.close()
 
         if self.cb_arg is not None:
-            with _aio_map_lock:
-                _aio_map.pop(id(self.cb_arg), None)
+            _aio_map.pop(id(self.cb_arg), None)
             self.cb_arg = None
 
         if self.awaitable is not None:
@@ -679,9 +689,20 @@ class DeviceAIO:
         "_ffi",
         "_sock1",
         "_sock2",
+        "_owners",
+        "_stop_device",
     )
 
-    def __init__(self, s1, s2=None, async_backend=None, *, _use_mpsc=True):
+    def __init__(
+        self,
+        s1,
+        s2=None,
+        async_backend=None,
+        *,
+        _use_mpsc=True,
+        _default_lib=lib,
+        _default_ffi=ffi,
+    ):
         self.aio = None
         self._mpsc_engine = None
         self._aio_entry = None
@@ -690,13 +711,14 @@ class DeviceAIO:
         self.awaitable = None
         self.s1 = s1
         self.s2 = s2
-        self._lib = getattr(s1, "_lib", lib)
-        self._ffi = getattr(s1, "_ffi", ffi)
-        sock1 = s1.socket if hasattr(s1, "socket") else s1
-        if s2 is None:
-            sock2 = self._ffi.new("nng_socket *")[0]
-        else:
-            sock2 = s2.socket if hasattr(s2, "socket") else s2
+        from . import _base
+
+        # _free() can run at interpreter shutdown, when importing fails.
+        self._stop_device = _base._stop_device
+        self._lib, self._ffi, sock1, sock2 = _base._device_sockets(
+            s1, s2, _default_lib, _default_ffi
+        )
+        self._owners = tuple(s for s in (s1, s2) if isinstance(s, _base.Socket))
         self._sock1 = sock1
         self._sock2 = sock2
 
@@ -736,8 +758,7 @@ class DeviceAIO:
         else:
             self.awaitable, self.cb_arg = AIOHelper._aio_helper_map[async_backend](self)
             aio_p = self._ffi.new("nng_aio **")
-            with _aio_map_lock:
-                _aio_map[id(self.cb_arg)] = self.cb_arg
+            _aio_map[id(self.cb_arg)] = self.cb_arg
             idarg = id(self.cb_arg)
             as_void = self._ffi.cast("void *", idarg)
             try:
@@ -747,12 +768,13 @@ class DeviceAIO:
                     ffi=self._ffi,
                 )
             except BaseException:
-                with _aio_map_lock:
-                    _aio_map.pop(idarg, None)
+                _aio_map.pop(idarg, None)
                 raise
             self.aio = aio_p[0]
 
     async def run(self):
+        from . import _base
+
         try:
             if self._mpsc_engine is not None:
                 loop = self._mpsc_engine._loop
@@ -762,7 +784,9 @@ class DeviceAIO:
                 slot = self._mpsc_engine.register(fut)
                 self._current_slot = slot
                 self._lib.pynng_aio_entry_set_slot_id(self._aio_entry, slot)
-                self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
+                _base._start_device(
+                    self._owners, self._lib, self.aio, self._sock1, self._sock2
+                )
                 _lib = self._lib
                 already_cancelled = False
                 try:
@@ -786,7 +810,9 @@ class DeviceAIO:
                     raise asyncio.CancelledError
                 check_err(err, lib=_lib, ffi=self._ffi)
             else:
-                self._lib.nng_device_aio(self.aio, self._sock1, self._sock2)
+                _base._start_device(
+                    self._owners, self._lib, self.aio, self._sock1, self._sock2
+                )
                 await self.awaitable
         finally:
             self._free()
@@ -797,8 +823,7 @@ class DeviceAIO:
                 self.aio = None
                 self._aio_entry = None
                 if self.cb_arg is not None:
-                    with _aio_map_lock:
-                        _aio_map.pop(id(self.cb_arg), None)
+                    _aio_map.pop(id(self.cb_arg), None)
                 return
         except (ImportError, AttributeError):
             pass
@@ -810,6 +835,7 @@ class DeviceAIO:
         if self.aio is not None:
             self._lib.nng_aio_cancel(self.aio)
             self._lib.nng_aio_wait(self.aio)
+            self._stop_device(self._owners, self.aio)
             self._lib.nng_aio_free(self.aio)
             self.aio = None
 
@@ -823,8 +849,7 @@ class DeviceAIO:
                 self._mpsc_engine.close()
 
         if self.cb_arg is not None:
-            with _aio_map_lock:
-                _aio_map.pop(id(self.cb_arg), None)
+            _aio_map.pop(id(self.cb_arg), None)
             self.cb_arg = None
 
         if self.awaitable is not None:
@@ -841,4 +866,8 @@ class DeviceAIO:
         self._free()
 
     def __del__(self):
-        self._free()
+        if _in_device_section():
+            # _free() takes the device lock, which this thread can hold.
+            threading.Thread(target=self._free, name="pynng-device-free").start()
+        else:
+            self._free()

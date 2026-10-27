@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+import pytest
+
 import pynng
 
 
@@ -66,3 +68,41 @@ print("V2_SHUTDOWN_OK")
     assert proc.returncode == 0
     assert "V2_SHUTDOWN_OK" in proc.stdout
     assert "panic" not in proc.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    "setting, finalized",
+    [
+        ("", False),
+        ("pynng.nng_fini_at_exit = True", True),
+    ],
+)
+def test_nng_fini_at_exit_controls_finalization_at_exit(tmp_path, setting, finalized):
+    """Setting pynng.nng_fini_at_exit decides whether the atexit handler
+    calls nng_fini()."""
+    code = f"""
+import atexit
+
+def report():
+    import pynng.nng
+    print("finalized:", pynng.nng._finalized)
+
+# Registered before pynng's handler, so it runs after it.
+atexit.register(report)
+
+import pynng
+
+{setting}
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (proc.returncode, proc.stdout, proc.stderr) == (
+        0,
+        f"finalized: {finalized}\n",
+        "",
+    )

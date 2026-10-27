@@ -12,6 +12,7 @@ This is an internal module. Users should import from ``pynng`` (v1) or
 
 import asyncio
 import collections
+import contextlib
 import logging
 import math
 import os
@@ -23,7 +24,7 @@ import sniffio
 
 from . import options
 from . import _aio
-from .exceptions import NNGException
+from .exceptions import Closed, NNGException
 from ._finalized import (
     is_nng_finalized as _is_nng_finalized,
     retain_closed as _retain_closed,
@@ -68,10 +69,28 @@ def _check_fork():
 
 
 
-# Keep CFFI socket handles alive for callbacks until socket close.
+# Live sockets by (version tag, socket id). No lock guards it: Socket.__del__
+# updates it, and a finalizer can run while its thread holds any lock. Each
+# update is one dict operation on a key that only the calling socket can own.
 _active_handles = {}
-_active_handles_lock = threading.Lock()
 
+# Guards Socket._device_aios and the start and end of every device aio. Take
+# it only through _device_section().
+_device_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _device_section():
+    # The mark is set before the lock is taken and cleared after it is
+    # released, so it covers all of the time this thread holds the lock.
+    state = _aio._device_section_thread
+    depth = getattr(state, "depth", 0)
+    state.depth = depth + 1
+    try:
+        with _device_lock:
+            yield
+    finally:
+        state.depth = depth
 
 
 PipeEvent = collections.namedtuple("PipeEvent", ["pipe", "event_type"])
@@ -87,76 +106,101 @@ _SENTINEL = object()
 _RECV_SLICE_MS = 100  # Slice duration for interruptable recv loop (ms)
 
 
+# sched_yield releases the GIL and gives up the CPU without a timed sleep, which
+# on Linux is subject to timer slack. Windows has no sched_yield; there
+# time.sleep(0) maps to Sleep(0), also a plain yield.
+_yield_cpu = getattr(os, "sched_yield", None) or (lambda: time.sleep(0))
+
+
 def _sliced_aio_recv(
-    recv_fn, target_handle, lib, ffi, timeout_ms, slice_ms=_RECV_SLICE_MS
+    recv_fn,
+    target_handle,
+    lib,
+    ffi,
+    timeout_ms,
+    slice_ms=_RECV_SLICE_MS,
+    nonblock_recv_fn=None,
 ):
-    """Perform an interruptable receive using nng_aio with sliced timeouts.
+    """Perform an interruptable receive with a single nng_aio.
 
     CFFI releases the GIL when blocking in C. If a thread waits in a long or
     infinite C wait (e.g. pthread_cond_wait), Python signal handlers (such as
-    KeyboardInterrupt on Ctrl-C) are never triggered until C returns.
-    By slicing the wait into short intervals (default 100ms), Python's runtime
-    regularly regains the GIL to process pending signals.
+    KeyboardInterrupt on Ctrl-C) are never triggered until C returns. So the
+    wait for the aio is sliced into short intervals (default 100ms), and
+    Python's runtime runs pending signal handlers between them. The aio
+    completion is signalled in C, so it does not take the GIL.
+
+    The aio stays in flight between slices. Cancelling a receive aborts a Req0
+    request and ends a Surveyor0 survey, so the aio is cancelled only when the
+    wait is interrupted. nng enforces ``timeout_ms`` and protocol deadlines
+    (such as the survey time) and reports both as ``NNG_ETIMEDOUT``.
+
+    A message that is already queued is first taken with ``nonblock_recv_fn``,
+    which completes on the calling thread. nng runs the callback of an aio on
+    a task queue thread, so a message taken with the aio costs two thread
+    switches.
 
     Args:
-        recv_fn: C function to initiate receive (e.g. nng_recv_aio, nng_socket_recv, nng_ctx_recv).
+        recv_fn: C function to initiate receive (e.g. nng_recv_aio,
+            nng_socket_recv, nng_ctx_recv).
         target_handle: CFFI socket or context handle.
         lib: CFFI library instance.
         ffi: CFFI ffi instance.
-        timeout_ms: Total timeout in milliseconds (-1 for infinite).
+        timeout_ms: Total timeout in milliseconds (-1 or None for infinite).
         slice_ms: Slice interval in milliseconds.
+        nonblock_recv_fn: ``nng_recvmsg`` or ``nng_ctx_recvmsg``, or None to
+            not take a queued message first.
 
     Returns:
         nng_msg*: Pointer to received C message.
     """
     from .exceptions import check_err
 
-    if timeout_ms is not None and timeout_ms >= 0:
-        deadline = time.monotonic() + (timeout_ms / 1000.0)
-    else:
-        deadline = None
+    if timeout_ms is None or timeout_ms < 0:
+        timeout_ms = -1
 
-    aio_p = ffi.new("nng_aio **")
-    check_err(lib.nng_aio_alloc(aio_p, ffi.NULL, ffi.NULL))
-    aio = aio_p[0]
+    if nonblock_recv_fn is not None:
+        msg_p = ffi.new("nng_msg **")
+        rv = nonblock_recv_fn(target_handle, msg_p, lib.NNG_FLAG_NONBLOCK)
+        if rv == 0:
+            return msg_p[0]
+        if rv != lib.NNG_EAGAIN:
+            check_err(rv, lib=lib, ffi=ffi)
+        if timeout_ms == 0:
+            check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
+        # Over inproc, nng moves a message on its own threads, so it is often
+        # in flight when recv() is called. One yield lets it land, and the
+        # retry then avoids the aio callback's extra task queue switch.
+        _yield_cpu()
+        rv = nonblock_recv_fn(target_handle, msg_p, lib.NNG_FLAG_NONBLOCK)
+        if rv == 0:
+            return msg_p[0]
+        if rv != lib.NNG_EAGAIN:
+            check_err(rv, lib=lib, ffi=ffi)
 
-    first_attempt = True
+    recv_p = ffi.new("pynng_sync_recv_t **")
+    check_err(lib.pynng_sync_recv_alloc(recv_p), lib=lib, ffi=ffi)
+    recv = recv_p[0]
     try:
-        while True:
-            if deadline is None:
-                cur_slice = slice_ms
-            else:
-                now = time.monotonic()
-                if not first_attempt and now >= deadline:
-                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
-                remaining_ms = int(math.ceil((deadline - now) * 1000.0))
-                cur_slice = max(0, min(remaining_ms, slice_ms))
-            first_attempt = False
-
-            t_start = time.monotonic()
-            lib.nng_aio_set_timeout(aio, cur_slice)
-            recv_fn(target_handle, aio)
+        aio = lib.pynng_sync_recv_aio(recv)
+        lib.nng_aio_set_timeout(aio, timeout_ms)
+        recv_fn(target_handle, aio)
+        try:
+            while not lib.pynng_sync_recv_wait(recv, slice_ms):
+                pass
+        except BaseException:
+            lib.nng_aio_cancel(aio)
             lib.nng_aio_wait(aio)
-            err = lib.nng_aio_result(aio)
-            elapsed_slice = time.monotonic() - t_start
-
-            if err == lib.NNG_ETIMEDOUT:
-                if deadline is not None and time.monotonic() >= deadline:
-                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
-                if cur_slice > 10 and elapsed_slice < (cur_slice * 0.8) / 1000.0:
-                    check_err(lib.NNG_ETIMEDOUT, lib=lib, ffi=ffi)
-                continue
-
-            check_err(err, lib=lib, ffi=ffi)
-            raw_msg = lib.nng_aio_get_msg(aio)
-            lib.nng_aio_set_msg(aio, ffi.NULL)
-            return raw_msg
-    except BaseException:
-        lib.nng_aio_cancel(aio)
-        lib.nng_aio_wait(aio)
-        raise
+            if lib.nng_aio_result(aio) == 0:
+                lib.nng_msg_free(lib.nng_aio_get_msg(aio))
+                lib.nng_aio_set_msg(aio, ffi.NULL)
+            raise
+        check_err(lib.nng_aio_result(aio), lib=lib, ffi=ffi)
+        raw_msg = lib.nng_aio_get_msg(aio)
+        lib.nng_aio_set_msg(aio, ffi.NULL)
+        return raw_msg
     finally:
-        lib.nng_aio_free(aio)
+        lib.pynng_sync_recv_free(recv)
 
 
 def _ensure_can_send(thing):
@@ -196,13 +240,117 @@ def to_char(charlike, add_null_term=False, ffi=None):
     return charlike
 
 
+_pipe_callback_thread = threading.local()
+
+
+def _in_pipe_callback():
+    """Return True if the current thread is running a pipe callback."""
+    return getattr(_pipe_callback_thread, "depth", 0) > 0
+
+
 def _do_callbacks(pipe, callbacks):
-    for cb in callbacks:
-        try:
-            cb(pipe)
-        except Exception:
-            msg = "Exception raised in pre pipe connect callback {!r}"
-            logger.exception(msg.format(cb))
+    _pipe_callback_thread.depth = getattr(_pipe_callback_thread, "depth", 0) + 1
+    try:
+        for cb in callbacks:
+            try:
+                cb(pipe)
+            except Exception:
+                msg = "Exception raised in pre pipe connect callback {!r}"
+                logger.exception(msg.format(cb))
+    finally:
+        _pipe_callback_thread.depth -= 1
+
+
+class _PipeState:
+    """Dispatcher bookkeeping for one pipe, from its first event to REM_POST."""
+
+    __slots__ = ("added", "pipe", "rejected", "removing", "running")
+
+    def __init__(self, pipe):
+        self.pipe = pipe
+        # Idents of threads currently running callbacks for this pipe.
+        self.running = []
+        self.added = False
+        self.rejected = False
+        self.removing = False
+
+
+def _handle_pipe_event(sock, lib_pipe, event, lib):
+    """Pipe event dispatcher shared by the v1 and v2 callbacks.
+
+    nng v1 can deliver ``NNG_PIPE_EV_REM_POST`` on its reaper thread before
+    ``NNG_PIPE_EV_ADD_PRE`` or ``NNG_PIPE_EV_ADD_POST`` for the same pipe. So
+    ``post_pipe_remove`` waits for the running connect callbacks of that pipe,
+    and an ADD event that arrives after ``REM_POST`` is dropped. Callbacks run without the pipe lock held, so they
+    can read ``Socket.pipes``.
+
+    A callback must not wait for a later callback of the same pipe, because
+    that later callback waits for it to return. For this reason
+    :meth:`Socket.close` called from a pipe callback does not wait for the
+    socket to finish closing.
+    """
+    pipe_id = lib.nng_pipe_id(lib_pipe)
+    me = threading.get_ident()
+    cond = sock._pipe_notify_cond
+    with cond:
+        if pipe_id in sock._removed_pipe_ids:
+            return
+        state = sock._pipe_states.get(pipe_id)
+        if event == lib.NNG_PIPE_EV_REM_POST:
+            if state is None:
+                # REM_POST overtook ADD_PRE; ADD_PRE must not resurrect it.
+                sock._remember_removed_pipe_id(pipe_id)
+                logger.debug("Could not find pipe for socket")
+                return
+            if state.removing:
+                return
+            state.removing = True
+            if not state.added:
+                sock._remember_removed_pipe_id(pipe_id)
+            while any(t != me for t in state.running):
+                cond.wait()
+            callbacks = [] if state.rejected else list(sock._on_post_pipe_remove)
+        elif event == lib.NNG_PIPE_EV_ADD_PRE:
+            if state is not None:
+                return
+            pipe_cls = sock._pipe_class or Pipe
+            state = _PipeState(pipe_cls(lib_pipe, sock))
+            sock._pipe_states[pipe_id] = state
+            sock._pipes[pipe_id] = state.pipe
+            callbacks = list(sock._on_pre_pipe_add)
+        elif event == lib.NNG_PIPE_EV_ADD_POST:
+            if state is None:
+                pipe_cls = sock._pipe_class or Pipe
+                state = _PipeState(pipe_cls(lib_pipe, sock))
+                sock._pipe_states[pipe_id] = state
+            elif state.removing or state.added or state.rejected:
+                return
+            state.added = True
+            sock._pipes[pipe_id] = state.pipe
+            callbacks = list(sock._on_post_pipe_add)
+        else:
+            return
+        state.running.append(me)
+        pipe = state.pipe
+
+    try:
+        _do_callbacks(pipe, callbacks)
+    finally:
+        with cond:
+            state.running.remove(me)
+            if event == lib.NNG_PIPE_EV_REM_POST:
+                if sock._pipe_states.get(pipe_id) is state:
+                    del sock._pipe_states[pipe_id]
+                    sock._pipes.pop(pipe_id, None)
+            elif (
+                event == lib.NNG_PIPE_EV_ADD_PRE
+                and sock._pipe_states.get(pipe_id) is state
+                and not state.added
+                and pipe.closed
+            ):
+                state.rejected = True
+                sock._pipes.pop(pipe_id, None)
+            cond.notify_all()
 
 
 class PipeEventStream:
@@ -458,6 +606,9 @@ class Socket:
     # v1 and v2 sockets.
     _version_tag = None
     _aio_recv_fn = None
+    # Surveyor0 sets this False: nng extends a zero recv timeout to the end
+    # of the survey (surv0_ctx_recv), so a nonblocking recv can block.
+    _nonblock_recv_first = True
     _aio_send_fn = None
     survey_time = None
 
@@ -499,12 +650,18 @@ class Socket:
         self._dialers = {}
         self._listeners = {}
         self._pipes = {}
+        self._pipe_states = {}
+        self._removed_pipe_ids = {}
         self._on_pre_pipe_add = []
         self._on_post_pipe_add = []
         self._on_post_pipe_remove = []
         self._pipe_notify_lock = threading.Lock()
+        self._pipe_notify_cond = threading.Condition(self._pipe_notify_lock)
         self._socket_closed = False
         self._close_lock = threading.Lock()
+        # nng_aio of each device running on this socket. nng v2 refuses to
+        # close a socket that a device owns, so close() must end the device.
+        self._device_aios = set()
         self._async_backend = async_backend
         self._recv_pool = []
         self._send_pool = []
@@ -543,11 +700,15 @@ class Socket:
         # set up pipe callbacks. This **must** be called before listen/dial to
         # avoid race conditions.
         self._setup_pipe_callbacks()
+        self._configure_protocol_options()
 
         if listen is not None:
             self.listen(listen)
         if dial is not None:
             self.dial(dial, block=block_on_dial)
+
+    def _configure_protocol_options(self):
+        """Hook for protocol subclasses to apply options before listen/dial."""
 
     def _setup_pipe_callbacks(self):
         """Register pipe notification callbacks with NNG."""
@@ -556,10 +717,8 @@ class Socket:
 
         handle = _ffi.new_handle(self)
         self._handle = handle
-        version_tag = self._version_tag
-        sock_id = _lib.nng_socket_id(self.socket)
-        with _active_handles_lock:
-            _active_handles[(version_tag, sock_id)] = weakref.ref(self)
+        key = (self._version_tag, _lib.nng_socket_id(self.socket))
+        _active_handles[key] = weakref.ref(self)
 
         for event in (
             _lib.NNG_PIPE_EV_ADD_PRE,
@@ -650,6 +809,12 @@ class Socket:
     def _do_close(self, close_fn):
         """Common close pattern used by both v1 and v2.
 
+        ``close_fn`` waits for running pipe callbacks to return, so a close
+        from a pipe callback returns at once and the socket is closed on
+        another thread. The same applies to a close in a device section,
+        which is a finalizer that runs while its thread can hold the device
+        lock.
+
         Args:
             close_fn: The NNG close function to call (e.g. lib.nng_close or
                 lib.nng_socket_close).
@@ -660,21 +825,39 @@ class Socket:
             if self._socket_closed:
                 return
             self._socket_closed = True
+        if _in_pipe_callback() or _aio._in_device_section():
+            threading.Thread(
+                target=self._finish_close, args=(close_fn,), name="pynng-close"
+            ).start()
+        else:
+            self._finish_close(close_fn)
+
+    def _finish_close(self, close_fn):
+        self._end_devices()
         _lib = self._lib
-        version_tag = self._version_tag
-        sock_id = _lib.nng_socket_id(self.socket)
+        key = (self._version_tag, _lib.nng_socket_id(self.socket))
+        # Deregister before close_fn: until then nng cannot give this id to
+        # another socket, so no other thread writes this key.
+        ref = _active_handles.get(key)
+        if ref is not None and (ref() is self or ref() is None):
+            _active_handles.pop(key, None)
         close_fn(self.socket)
-        with _active_handles_lock:
-            key = (version_tag, sock_id)
-            ref = _active_handles.get(key)
-            if ref is not None and (ref() is self or ref() is None):
-                del _active_handles[key]
         self._listeners = {}
         self._dialers = {}
         while self._recv_pool:
             self._recv_pool.pop()._free()
         while self._send_pool:
             self._send_pool.pop()._free()
+
+    def _end_devices(self):
+        """End the devices on this socket; nng closes the sockets they own."""
+        with _device_section():
+            aios = list(self._device_aios)
+            for aio in aios:
+                self._lib.nng_aio_abort(aio, self._lib.NNG_ECLOSED)
+            # A device is done, and has closed its sockets, when its aio is.
+            for aio in aios:
+                self._lib.nng_aio_wait(aio)
 
     def __del__(self):
         if _is_nng_finalized():
@@ -712,7 +895,16 @@ class Socket:
                     timeout = st
                 else:
                     timeout = min(timeout, st)
-            raw_msg = _sliced_aio_recv(recv_fn, self.socket, _lib, _ffi, timeout)
+            raw_msg = _sliced_aio_recv(
+                recv_fn,
+                self.socket,
+                _lib,
+                _ffi,
+                timeout,
+                nonblock_recv_fn=(
+                    _lib.nng_recvmsg if self._nonblock_recv_first else None
+                ),
+            )
 
         msg_cls = self._message_class or Message
         msg = msg_cls(raw_msg, _lib=_lib, _ffi=_ffi)
@@ -813,12 +1005,14 @@ class Socket:
             flags |= _lib.NNG_FLAG_NONBLOCK
         with msg._mem_freed_lock:
             msg._ensure_can_send()
-            check_err(
-                _lib.nng_sendmsg(self.socket, msg._nng_msg, flags),
-                lib=_lib,
-                ffi=self._ffi,
-            )
+            # Give up ownership before the call: a KeyboardInterrupt raised as
+            # nng_sendmsg returns must not leave the Message owning a msg that
+            # nng consumed. If it lands after a failed send, the msg leaks.
             msg._mem_freed = True
+            err = _lib.nng_sendmsg(self.socket, msg._nng_msg, flags)
+            if err != 0:
+                msg._mem_freed = False
+                check_err(err, lib=_lib, ffi=self._ffi)
 
     _MAX_POOL_SIZE = 32
 
@@ -865,6 +1059,7 @@ class Socket:
         Asynchronously send the :class:`Message` ``msg`` on the socket.
 
         """
+        _check_fork()
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             helper = self._acquire_send_helper()
@@ -877,6 +1072,7 @@ class Socket:
         """
         Asynchronously receive the :class:`Message` ``msg`` on the socket.
         """
+        _check_fork()
         helper = self._acquire_recv_helper()
         try:
             msg = await helper.arecv_msg()
@@ -925,29 +1121,24 @@ class Socket:
         """A list of the active listeners"""
         return tuple(self._listeners.values())
 
+    # Only pipes removed before their ADD_POST was seen are recorded, and any
+    # late ADD event for them is already in flight on the dialer or listener
+    # thread, so a small bound keeps memory flat without forgetting an id that
+    # is still needed.
+    _MAX_REMOVED_PIPE_IDS = 1024
+
     @property
     def pipes(self):
         """A list of the active pipes"""
         with self._pipe_notify_lock:
             return tuple(self._pipes.values())
 
-    def _add_pipe(self, lib_pipe):
-        # this is only called inside the pipe callback.
-        _lib = self._lib
-        pipe_id = _lib.nng_pipe_id(lib_pipe)
-
-        # If the pipe already exists in the Socket, don't create a new one
-        if pipe_id not in self._pipes:
-            pipe_cls = self._pipe_class or Pipe
-            pipe = pipe_cls(lib_pipe, self)
-            self._pipes[pipe_id] = pipe
-
-        return self._pipes[pipe_id]
-
-    def _remove_pipe(self, lib_pipe):
-        _lib = self._lib
-        pipe_id = _lib.nng_pipe_id(lib_pipe)
-        self._pipes.pop(pipe_id, None)
+    def _remember_removed_pipe_id(self, pipe_id):
+        # Must be called with self._pipe_notify_lock held.
+        ids = self._removed_pipe_ids
+        ids[pipe_id] = None
+        if len(ids) > self._MAX_REMOVED_PIPE_IDS:
+            del ids[next(iter(ids))]
 
     # Subclasses can override these to return version-specific classes.
     _context_class = None
@@ -1058,11 +1249,58 @@ class Socket:
         with self._pipe_notify_lock:
             lib_pipe = _lib.nng_msg_get_pipe(msg._nng_msg)
             pipe_id = _lib.nng_pipe_id(lib_pipe)
-            try:
-                msg.pipe = self._pipes[pipe_id]
-            except KeyError:
-                if pipe_id >= 0:
-                    msg.pipe = self._add_pipe(lib_pipe)
+            state = self._pipe_states.get(pipe_id)
+            if state is not None:
+                msg.pipe = state.pipe
+            elif pipe_id >= 0:
+                # The pipe is already removed; do not put it back in self._pipes.
+                pipe_cls = self._pipe_class or Pipe
+                msg.pipe = pipe_cls(lib_pipe, self)
+
+
+def _resolve_socket(obj, default_lib, default_ffi):
+    """Return ``(lib, ffi, nng_socket)`` for a :class:`Socket` or an ``nng_socket``.
+
+    A bare ``nng_socket`` carries no library reference, so it is taken to belong
+    to ``default_lib``; its cffi type tells whether it really does.
+    """
+    if isinstance(obj, Socket):
+        return obj._lib, obj._ffi, obj.socket
+    if default_ffi.typeof(obj) is not default_ffi.typeof("nng_socket"):
+        raise ValueError(
+            "Cannot use an nng_socket from a different nng version here; "
+            "pass the pynng Socket object instead"
+        )
+    return default_lib, default_ffi, obj
+
+
+def _start_device(owners, lib, aio, sock1, sock2):
+    """Start ``nng_device_aio`` and let each Socket in ``owners`` end it on close."""
+    with _device_section():
+        for owner in owners:
+            if owner._socket_closed:
+                raise Closed("Object closed", lib.NNG_ECLOSED)
+        lib.nng_device_aio(aio, sock1, sock2)
+        for owner in owners:
+            owner._device_aios.add(aio)
+
+
+def _stop_device(owners, aio):
+    """Forget a device aio; call this when it is done and before it is freed."""
+    with _device_section():
+        for owner in owners:
+            owner._device_aios.discard(aio)
+
+
+def _device_sockets(s1, s2, default_lib, default_ffi):
+    """Resolve the two sockets of a device to ``(lib, ffi, sock1, sock2)``."""
+    lib1, ffi1, sock1 = _resolve_socket(s1, default_lib, default_ffi)
+    if s2 is None:
+        return lib1, ffi1, sock1, ffi1.new("nng_socket *", {"id": 0})[0]
+    lib2, _, sock2 = _resolve_socket(s2, lib1, ffi1)
+    if lib2 is not lib1:
+        raise ValueError("Cannot bridge sockets from different nng versions")
+    return lib1, ffi1, sock1, sock2
 
 
 class Dialer:
@@ -1405,7 +1643,16 @@ class Context:
 
         try:
             nng_msg = _sliced_aio_recv(
-                _lib.nng_ctx_recv, self.context, _lib, _ffi, timeout
+                _lib.nng_ctx_recv,
+                self.context,
+                _lib,
+                _ffi,
+                timeout,
+                nonblock_recv_fn=(
+                    _lib.nng_ctx_recvmsg
+                    if self._socket._nonblock_recv_first
+                    else None
+                ),
             )
         except Timeout:
             if not block:
@@ -1506,22 +1753,31 @@ class Context:
                 ffi=_ffi,
             )
             aio = aio_p[0]
+            # The aio, not a Python flag, records who owns the msg: nng clears
+            # the aio's msg when it consumes it. Ownership is given up first
+            # and taken back in finally, so an exception at any point (such as
+            # KeyboardInterrupt) can at worst leak the msg, never free it twice.
+            msg._mem_freed = True
+            send_started = False
             try:
                 _lib.nng_aio_set_msg(aio, msg._nng_msg)
                 if not block:
                     _lib.nng_aio_set_timeout(aio, 0)
+                send_started = True
                 _lib.nng_ctx_send(self.context, aio)
                 _lib.nng_aio_wait(aio)
                 res = _lib.nng_aio_result(aio)
                 if res != 0:
-                    # nng retains the message on the aio when send fails; detach it
-                    # so Message retains ownership and frees it in __del__ (or allows retry).
-                    _lib.nng_aio_set_msg(aio, _ffi.NULL)
                     if not block and res == _lib.NNG_ETIMEDOUT:
                         raise TryAgain("Context send buffer full", _lib.NNG_EAGAIN)
                     check_err(res, lib=_lib, ffi=_ffi)
-                msg._mem_freed = True
             finally:
+                if send_started:
+                    _lib.nng_aio_cancel(aio)
+                    _lib.nng_aio_wait(aio)
+                if _lib.nng_aio_get_msg(aio) != _ffi.NULL:
+                    _lib.nng_aio_set_msg(aio, _ffi.NULL)
+                    msg._mem_freed = False
                 _lib.nng_aio_free(aio)
 
     def send(self, data, block=True):
@@ -1598,6 +1854,7 @@ class Context:
         """
         Asynchronously send the :class:`Message` ``msg`` on the context.
         """
+        _check_fork()
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             helper = self._acquire_send_helper()
@@ -1610,6 +1867,7 @@ class Context:
         """
         Asynchronously receive a :class:`Message` on the context.
         """
+        _check_fork()
         helper = self._acquire_recv_helper()
         try:
             msg = await helper.arecv_msg()

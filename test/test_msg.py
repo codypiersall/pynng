@@ -307,3 +307,102 @@ def test_recv_zero_byte_pushpull0():
             pytest.fail("Pull did not receive 0-byte message with block=False")
         assert recvd_nb == b""
         assert len(recvd_nb) == 0
+
+
+class _InterruptAfterCall:
+    """cffi lib proxy that raises KeyboardInterrupt when its n-th function call
+    returns.
+
+    This is what CPython does when SIGINT arrives during a blocking C call: the
+    call completes, and the interrupt is raised before its result is stored.
+    """
+
+    def __init__(self, lib, n):
+        self._real_lib = lib
+        self._n = n
+        self.calls = 0
+
+    def __getattr__(self, name):
+        attr = getattr(self._real_lib, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args):
+            result = attr(*args)
+            self.calls += 1
+            if self.calls == self._n:
+                raise KeyboardInterrupt
+            return result
+
+        return call
+
+
+def _send_interrupted_after_each_call(sock, send, receiver):
+    """Send one message per lib call of ``send``, interrupting after that call.
+
+    Returns ``(consumed, mem_freed, intact)`` for each interruption point, where
+    ``consumed`` means the receiver got the message.
+    """
+    real_lib = sock._lib
+    outcomes = []
+    n = 1
+    while True:
+        payload = b"payload-%d" % n
+        msg = pynng.Message(payload)
+        sock._lib = _InterruptAfterCall(real_lib, n)
+        try:
+            send(msg)
+        except KeyboardInterrupt:
+            pass
+        else:
+            assert receiver.recv() == payload
+            assert msg._mem_freed is True
+            return outcomes
+        finally:
+            del sock._lib
+        try:
+            consumed = receiver.recv() == payload
+        except pynng.Timeout:
+            consumed = False
+        intact = not consumed and not msg._mem_freed and msg.bytes == payload
+        outcomes.append((consumed, msg._mem_freed, intact))
+        if consumed:
+            # Keep a failing run from freeing the msg a second time.
+            msg._mem_freed = True
+        n += 1
+
+
+def test_socket_send_msg_interrupted_never_leaves_message_owning_sent_msg():
+    addr = random_addr()
+    with (
+        pynng.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as s0,
+        pynng.Pair0(dial=addr) as s1,
+    ):
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
+        outcomes = _send_interrupted_after_each_call(s1, s1.send_msg, s0)
+    # nng_sendmsg is the only lib call; nng owns the msg once it returns.
+    assert outcomes == [(True, True, False)]
+
+
+def test_context_send_msg_interrupted_never_leaves_message_owning_sent_msg():
+    addr = random_addr()
+    with (
+        pynng.Rep0(listen=addr, recv_timeout=FAST_TIMEOUT) as rep,
+        pynng.Req0(dial=addr) as req,
+    ):
+        wait_pipe_len(rep, 1)
+        wait_pipe_len(req, 1)
+
+        def send(msg):
+            with req.new_context() as ctx:
+                ctx.send_msg(msg)
+
+        outcomes = _send_interrupted_after_each_call(req, send, rep)
+    assert outcomes
+    for consumed, mem_freed, intact in outcomes:
+        # A Message that still owns a msg nng consumed would free it twice.
+        assert (consumed, mem_freed, intact) in (
+            (True, True, False),
+            (False, False, True),
+        )

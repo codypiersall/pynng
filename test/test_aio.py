@@ -5,6 +5,7 @@ import pytest
 import trio
 
 import pynng
+from pynng._aio import MPSCAIOEngine, ffi, lib
 
 from conftest import random_addr, FAST_TIMEOUT, MEDIUM_TIMEOUT, SLOW_TIMEOUT
 
@@ -117,28 +118,32 @@ async def test_pub_sub_trio():
     one retrieve values and verify the parity.
     """
     addr = random_addr()
-    sentinel_received = {}
 
     def is_even(i):
         return i % 2 == 0
 
     async def pub():
-        with pynng.Pub0(listen=addr) as pubber:
-            # Wait until both subscribers have connected before publishing.
-            # inproc is reliable but messages sent before subscription is
-            # established are dropped.
-            while len(pubber.pipes) < 2:
-                await trio.sleep(0.01)
+        # Both subscribers set their topic before they dial, and the send
+        # buffer holds every message this test sends to a pipe, so no message
+        # can be dropped once both pipes are started.
+        with pynng.Pub0(send_buffer_size=128) as pubber:
+            async with pubber.pipe_events() as events:
+                pubber.listen(addr)
+                started = 0
+                async for event in events:
+                    if event.event_type == "post_add":
+                        started += 1
+                        if started == 2:
+                            break
 
             for i in range(20):
                 prefix = "even" if is_even(i) else "odd"
                 msg = f"{prefix}:{i}"
                 await pubber.asend(msg.encode("ascii"))
 
-            while not all(sentinel_received.values()):
-                # signal completion
-                await pubber.asend(b"odd:None")
-                await pubber.asend(b"even:None")
+            # signal completion
+            await pubber.asend(b"odd:None")
+            await pubber.asend(b"even:None")
 
     async def subs(which):
         if which == "even":
@@ -146,9 +151,9 @@ async def test_pub_sub_trio():
         else:
             expected_values = list(range(1, 20, 2))  # [1, 3, 5, ..., 19]
 
-        with pynng.Sub0(dial=addr, recv_timeout=SLOW_TIMEOUT) as subber:
-            subber.subscribe(which + ":")
-
+        with pynng.Sub0(
+            dial=addr, topics=which + ":", recv_timeout=SLOW_TIMEOUT
+        ) as subber:
             received_values = []
             while True:
                 val = await subber.arecv()
@@ -160,20 +165,14 @@ async def test_pub_sub_trio():
 
                 received_values.append(int(i))
 
-            # The publisher sends 20 messages (10 per parity). Since pub
-            # waits for both subscribers to connect before publishing,
-            # all 10 messages must arrive with exactly the right values.
-            assert sorted(received_values) == expected_values, (
-                f"{which} subscriber received wrong values: {sorted(received_values)!r}, "
+            assert received_values == expected_values, (
+                f"{which} subscriber received wrong values: {received_values!r}, "
                 f"expected {expected_values!r}"
             )
-            # mark subscriber as having received None sentinel
-            sentinel_received[which] = True
 
     async with trio.open_nursery() as n:
         # whip up the subs
         for _, lot in itertools.product(range(1), ("even", "odd")):
-            sentinel_received[lot] = False
             n.start_soon(subs, lot)
 
         # head over to the pub
@@ -182,7 +181,7 @@ async def test_pub_sub_trio():
 
 @pytest.mark.asyncio
 async def test_aio_free_cancels_pending():
-    from pynng._aio import AIOHelper, _aio_map, _aio_map_lock
+    from pynng._aio import AIOHelper, _aio_map
 
     addr = random_addr()
     with pynng.Pair0(listen=addr) as s0:
@@ -198,47 +197,42 @@ async def test_aio_free_cancels_pending():
         # 2. Fallback _aio_map callback path (_use_mpsc=False)
         helper = AIOHelper(s0, "asyncio", _use_mpsc=False)
         cb_id = id(helper.cb_arg)
-        with _aio_map_lock:
-            assert cb_id in _aio_map
+        assert cb_id in _aio_map
         # Explicit _free should cancel pending AIO and pop cb_arg
         helper._free()
         assert helper.aio is None
-        with _aio_map_lock:
-            assert cb_id not in _aio_map
+        assert cb_id not in _aio_map
         if helper.awaitable is not None:
             helper.awaitable.close()
 
 
 @pytest.mark.asyncio
 async def test_aio_free_cleans_map_when_aio_is_none():
-    from pynng._aio import AIOHelper, _aio_map, _aio_map_lock, lib
+    from pynng._aio import AIOHelper, _aio_map, lib
 
     addr = random_addr()
     with pynng.Pair0(listen=addr) as s0:
         helper = AIOHelper(s0, "asyncio", _use_mpsc=False)
         cb_id = id(helper.cb_arg)
-        with _aio_map_lock:
-            assert cb_id in _aio_map
+        assert cb_id in _aio_map
         # Simulate helper whose aio was freed or failed to allocate
         lib.nng_aio_free(helper.aio)
         helper.aio = None
         helper._free()
-        with _aio_map_lock:
-            assert cb_id not in _aio_map
+        assert cb_id not in _aio_map
         if helper.awaitable is not None:
             helper.awaitable.close()
 
 
 def test_aio_map_multithreaded_access():
     import concurrent.futures
-    from pynng._aio import _aio_map, _aio_map_lock, _async_complete
+    from pynng._aio import _aio_map, _async_complete
     from pynng._nng import ffi
 
     def churn_map(idx):
         obj = object()
         obj_id = id(obj)
-        with _aio_map_lock:
-            _aio_map[obj_id] = lambda: None
+        _aio_map[obj_id] = lambda: None
         # Call completion
         void_p = ffi.cast("void *", obj_id)
         _async_complete(void_p)
@@ -391,3 +385,27 @@ async def test_device_aio_cancellation_with_mpsc():
         assert dev.aio is None
         assert dev._aio_entry is None
 
+
+def test_mpsc_queue_stays_valid_until_last_entry_is_freed():
+    """Cyclic GC can finalize MPSCAIOEngine (which frees its queue) before an
+    AIOHelper whose entry still points at that queue. Freeing the helper then
+    cancels its aio, which delivers a completion to the queue.
+    """
+    q = lib.pynng_mpsc_queue_new(-1)
+    e = lib.pynng_aio_entry_new(ffi.NULL, 7, q)
+    lib.pynng_mpsc_queue_free(q)
+    lib.pynng_native_aio_complete(e)
+    # A closed queue accepts no completion, so freeing the entry releases the
+    # last reference and frees the queue.
+    assert lib.pynng_aio_entry_is_idle(e) == 1
+    lib.pynng_aio_entry_free(e)
+
+
+def test_mpsc_engine_register_skips_occupied_slots_on_wraparound():
+    engine = MPSCAIOEngine.__new__(MPSCAIOEngine)
+    pending = object()
+    new = object()
+    engine._slots = {1: pending}
+    engine._slot_counter = 0x7FFFFFFF
+    assert engine.register(new) == 2
+    assert engine._slots == {1: pending, 2: new}

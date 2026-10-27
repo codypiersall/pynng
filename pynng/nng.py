@@ -15,9 +15,7 @@ from . import _aio
 from . import _base
 from ._base import (
     _active_handles,
-    _active_handles_lock,
     _ensure_can_send,
-    _do_callbacks,
     to_char,
     PipeEvent,
     PipeEventStream,
@@ -252,6 +250,9 @@ class Socket(_base.Socket):
 
         This method is idempotent and thread-safe. It may be called multiple
         times (e.g. via __exit__ and later __del__) without harm.
+
+        A call from a pipe callback returns at once, and the socket finishes
+        closing on another thread after the running pipe callbacks return.
         """
         self._do_close(lib.nng_close)
 
@@ -567,16 +568,20 @@ class Sub0(Socket):
     _raw_opener = lib.nng_sub0_open_raw
 
     def __init__(self, *, topics=None, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
         self._subscriptions = set()
         self._sub_lock = threading.RLock()
-        if topics is None:
-            return
-        # special-case str/bytes
-        if isinstance(topics, (str, bytes)):
-            topics = [topics]
-        for topic in topics:
-            self.subscribe(topic)
+        self._init_topics = topics
+        super().__init__(raw=raw, **kwargs)
+
+    def _configure_protocol_options(self):
+        topics = self._init_topics
+        self._init_topics = None
+        if topics is not None:
+            # special-case str/bytes
+            if isinstance(topics, (str, bytes)):
+                topics = [topics]
+            for topic in topics:
+                self.subscribe(topic)
 
     @property
     def subscriptions(self):
@@ -737,6 +742,7 @@ class Surveyor0(Socket):
 
     _opener = lib.nng_surveyor0_open
     _raw_opener = lib.nng_surveyor0_open_raw
+    _nonblock_recv_first = False
     survey_time = MsOption("surveyor:survey-time")
 
     def __init__(self, *, survey_time=None, raw=False, **kwargs):
@@ -1081,41 +1087,7 @@ def _nng_pipe_cb(lib_pipe, event, arg):
         )
         return
 
-    # exceptions don't propagate out of this function, so if any exception is
-    # raised in any of the callbacks, we just log it (using logger.exception).
-    # Snapshot callbacks under lock, then invoke outside the lock to prevent deadlock
-    # if a user callback performs socket operations or registers/unregisters callbacks.
-    callbacks = None
-    pipe = None
-    remove_pipe_on_finally = False
-
-    with sock._pipe_notify_lock:
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        if event == lib.NNG_PIPE_EV_ADD_PRE:
-            pipe = sock._add_pipe(lib_pipe)
-            callbacks = list(sock._on_pre_pipe_add)
-        elif event == lib.NNG_PIPE_EV_ADD_POST:
-            pipe = sock._add_pipe(lib_pipe)
-            callbacks = list(sock._on_post_pipe_add)
-        elif event == lib.NNG_PIPE_EV_REM_POST:
-            try:
-                pipe = sock._pipes[pipe_id]
-            except KeyError:
-                logger.debug("Could not find pipe for socket")
-                return
-            callbacks = list(sock._on_post_pipe_remove)
-            remove_pipe_on_finally = True
-
-    try:
-        if callbacks and pipe:
-            _do_callbacks(pipe, callbacks)
-    finally:
-        if remove_pipe_on_finally:
-            with sock._pipe_notify_lock:
-                sock._remove_pipe(lib_pipe)
-        elif event == lib.NNG_PIPE_EV_ADD_PRE and pipe and pipe.closed:
-            with sock._pipe_notify_lock:
-                sock._remove_pipe(lib_pipe)
+    _base._handle_pipe_event(sock, lib_pipe, event, lib)
 
 
 def device(s1, s2=None):
@@ -1133,14 +1105,26 @@ def device(s1, s2=None):
         Closed: When one of the sockets is closed.
         NNGException: If an NNG error occurs.
     """
+    _device(s1, s2, lib, ffi)
+
+
+def _device(s1, s2, default_lib, default_ffi):
     _base._check_fork()
     _base._mark_nng_initialized()
-    s1_raw = s1.socket if isinstance(s1, Socket) else s1
-    if s2 is not None:
-        s2_raw = s2.socket if isinstance(s2, Socket) else s2
-    else:
-        s2_raw = ffi.new("nng_socket *", {"id": 0})[0]
-    check_err(lib.nng_device(s1_raw, s2_raw))
+    _lib, _ffi, s1_raw, s2_raw = _base._device_sockets(s1, s2, default_lib, default_ffi)
+    owners = [s for s in (s1, s2) if isinstance(s, _base.Socket)]
+    aio_p = _ffi.new("nng_aio **")
+    check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL), lib=_lib, ffi=_ffi)
+    aio = aio_p[0]
+    try:
+        _base._start_device(owners, _lib, aio, s1_raw, s2_raw)
+        try:
+            _lib.nng_aio_wait(aio)
+        finally:
+            _base._stop_device(owners, aio)
+        check_err(_lib.nng_aio_result(aio), lib=_lib, ffi=_ffi)
+    finally:
+        _lib.nng_aio_free(aio)
 
 
 async def adevice(s1, s2=None, *, async_backend=None):
@@ -1157,7 +1141,17 @@ async def adevice(s1, s2=None, *, async_backend=None):
         Closed: When one of the sockets is closed.
         NNGException: If an NNG error occurs.
     """
+    await _adevice(s1, s2, async_backend, lib, ffi)
+
+
+async def _adevice(s1, s2, async_backend, default_lib, default_ffi):
     _base._check_fork()
     _base._mark_nng_initialized()
-    with _aio.DeviceAIO(s1, s2, async_backend=async_backend) as dev:
+    with _aio.DeviceAIO(
+        s1,
+        s2,
+        async_backend=async_backend,
+        _default_lib=default_lib,
+        _default_ffi=default_ffi,
+    ) as dev:
         await dev.run()

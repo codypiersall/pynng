@@ -3,6 +3,11 @@ Let's test up those pipes
 """
 
 
+import contextlib
+import subprocess
+import sys
+import tempfile
+import textwrap
 import threading
 import time
 
@@ -332,23 +337,21 @@ def test_pipes_access_under_contention():
 
 
 def test_active_handles_registry():
-    from pynng.nng import _active_handles, _active_handles_lock, lib
+    from pynng.nng import _active_handles, lib
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
     key = (s0._version_tag, sock_id)
-    with _active_handles_lock:
-        assert key in _active_handles
-        assert _active_handles[key]() is s0
+    assert key in _active_handles
+    assert _active_handles[key]() is s0
 
     s0.close()
-    with _active_handles_lock:
-        assert key not in _active_handles
+    assert key not in _active_handles
 
 
 def test_active_handles_reused_id_protection():
     import weakref
-    from pynng.nng import _active_handles, _active_handles_lock, lib
+    from pynng.nng import _active_handles, lib
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
@@ -360,33 +363,29 @@ def test_active_handles_reused_id_protection():
 
     dummy = Dummy()
     dummy_ref = weakref.ref(dummy)
-    with _active_handles_lock:
-        _active_handles[key] = dummy_ref
+    _active_handles[key] = dummy_ref
 
     # Closing s0 should not remove the dummy_ref because s0 is not dummy
     s0.close()
-    with _active_handles_lock:
-        assert _active_handles.get(key) is dummy_ref
-        del _active_handles[key]
+    assert _active_handles.get(key) is dummy_ref
+    del _active_handles[key]
 
 
 def test_unclosed_socket_garbage_collected():
     import gc
     import weakref
-    from pynng.nng import _active_handles, _active_handles_lock, lib
+    from pynng.nng import _active_handles, lib
     addr = random_addr()
     s = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s.socket)
     vtag = getattr(s, "_version_tag", None)
     key = (vtag, sock_id) if vtag else sock_id
-    with _active_handles_lock:
-        assert key in _active_handles
+    assert key in _active_handles
     wr = weakref.ref(s)
     del s
     gc.collect()
     assert wr() is None, "Unclosed socket leaked and was not garbage-collected!"
-    with _active_handles_lock:
-        assert key not in _active_handles
+    assert key not in _active_handles
 
 
 def test_pipe_cb_does_not_deadlock_on_socket_operations():
@@ -470,3 +469,247 @@ def test_v2_nng_pipe_cb_invalid_handle_safe(caplog):
     with caplog.at_level(logging.INFO):
         _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
     assert any("invalid handle" in record.message for record in caplog.records)
+
+
+def _v1_pipe_cb():
+    from pynng.nng import _nng_pipe_cb, ffi, lib
+
+    return _nng_pipe_cb, ffi, lib
+
+
+@contextlib.contextmanager
+def _live_lib_pipe():
+    """Yield the nng_pipe of a connected v1 pipe owned by another socket pair.
+
+    Synthetic events for this pipe id then describe a pipe that nng still
+    knows, as real ADD_PRE and ADD_POST events do.
+    """
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as a, pynng.Pair0(dial=addr) as b:
+        wait_pipe_len(a, 1)
+        wait_pipe_len(b, 1)
+        yield b.pipes[0].pipe
+
+
+def test_post_pipe_remove_cb_waits_for_running_post_connect_cb():
+    _nng_pipe_cb, _, lib = _v1_pipe_cb()
+    events = []
+    rem_threads = []
+    removed = threading.Event()
+
+    with _live_lib_pipe() as lib_pipe, pynng.Pair0() as s0:
+
+        def post_add(p):
+            events.append("post_add start")
+            t = threading.Thread(
+                target=_nng_pipe_cb,
+                args=(lib_pipe, lib.NNG_PIPE_EV_REM_POST, s0._handle),
+            )
+            rem_threads.append(t)
+            t.start()
+            # Give a dispatcher that does not wait the chance to run post_remove.
+            removed.wait(1.0)
+            events.append("post_add end")
+
+        def on_remove(p):
+            events.append("remove")
+            removed.set()
+
+        s0.add_post_pipe_connect_cb(post_add)
+        s0.add_post_pipe_remove_cb(on_remove)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_PRE, s0._handle)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_POST, s0._handle)
+        rem_threads[0].join(5)
+        assert not rem_threads[0].is_alive()
+        assert events == ["post_add start", "post_add end", "remove"]
+        assert s0.pipes == ()
+
+
+def test_add_post_after_rem_post_is_dropped():
+    _nng_pipe_cb, _, lib = _v1_pipe_cb()
+    events = []
+    with _live_lib_pipe() as lib_pipe, pynng.Pair0() as s0:
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        s0.add_pre_pipe_connect_cb(lambda p: events.append(("pre_add", p.id)))
+        s0.add_post_pipe_connect_cb(lambda p: events.append(("post_add", p.id)))
+        s0.add_post_pipe_remove_cb(lambda p: events.append(("remove", p.id)))
+
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_PRE, s0._handle)
+        assert [p.id for p in s0.pipes] == [pipe_id]
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_REM_POST, s0._handle)
+        assert s0.pipes == ()
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_POST, s0._handle)
+        assert s0.pipes == ()
+        assert events == [("pre_add", pipe_id), ("remove", pipe_id)]
+
+
+def test_add_events_after_rem_post_for_unseen_pipe_are_dropped():
+    _nng_pipe_cb, _, lib = _v1_pipe_cb()
+    events = []
+    with _live_lib_pipe() as lib_pipe, pynng.Pair0() as s0:
+        s0.add_pre_pipe_connect_cb(lambda p: events.append("pre_add"))
+        s0.add_post_pipe_connect_cb(lambda p: events.append("post_add"))
+        s0.add_post_pipe_remove_cb(lambda p: events.append("remove"))
+
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_REM_POST, s0._handle)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_PRE, s0._handle)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_POST, s0._handle)
+
+        assert s0.pipes == ()
+        assert events == []
+
+
+def test_pipe_callbacks_can_read_socket_pipes(nng):
+    """Reading Socket.pipes during a pipe callback must not block on the
+    socket's pipe lock."""
+    addr = random_addr()
+    results = []
+    blocked = []
+    done = threading.Event()
+
+    def on_post_add(p):
+        reader = threading.Thread(
+            target=lambda: results.append([q.id for q in s0.pipes])
+        )
+        reader.start()
+        reader.join(5)
+        blocked.append(reader.is_alive())
+        done.set()
+
+    with nng.Pair0(listen=addr) as s0:
+        s0.add_post_pipe_connect_cb(on_post_add)
+        with nng.Pair0(dial=addr):
+            assert done.wait(10)
+            wait_pipe_len(s0, 1)
+            assert blocked == [False]
+            assert results == [[s0.pipes[0].id]]
+
+
+_CLOSE_SCENARIO_PRELUDE = """
+import os
+import sys
+import threading
+import time
+import traceback
+import uuid
+
+import {module} as nng
+
+addr = "inproc://close-scenario-" + uuid.uuid4().hex
+
+
+def run_in_thread(fn):
+    done = threading.Event()
+
+    def run():
+        fn()
+        done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    return done
+
+
+def wait_pipe_len(sock, expected):
+    deadline = time.monotonic() + 5
+    while len(sock.pipes) != expected and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert len(sock.pipes) == expected
+
+
+def join_close_threads():
+    for thread in threading.enumerate():
+        if thread.name == "pynng-close":
+            thread.join(5)
+            assert not thread.is_alive()
+"""
+
+_CLOSE_SCENARIO_RUN = """
+try:
+    main()
+except BaseException:
+    traceback.print_exc()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(1)
+print("OK", flush=True)
+"""
+
+
+def _run_close_scenario(nng, body):
+    """Run ``body`` (which defines ``main()``) in a child process.
+
+    A deadlock in close() would otherwise hang the test run, so the scenario
+    runs in a child that is killed when it does not finish in time.
+    """
+    code = (
+        _CLOSE_SCENARIO_PRELUDE.format(module=nng.__name__)
+        + textwrap.dedent(body)
+        + _CLOSE_SCENARIO_RUN
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code],
+        cwd=tempfile.gettempdir(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        pytest.fail("close() scenario did not finish (deadlock)")
+    assert proc.returncode == 0, err
+    assert out == "OK\n", err
+
+
+def test_close_from_remove_callback_returns(nng):
+    _run_close_scenario(
+        nng,
+        """
+        def main():
+            sock = nng.Pair0(listen=addr)
+            callback_returned = threading.Event()
+
+            def on_remove(pipe):
+                sock.close()
+                callback_returned.set()
+
+            sock.add_post_pipe_remove_cb(on_remove)
+            peer = nng.Pair0(dial=addr)
+            wait_pipe_len(sock, 1)
+            peer_closed = run_in_thread(peer.close)
+            assert callback_returned.wait(5)
+            join_close_threads()
+            assert peer_closed.wait(5)
+            assert sock.pipes == ()
+    """,
+    )
+
+
+def test_close_from_own_connect_callback_returns(nng):
+    _run_close_scenario(
+        nng,
+        """
+        def main():
+            sock = nng.Pair0(listen=addr, recv_timeout=500)
+            callback_returned = threading.Event()
+
+            def on_connect(pipe):
+                sock.close()
+                callback_returned.set()
+
+            sock.add_post_pipe_connect_cb(on_connect)
+            peer = nng.Pair0(dial=addr)
+            assert callback_returned.wait(5)
+            join_close_threads()
+            try:
+                sock.recv()
+            except nng.Closed:
+                pass
+            else:
+                raise AssertionError("recv() on a closed socket did not raise")
+            assert sock.pipes == ()
+            assert run_in_thread(peer.close).wait(5)
+    """,
+    )
