@@ -22,7 +22,8 @@ Key differences from v1:
 - No ``name`` property on sockets (``NNG_OPT_SOCKNAME`` removed)
 - No ``NNG_FLAG_ALLOC``; recv uses ``nng_recvmsg()`` internally
 - ``Sub0.subscribe()``/``unsubscribe()`` use dedicated v2 functions
-- TLS is configured per-endpoint (dialer/listener), not per-socket
+- TLS is configured per endpoint (dialer/listener); a socket's ``tls_config``
+  is only the default for its endpoints whose transport has TLS
 - Socket properties (``protocol``, ``peer``, ``raw``, etc.) use dedicated
   v2 getter functions instead of generic option accessors
 """
@@ -44,6 +45,10 @@ from .._base import _mark_nng_initialized
 # Initialize nng v2 runtime. Must be called before any v2 operations.
 _lib.nng_init(_ffi.NULL)
 _mark_nng_initialized()
+
+from pynng.tls import _register_lib  # noqa: E402
+
+_register_lib(_lib, _ffi)
 
 # Flag to allow users who explicitly need nng_fini() at atexit to opt in.
 # Defaults to False to avoid process-crashing race conditions with Python GC.
@@ -84,12 +89,29 @@ from .nng import (  # noqa: F401, E402
     Rep0,
     Surveyor0,
     Respondent0,
+    RawBus0,
+    RawPair0,
+    RawPair1,
+    RawPush0,
+    RawPull0,
+    RawPub0,
+    RawSub0,
+    RawReq0,
+    RawRep0,
+    RawSurveyor0,
+    RawRespondent0,
     Context,
     Dialer,
     Listener,
     Pipe,
     Message,
+    TLSConfig,
     Rep0Service,
+    device,
+    adevice,
+    stats,
+    socket_stats,
+    Stat,
 )
 
 # Import shared types from base
@@ -139,6 +161,3 @@ try:
     from pynng.service import Request  # noqa: F401, E402
 except ImportError:
     pass
-
-# Import TLS config (same TLS primitives, applied at endpoint level in v2)
-from pynng.tls import TLSConfig  # noqa: F401, E402

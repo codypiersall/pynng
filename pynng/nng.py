@@ -1105,14 +1105,26 @@ def device(s1, s2=None):
         Closed: When one of the sockets is closed.
         NNGException: If an NNG error occurs.
     """
+    _device(s1, s2, lib, ffi)
+
+
+def _device(s1, s2, default_lib, default_ffi):
     _base._check_fork()
     _base._mark_nng_initialized()
-    s1_raw = s1.socket if isinstance(s1, Socket) else s1
-    if s2 is not None:
-        s2_raw = s2.socket if isinstance(s2, Socket) else s2
-    else:
-        s2_raw = ffi.new("nng_socket *", {"id": 0})[0]
-    check_err(lib.nng_device(s1_raw, s2_raw))
+    _lib, _ffi, s1_raw, s2_raw = _base._device_sockets(s1, s2, default_lib, default_ffi)
+    owners = [s for s in (s1, s2) if isinstance(s, _base.Socket)]
+    aio_p = _ffi.new("nng_aio **")
+    check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL), lib=_lib, ffi=_ffi)
+    aio = aio_p[0]
+    try:
+        _base._start_device(owners, _lib, aio, s1_raw, s2_raw)
+        try:
+            _lib.nng_aio_wait(aio)
+        finally:
+            _base._stop_device(owners, aio)
+        check_err(_lib.nng_aio_result(aio), lib=_lib, ffi=_ffi)
+    finally:
+        _lib.nng_aio_free(aio)
 
 
 async def adevice(s1, s2=None, *, async_backend=None):
@@ -1129,7 +1141,17 @@ async def adevice(s1, s2=None, *, async_backend=None):
         Closed: When one of the sockets is closed.
         NNGException: If an NNG error occurs.
     """
+    await _adevice(s1, s2, async_backend, lib, ffi)
+
+
+async def _adevice(s1, s2, async_backend, default_lib, default_ffi):
     _base._check_fork()
     _base._mark_nng_initialized()
-    with _aio.DeviceAIO(s1, s2, async_backend=async_backend) as dev:
+    with _aio.DeviceAIO(
+        s1,
+        s2,
+        async_backend=async_backend,
+        _default_lib=default_lib,
+        _default_ffi=default_ffi,
+    ) as dev:
         await dev.run()

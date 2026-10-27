@@ -65,29 +65,49 @@ _V1_HAS_TLS = _v1_tls_available()
 _V2_HAS_TLS = _v2_tls_available()
 
 
+def _tls_skip_reason(versions, v1_has_tls, v2_has_tls):
+    """Return why a TLS test cannot run, or None if it can.
+
+    ``versions`` names each nng version whose TLS the test uses; an empty
+    tuple means the test runs with whichever version has TLS.
+    """
+    has_tls = {"v1": v1_has_tls, "v2": v2_has_tls}
+    if not versions:
+        if v1_has_tls or v2_has_tls:
+            return None
+        return "TLS not available (PYNNG_TLS_ENGINE=none)"
+    for version in versions:
+        if not has_tls[version]:
+            return (
+                f"{version} TLS not available "
+                "(engine not supported or PYNNG_TLS_ENGINE=none)"
+            )
+    return None
+
+
 def pytest_collection_modifyitems(config, items):
-    """xfail TLS tests when TLS is not available for their nng version."""
+    """Skip TLS tests when TLS is not available for the nng versions they use.
+
+    ``@pytest.mark.requires_tls("v1", "v2")`` names the versions explicitly;
+    a bare ``requires_tls`` uses the version of the test.
+    """
     for item in items:
-        if "requires_tls" not in item.keywords:
+        marker = item.get_closest_marker("requires_tls")
+        if marker is None:
             continue
 
-        # Determine which version this test targets
-        is_v1 = "nng_v1" in item.keywords or item.nodeid.endswith("[v1]")
-        is_v2 = "nng_v2" in item.keywords or item.nodeid.endswith("[v2]")
+        if marker.args:
+            versions = tuple(marker.args)
+        elif "nng_v1" in item.keywords or item.nodeid.endswith("[v1]"):
+            versions = ("v1",)
+        elif "nng_v2" in item.keywords or item.nodeid.endswith("[v2]"):
+            versions = ("v2",)
+        else:
+            versions = ()
 
-        if is_v1 and not _V1_HAS_TLS:
-            item.add_marker(pytest.mark.skip(
-                reason="v1 TLS not available (engine not supported or PYNNG_TLS_ENGINE=none)",
-            ))
-        elif is_v2 and not _V2_HAS_TLS:
-            item.add_marker(pytest.mark.skip(
-                reason="v2 TLS not available (engine not supported or PYNNG_TLS_ENGINE=none)",
-            ))
-        elif not is_v1 and not is_v2 and not _V1_HAS_TLS and not _V2_HAS_TLS:
-            # Unversioned TLS test, neither version has TLS
-            item.add_marker(pytest.mark.skip(
-                reason="TLS not available (PYNNG_TLS_ENGINE=none)",
-            ))
+        reason = _tls_skip_reason(versions, _V1_HAS_TLS, _V2_HAS_TLS)
+        if reason is not None:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 def _v2_available():

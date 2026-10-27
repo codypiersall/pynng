@@ -90,9 +90,10 @@ class Request:
 class Rep0Service:
     """High-level async REP service that handles concurrent requests.
 
-    Creates a :class:`~pynng.Rep0` socket, listens on the given address,
-    and spawns ``workers`` context-based receive loops.  Incoming requests
-    are placed into an internal queue and yielded via ``async for``.
+    Creates a :class:`~pynng.Rep0` socket (or uses the one passed as
+    ``socket``), listens on the given address, and spawns ``workers``
+    context-based receive loops.  Incoming requests are placed into an
+    internal queue and yielded via ``async for``.
 
     Works with both asyncio and trio.
 
@@ -103,24 +104,53 @@ class Rep0Service:
                 await request.reply(process(request.data))
 
     Args:
-        address (str): The address to listen on (e.g. ``"tcp://0.0.0.0:5555"``
-            or ``"inproc://my-service"``).
+        address (str or None): The address to listen on (e.g.
+            ``"tcp://0.0.0.0:5555"`` or ``"inproc://my-service"``).  May be
+            ``None`` only when ``socket`` is given.
         workers (int): Number of concurrent context workers. Each worker can
             handle one request at a time.  Defaults to 4.
         recv_timeout (int or None): Receive timeout in milliseconds for the
             underlying socket.  ``None`` means no timeout.
         send_timeout (int or None): Send timeout in milliseconds for the
             underlying socket.  ``None`` means no timeout.
+        socket: An open, non-raw :class:`~pynng.Rep0` to use instead of
+            creating one.  The service does not close it.  When ``address`` is
+            also given, the service listens on it with this socket and closes
+            that listener on exit.  ``recv_timeout`` and ``send_timeout`` are
+            set on the socket while the service runs, and the previous values
+            are restored on exit.
     """
 
     _socket_class = None
 
-    def __init__(self, address, *, workers=4, recv_timeout=None, send_timeout=None):
+    def __init__(
+        self,
+        address=None,
+        *,
+        workers=4,
+        recv_timeout=None,
+        send_timeout=None,
+        socket=None,
+    ):
+        if address is None and socket is None:
+            raise ValueError("Either address or socket must be provided")
+        if socket is not None:
+            expected = self._socket_class or pynng.Rep0
+            if not isinstance(socket, expected):
+                raise TypeError(
+                    f"Expected a {expected.__module__}.{expected.__name__} "
+                    f"socket, got {type(socket).__name__}"
+                )
+            if socket.raw:
+                raise ValueError("A raw Rep0 socket has no contexts")
         self._address = address
         self._workers = workers
         self._recv_timeout = recv_timeout
         self._send_timeout = send_timeout
-        self._socket = None
+        self._socket = socket
+        self._owns_socket = socket is None
+        self._listener = None
+        self._saved_timeouts = None
         self._contexts = []
         self._queue = None
         self._worker_tasks = []
@@ -134,9 +164,25 @@ class Rep0Service:
         if self._send_timeout is not None:
             kwargs["send_timeout"] = self._send_timeout
 
-        self._socket = (self._socket_class or pynng.Rep0)(
-            listen=self._address, **kwargs
-        )
+        if self._socket is None:
+            sock_cls = self._socket_class or pynng.Rep0
+            self._socket = sock_cls(listen=self._address, **kwargs)
+            self._owns_socket = True
+        else:
+            self._saved_timeouts = (
+                self._socket.recv_timeout,
+                self._socket.send_timeout,
+            )
+            try:
+                if self._recv_timeout is not None:
+                    self._socket.recv_timeout = self._recv_timeout
+                if self._send_timeout is not None:
+                    self._socket.send_timeout = self._send_timeout
+                if self._address is not None:
+                    self._listener = self._socket.listen(self._address)
+            except BaseException:
+                self._release_socket()
+                raise
 
         try:
             try:
@@ -149,12 +195,29 @@ class Rep0Service:
             else:
                 await self._start_asyncio()
         except BaseException:
-            if self._socket is not None:
-                self._socket.close()
-                self._socket = None
+            self._release_socket()
             raise
 
         return self
+
+    def _release_socket(self):
+        """Close an owned socket, or undo what the service did to a borrowed one."""
+        if self._socket is None:
+            return
+        if self._owns_socket:
+            self._socket.close()
+            self._socket = None
+            return
+        listener, self._listener = self._listener, None
+        saved, self._saved_timeouts = self._saved_timeouts, None
+        try:
+            if listener is not None:
+                listener.close()
+            if saved is not None:
+                self._socket.recv_timeout, self._socket.send_timeout = saved
+        except Closed:
+            # The caller closed the socket, which also closed the listener.
+            pass
 
     async def _start_asyncio(self):
         self._queue = asyncio.Queue()
@@ -257,9 +320,7 @@ class Rep0Service:
         self._worker_tasks.clear()
         self._contexts.clear()
 
-        if self._socket is not None:
-            self._socket.close()
-            self._socket = None
+        self._release_socket()
 
     async def _stop_trio(self):
         for ctx in self._contexts:
@@ -275,9 +336,7 @@ class Rep0Service:
 
         self._contexts.clear()
 
-        if self._socket is not None:
-            self._socket.close()
-            self._socket = None
+        self._release_socket()
 
     def __aiter__(self):
         return self

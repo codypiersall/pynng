@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support Python 3.15 in package classifiers and CI smoketest matrix
 - Support PyPy 3.11 in CI smoketest matrix, `cibuildwheel` release builds, and PyPI implementation classifiers
 - `pynng.nng_fini()` function and `nng_fini_at_exit` setting for explicit runtime finalization control
+- `pynng.v2.device()` and `pynng.v2.adevice()`. `pynng.device()` and `pynng.adevice()` also accept nng v2 sockets. Closing a socket that a device uses ends the device with `Closed`, also with nng v2, which otherwise refuses to close a socket that a device owns
+- nng v2 statistics: `pynng.v2.stats()`, `pynng.v2.socket_stats()`, `pynng.v2.Socket.stats()` and `pynng.v2.Socket.stat()`, and `pynng.v2.Stat`. The bundled nng v2 is now built with statistics enabled
+- Endpoint TLS for nng v2: `tls_config=` on `pynng.v2.Socket.dial()` and `listen()`, `pynng.v2.Dialer.tls_config` and `pynng.v2.Listener.tls_config`, and `pynng.v2.Socket.tls_config` (the default for the socket's endpoints; endpoints whose transport has no TLS ignore it, as in v1). One `TLSConfig` can be used with both v1 and v2 endpoints
+- `start=False` on `pynng.v2.Socket.dial()` and `listen()`, with `pynng.v2.Dialer.start()` and `pynng.v2.Listener.start()` to start the endpoint later
+- `pynng.v2.Dialer.url` and `pynng.v2.Listener.url`
+- The raw classes `pynng.v2.RawBus0`, `RawPair0`, `RawPair1`, `RawPush0`, `RawPull0`, `RawPub0`, `RawSub0`, `RawReq0`, `RawRep0`, `RawSurveyor0` and `RawRespondent0`
+- `socket=` argument of `Rep0Service` (v1 and v2), to serve on an existing `Rep0` socket that the service does not close. `address` is optional when `socket` is given. The service closes the listener it made for `address` and restores the socket's timeouts on exit. A socket that is not a non-raw `Rep0` of the service's nng version raises `TypeError` or `ValueError`
 
 ### Changed
 - Upgrade bundled v1 NNG from v1.11 to v1.12.5, incorporating upstream fixes for large IOV scatter/gather transfers, mbedTLS CVE-2025-27809, and AIO task abort race conditions while removing obsolete patch files
@@ -51,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modernize GitHub Actions workflows to Node 24-compatible actions
 - `post_pipe_remove` callbacks for a pipe now wait until the running `pre_pipe_connect` and `post_pipe_connect` callbacks for that pipe return, so a remove callback no longer runs at the same time as a connect callback for the same pipe
 - A synchronous receive (`recv()`, `recv_msg()`, `recv_into()`) on a socket or context now keeps one receive in flight until it completes, times out, or is interrupted. Before, it cancelled and restarted the receive every 100 ms, which ends a `Req0` request and a `Surveyor0` survey: a `Req0` receive on a socket or a context whose reply took longer than 100 ms raised `BadState`, and after about 100 ms a `Surveyor0` receive raised `Timeout` on a socket and `BadState` on a context, whatever the `survey_time`. Ctrl-C still interrupts a blocking receive
+- `pynng.v2.TLSConfig` is now a subclass of `pynng.TLSConfig` that allocates its configuration with nng v2. Before, it was `pynng.TLSConfig`
+- A `TLSConfig` now allocates a configuration for each initialized nng version (v1, and v2 when `pynng.v2` is imported) when it is created, and each setter changes all of them. A `pynng.TLSConfig` created before `pynng.v2` is imported cannot be used with v2 endpoints (`RuntimeError`). When a setter succeeds for one version and fails for another, the config cannot be used with the failed version any more (`RuntimeError`)
 - `Socket.close()` called from a pipe callback now returns at once, and the socket is closed on another thread when the running pipe callbacks have returned. Before, a close from a socket's own `post_pipe_connect` callback, or from a `post_pipe_remove` callback when no other thread was closing the socket, never returned
 
 ### Fixed
