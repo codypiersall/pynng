@@ -5,6 +5,7 @@ import pytest
 import trio
 
 import pynng
+from pynng._aio import MPSCAIOEngine, ffi, lib
 
 from conftest import random_addr, FAST_TIMEOUT, MEDIUM_TIMEOUT, SLOW_TIMEOUT
 
@@ -384,3 +385,27 @@ async def test_device_aio_cancellation_with_mpsc():
         assert dev.aio is None
         assert dev._aio_entry is None
 
+
+def test_mpsc_queue_stays_valid_until_last_entry_is_freed():
+    """Cyclic GC can finalize MPSCAIOEngine (which frees its queue) before an
+    AIOHelper whose entry still points at that queue. Freeing the helper then
+    cancels its aio, which delivers a completion to the queue.
+    """
+    q = lib.pynng_mpsc_queue_new(-1)
+    e = lib.pynng_aio_entry_new(ffi.NULL, 7, q)
+    lib.pynng_mpsc_queue_free(q)
+    lib.pynng_native_aio_complete(e)
+    # A closed queue accepts no completion, so freeing the entry releases the
+    # last reference and frees the queue.
+    assert lib.pynng_aio_entry_is_idle(e) == 1
+    lib.pynng_aio_entry_free(e)
+
+
+def test_mpsc_engine_register_skips_occupied_slots_on_wraparound():
+    engine = MPSCAIOEngine.__new__(MPSCAIOEngine)
+    pending = object()
+    new = object()
+    engine._slots = {1: pending}
+    engine._slot_counter = 0x7FFFFFFF
+    assert engine.register(new) == 2
+    assert engine._slots == {1: pending, 2: new}

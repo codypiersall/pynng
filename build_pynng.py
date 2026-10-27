@@ -201,7 +201,6 @@ _AIO_ENGINE_CDEF = """
         void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
         pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q);
         void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id);
-        void pynng_aio_entry_set_queue(pynng_aio_entry_t *e, pynng_mpsc_queue_t *q);
         int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
         void pynng_aio_entry_free(pynng_aio_entry_t *e);
         void pynng_native_aio_complete(void *arg);
