@@ -113,6 +113,8 @@ class Rep0Service:
             underlying socket.  ``None`` means no timeout.
     """
 
+    _socket_class = None
+
     def __init__(self, address, *, workers=4, recv_timeout=None, send_timeout=None):
         self._address = address
         self._workers = workers
@@ -132,7 +134,9 @@ class Rep0Service:
         if self._send_timeout is not None:
             kwargs["send_timeout"] = self._send_timeout
 
-        self._socket = pynng.Rep0(listen=self._address, **kwargs)
+        self._socket = (self._socket_class or pynng.Rep0)(
+            listen=self._address, **kwargs
+        )
 
         try:
             try:

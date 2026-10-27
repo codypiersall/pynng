@@ -89,6 +89,7 @@ from .nng import (  # noqa: F401, E402
     Listener,
     Pipe,
     Message,
+    Rep0Service,
 )
 
 # Import shared types from base
@@ -135,7 +136,7 @@ from pynng.exceptions import (  # noqa: F401, E402
 
 # Import service classes (optional / decoupled)
 try:
-    from pynng.service import Rep0Service, Request  # noqa: F401, E402
+    from pynng.service import Request  # noqa: F401, E402
 except ImportError:
     pass
 

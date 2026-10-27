@@ -198,16 +198,18 @@ class AbstractAddr(SockAddr):
             return f"abstract://{hex_name}"
 
 
-def _nng_sockaddr(sa):
+def _nng_sockaddr(sa, *, lib=None):
     # ensures the correct class gets instantiated based on s_family
+    _lib = lib if lib is not None else pynng.lib
     lookup = {
-        pynng.lib.NNG_AF_INPROC: InprocAddr,
-        pynng.lib.NNG_AF_IPC: IPCAddr,
-        pynng.lib.NNG_AF_INET: InAddr,
-        pynng.lib.NNG_AF_INET6: In6Addr,
-        pynng.lib.NNG_AF_ZT: ZTAddr,
-        pynng.lib.NNG_AF_ABSTRACT: AbstractAddr,
+        _lib.NNG_AF_INPROC: InprocAddr,
+        _lib.NNG_AF_IPC: IPCAddr,
+        _lib.NNG_AF_INET: InAddr,
+        _lib.NNG_AF_INET6: In6Addr,
+        _lib.NNG_AF_ABSTRACT: AbstractAddr,
     }
+    if hasattr(_lib, "NNG_AF_ZT"):
+        lookup[_lib.NNG_AF_ZT] = ZTAddr
     # fall through to SockAddr, e.g. if it's unspecified
     cls = lookup.get(sa[0].s_family, SockAddr)
     return cls(sa)

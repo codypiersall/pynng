@@ -302,3 +302,79 @@ def test_v2_pipe_scheme():
         assert p0.scheme == "inproc"
         assert p1.scheme == "inproc"
 
+
+@pytest.mark.asyncio
+async def test_v2_surveyor0_asurvey():
+    """Verify v2.Surveyor0.asurvey collects responses until the survey times out."""
+    import asyncio
+
+    addr = random_addr()
+    with v2.Surveyor0(listen=addr, recv_timeout=FAST_TIMEOUT) as surv:
+        with v2.Respondent0(dial=addr, recv_timeout=FAST_TIMEOUT) as resp:
+            wait_pipe_len(surv, 1)
+            wait_pipe_len(resp, 1)
+
+            async def responder():
+                q = await resp.arecv()
+                assert q == b"who-is-up"
+                await resp.asend(b"node-1")
+
+            t = asyncio.create_task(responder())
+            results = await surv.asurvey(b"who-is-up", timeout=80)
+            await t
+            assert results == [b"node-1"]
+
+
+@pytest.mark.asyncio
+async def test_v2_rep0_service():
+    """Verify v2.Rep0Service serves v2.Req0 clients on a v2.Rep0."""
+    import asyncio
+
+    addr = random_addr()
+    async with v2.Rep0Service(addr, workers=2) as service:
+        assert type(service._socket) is v2.Rep0
+
+        async def handle_one():
+            async for req in service:
+                await req.reply(b"v2-echo:" + req.data)
+                break
+
+        worker = asyncio.create_task(handle_one())
+        with v2.Req0(dial=addr, recv_timeout=FAST_TIMEOUT) as client:
+            wait_pipe_len(client, 1)
+            await client.asend(b"ping")
+            reply = await client.arecv()
+            assert reply == b"v2-echo:ping"
+        await worker
+
+
+@pytest.mark.parametrize(
+    "proto_cls",
+    [
+        v2.Bus0,
+        v2.Pair0,
+        v2.Pair1,
+        v2.Push0,
+        v2.Pull0,
+        v2.Pub0,
+        v2.Sub0,
+        v2.Req0,
+        v2.Rep0,
+        v2.Surveyor0,
+        v2.Respondent0,
+    ],
+)
+def test_v2_raw_sockets(proto_cls):
+    """Verify raw=True opens a raw v2 socket."""
+    with proto_cls() as cooked, proto_cls(raw=True) as raw:
+        assert (cooked.raw, raw.raw) == (False, True)
+
+
+def test_v2_abstract_sockaddr():
+    """Verify a v2 abstract address maps to AbstractAddr, not v1's ZTAddr."""
+    from pynng._nng_v2 import ffi as ffi2, lib as lib2
+
+    sa = ffi2.new("nng_sockaddr *")
+    sa[0].s_family = lib2.NNG_AF_ABSTRACT
+    addr = pynng.sockaddr._nng_sockaddr(sa, lib=lib2)
+    assert type(addr) is pynng.sockaddr.AbstractAddr

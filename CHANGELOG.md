@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent `MPSCAIOEngine.register()` from reusing a slot id that is still pending when the 31-bit slot counter (mask `0x7FFFFFFF`) wraps around
 - `Rep0Service` workers no longer log an exception each time `recv_timeout` expires with no request
 - `Socket.asend_msg()`, `Socket.arecv_msg()`, `Context.asend_msg()` and `Context.arecv_msg()` (and so `arecv()`, `arecv_into()` and `async for`) now raise `RuntimeError` in a forked child, as the synchronous operations already did
+- `pynng.v2.Surveyor0.asurvey()` no longer raises `NameError` when the survey times out
+- `pynng.v2.Rep0Service` now uses a `pynng.v2.Rep0` socket. Before, it was `pynng.Rep0Service`, which uses an nng v1 socket
+- `pynng.v2.Pipe.local_address` and `remote_address` no longer raise `AttributeError` for an `abstract://` pipe
+- `raw=True` on a `pynng.v2` protocol class now opens a raw socket. Before, it was ignored
+- `pynng.nng_fini_at_exit = True` now makes pynng call `nng_fini()` at exit. Before, only `pynng.nng.nng_fini_at_exit = True` had an effect
 - Fix #108: Prevent process crash / NNG panic during Python interpreter shutdown by disabling unconditional `nng_fini()` at atexit (`nng_fini_at_exit = False`) and guarding `Socket`, `Context`, `Message`, `AIOHelper`, and `DeviceAIO` finalizers against calling deallocated NNG C state during GC
 - Fix #113: Prevent hard C aborts (`panic: nng is not fork-reentrant safe`) in forked child processes by detecting `fork()` and raising a descriptive Python `RuntimeError` directing users to `multiprocessing.set_start_method('spawn')`
 - Fix #104: Prevent `RuntimeError: cannot use unpack() on <cdata 'char *' NULL>` when receiving 0-byte messages via v1 `Socket.recv()`

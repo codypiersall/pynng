@@ -12,7 +12,7 @@ import threading
 
 import pynng
 from pynng._nng_v2 import ffi, lib
-from pynng.exceptions import check_err, Closed
+from pynng.exceptions import check_err, Closed, BadState, Timeout
 from pynng._base import (
     _ensure_can_send,
     _do_callbacks,
@@ -32,6 +32,7 @@ from pynng._base import (
 from pynng import _aio
 from pynng import _base
 from pynng import options
+from pynng import service as _service_mod
 
 
 logger = logging.getLogger(__name__)
@@ -193,6 +194,7 @@ class Bus0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_bus0_open
+    _raw_opener = lib.nng_bus0_open_raw
 
 
 class Pair0(Socket):
@@ -201,6 +203,7 @@ class Pair0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_pair0_open
+    _raw_opener = lib.nng_pair0_open_raw
 
 
 class Pair1(Socket):
@@ -212,12 +215,14 @@ class Pair1(Socket):
     ``nng_pair1_open_poly`` to allow multiple peers.
     """
 
-    def __init__(self, *, polyamorous=False, **kwargs):
-        if polyamorous:
+    def __init__(self, *, polyamorous=False, raw=False, **kwargs):
+        if raw:
+            kwargs["opener"] = lib.nng_pair1_open_raw
+        elif polyamorous:
             kwargs["opener"] = lib.nng_pair1_open_poly
         else:
             kwargs["opener"] = lib.nng_pair1_open
-        super().__init__(**kwargs)
+        super().__init__(raw=raw, **kwargs)
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
@@ -228,6 +233,7 @@ class Push0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_push0_open
+    _raw_opener = lib.nng_push0_open_raw
 
 
 class Pull0(Socket):
@@ -236,6 +242,7 @@ class Pull0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_pull0_open
+    _raw_opener = lib.nng_pull0_open_raw
 
 
 class Pub0(Socket):
@@ -244,6 +251,7 @@ class Pub0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_pub0_open
+    _raw_opener = lib.nng_pub0_open_raw
 
 
 class Sub0(Socket):
@@ -256,6 +264,7 @@ class Sub0(Socket):
     instead of option setters.
     """
     _opener = lib.nng_sub0_open
+    _raw_opener = lib.nng_sub0_open_raw
 
     def __init__(self, *, topics=None, **kwargs):
         self._subscriptions = set()
@@ -332,6 +341,7 @@ class Req0(Socket):
     """
     resend_time = MsOption("req:resend-time")
     _opener = lib.nng_req0_open
+    _raw_opener = lib.nng_req0_open_raw
 
     def __init__(self, *, resend_time=None, **kwargs):
         super().__init__(**kwargs)
@@ -345,6 +355,7 @@ class Rep0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_rep0_open
+    _raw_opener = lib.nng_rep0_open_raw
 
 
 class Surveyor0(Socket):
@@ -353,6 +364,7 @@ class Surveyor0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_surveyor0_open
+    _raw_opener = lib.nng_surveyor0_open_raw
     _nonblock_recv_first = False
     survey_time = MsOption("surveyor:survey-time")
 
@@ -406,6 +418,7 @@ class Respondent0(Socket):
     .. warning:: nng v2 is experimental/alpha. The API may change between releases.
     """
     _opener = lib.nng_respondent0_open
+    _raw_opener = lib.nng_respondent0_open_raw
 
 
 class Dialer(_base.Dialer):
@@ -479,14 +492,14 @@ class Pipe(_base.Pipe):
         """The local address for this pipe."""
         sa = ffi.new("nng_sockaddr *")
         check_err(lib.nng_pipe_self_addr(self.pipe, sa))
-        return pynng.sockaddr._nng_sockaddr(sa)
+        return pynng.sockaddr._nng_sockaddr(sa, lib=lib)
 
     @property
     def remote_address(self):
         """The remote address for this pipe."""
         sa = ffi.new("nng_sockaddr *")
         check_err(lib.nng_pipe_peer_addr(self.pipe, sa))
-        return pynng.sockaddr._nng_sockaddr(sa)
+        return pynng.sockaddr._nng_sockaddr(sa, lib=lib)
 
     @property
     def scheme(self):
@@ -509,6 +522,15 @@ class Message(_base.Message):
 
     def __init__(self, data=b"", pipe=None, *, _lib=None, _ffi=None):
         super().__init__(data, pipe, _lib=_lib or lib, _ffi=_ffi or ffi)
+
+
+class Rep0Service(_service_mod.Rep0Service):
+    """High-level async REP service backed by a v2 :class:`Rep0` socket.
+
+    The same as :class:`pynng.Rep0Service`, but with an nng v2 socket.
+    """
+
+    _socket_class = Rep0
 
 
 # Wire up v2-specific subclasses so base class factory methods
