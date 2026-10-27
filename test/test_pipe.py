@@ -333,23 +333,21 @@ def test_pipes_access_under_contention():
 
 
 def test_active_handles_registry():
-    from pynng.nng import _active_handles, _active_handles_lock, lib
+    from pynng.nng import _active_handles, lib
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
     key = (s0._version_tag, sock_id)
-    with _active_handles_lock:
-        assert key in _active_handles
-        assert _active_handles[key]() is s0
+    assert key in _active_handles
+    assert _active_handles[key]() is s0
 
     s0.close()
-    with _active_handles_lock:
-        assert key not in _active_handles
+    assert key not in _active_handles
 
 
 def test_active_handles_reused_id_protection():
     import weakref
-    from pynng.nng import _active_handles, _active_handles_lock, lib
+    from pynng.nng import _active_handles, lib
     addr = random_addr()
     s0 = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s0.socket)
@@ -361,33 +359,29 @@ def test_active_handles_reused_id_protection():
 
     dummy = Dummy()
     dummy_ref = weakref.ref(dummy)
-    with _active_handles_lock:
-        _active_handles[key] = dummy_ref
+    _active_handles[key] = dummy_ref
 
     # Closing s0 should not remove the dummy_ref because s0 is not dummy
     s0.close()
-    with _active_handles_lock:
-        assert _active_handles.get(key) is dummy_ref
-        del _active_handles[key]
+    assert _active_handles.get(key) is dummy_ref
+    del _active_handles[key]
 
 
 def test_unclosed_socket_garbage_collected():
     import gc
     import weakref
-    from pynng.nng import _active_handles, _active_handles_lock, lib
+    from pynng.nng import _active_handles, lib
     addr = random_addr()
     s = pynng.Pair0(listen=addr)
     sock_id = lib.nng_socket_id(s.socket)
     vtag = getattr(s, "_version_tag", None)
     key = (vtag, sock_id) if vtag else sock_id
-    with _active_handles_lock:
-        assert key in _active_handles
+    assert key in _active_handles
     wr = weakref.ref(s)
     del s
     gc.collect()
     assert wr() is None, "Unclosed socket leaked and was not garbage-collected!"
-    with _active_handles_lock:
-        assert key not in _active_handles
+    assert key not in _active_handles
 
 
 def test_pipe_cb_does_not_deadlock_on_socket_operations():

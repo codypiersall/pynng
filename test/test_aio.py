@@ -180,7 +180,7 @@ async def test_pub_sub_trio():
 
 @pytest.mark.asyncio
 async def test_aio_free_cancels_pending():
-    from pynng._aio import AIOHelper, _aio_map, _aio_map_lock
+    from pynng._aio import AIOHelper, _aio_map
 
     addr = random_addr()
     with pynng.Pair0(listen=addr) as s0:
@@ -196,47 +196,42 @@ async def test_aio_free_cancels_pending():
         # 2. Fallback _aio_map callback path (_use_mpsc=False)
         helper = AIOHelper(s0, "asyncio", _use_mpsc=False)
         cb_id = id(helper.cb_arg)
-        with _aio_map_lock:
-            assert cb_id in _aio_map
+        assert cb_id in _aio_map
         # Explicit _free should cancel pending AIO and pop cb_arg
         helper._free()
         assert helper.aio is None
-        with _aio_map_lock:
-            assert cb_id not in _aio_map
+        assert cb_id not in _aio_map
         if helper.awaitable is not None:
             helper.awaitable.close()
 
 
 @pytest.mark.asyncio
 async def test_aio_free_cleans_map_when_aio_is_none():
-    from pynng._aio import AIOHelper, _aio_map, _aio_map_lock, lib
+    from pynng._aio import AIOHelper, _aio_map, lib
 
     addr = random_addr()
     with pynng.Pair0(listen=addr) as s0:
         helper = AIOHelper(s0, "asyncio", _use_mpsc=False)
         cb_id = id(helper.cb_arg)
-        with _aio_map_lock:
-            assert cb_id in _aio_map
+        assert cb_id in _aio_map
         # Simulate helper whose aio was freed or failed to allocate
         lib.nng_aio_free(helper.aio)
         helper.aio = None
         helper._free()
-        with _aio_map_lock:
-            assert cb_id not in _aio_map
+        assert cb_id not in _aio_map
         if helper.awaitable is not None:
             helper.awaitable.close()
 
 
 def test_aio_map_multithreaded_access():
     import concurrent.futures
-    from pynng._aio import _aio_map, _aio_map_lock, _async_complete
+    from pynng._aio import _aio_map, _async_complete
     from pynng._nng import ffi
 
     def churn_map(idx):
         obj = object()
         obj_id = id(obj)
-        with _aio_map_lock:
-            _aio_map[obj_id] = lambda: None
+        _aio_map[obj_id] = lambda: None
         # Call completion
         void_p = ffi.cast("void *", obj_id)
         _async_complete(void_p)

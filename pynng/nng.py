@@ -15,7 +15,6 @@ from . import _aio
 from . import _base
 from ._base import (
     _active_handles,
-    _active_handles_lock,
     _ensure_can_send,
     to_char,
     PipeEvent,

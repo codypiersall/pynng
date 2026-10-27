@@ -68,9 +68,10 @@ def _check_fork():
 
 
 
-# Keep CFFI socket handles alive for callbacks until socket close.
+# Live sockets by (version tag, socket id). No lock guards it: Socket.__del__
+# updates it, and a finalizer can run while its thread holds any lock. Each
+# update is one dict operation on a key that only the calling socket can own.
 _active_handles = {}
-_active_handles_lock = threading.Lock()
 
 
 
@@ -650,10 +651,8 @@ class Socket:
 
         handle = _ffi.new_handle(self)
         self._handle = handle
-        version_tag = self._version_tag
-        sock_id = _lib.nng_socket_id(self.socket)
-        with _active_handles_lock:
-            _active_handles[(version_tag, sock_id)] = weakref.ref(self)
+        key = (self._version_tag, _lib.nng_socket_id(self.socket))
+        _active_handles[key] = weakref.ref(self)
 
         for event in (
             _lib.NNG_PIPE_EV_ADD_PRE,
@@ -755,14 +754,13 @@ class Socket:
                 return
             self._socket_closed = True
         _lib = self._lib
-        version_tag = self._version_tag
-        sock_id = _lib.nng_socket_id(self.socket)
+        key = (self._version_tag, _lib.nng_socket_id(self.socket))
+        # Deregister before close_fn: until then nng cannot give this id to
+        # another socket, so no other thread writes this key.
+        ref = _active_handles.get(key)
+        if ref is not None and (ref() is self or ref() is None):
+            _active_handles.pop(key, None)
         close_fn(self.socket)
-        with _active_handles_lock:
-            key = (version_tag, sock_id)
-            ref = _active_handles.get(key)
-            if ref is not None and (ref() is self or ref() is None):
-                del _active_handles[key]
         self._listeners = {}
         self._dialers = {}
         while self._recv_pool:

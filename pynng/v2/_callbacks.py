@@ -6,19 +6,17 @@ These are structurally identical to the v1 callbacks in ``pynng._aio`` and
 
 The callbacks share the same Python-side dispatch data structures as v1:
 
-- ``_aio_map`` / ``_aio_map_lock`` from ``pynng._aio``  (keyed by ``id()``,
+- ``_aio_map`` from ``pynng._aio`` (keyed by ``id()``,
   so v1/v2 AIO objects cannot collide).
-- ``_active_handles`` / ``_active_handles_lock`` from ``pynng._base`` (keyed
+- ``_active_handles`` from ``pynng._base`` (keyed
   by ``(version_tag, socket_id)`` tuples, preventing v1/v2 collision).
 """
 
 import logging
 
 from pynng._nng_v2 import ffi, lib
-from pynng._aio import _aio_map, _aio_map_lock
+from pynng._aio import _aio_map
 from pynng._base import (
-    _active_handles,
-    _active_handles_lock,
     _handle_pipe_event,
 )
 
@@ -35,8 +33,7 @@ def _async_complete(void_p):
     assert isinstance(void_p, ffi.CData)
     id_val = int(ffi.cast("size_t", void_p))
 
-    with _aio_map_lock:
-        rescheduler = _aio_map.pop(id_val, None)
+    rescheduler = _aio_map.pop(id_val, None)
     if rescheduler is None:
         return
     rescheduler()

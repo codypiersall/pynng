@@ -15,10 +15,10 @@ from ._finalized import is_nng_finalized as _is_nng_finalized
 
 # global variable for mapping asynchronous operations with the Python data
 # assocated with them.  Key is id(obj), value is obj
+# No lock guards it: AIOHelper.__del__ updates it, and a finalizer can run
+# while its thread holds any lock. Each access is one dict operation, which is
+# atomic with and without the GIL.
 _aio_map = {}
-
-# Lock protecting _aio_map. Plain dict operations are atomic under the GIL,
-_aio_map_lock = threading.Lock()
 
 
 def _make_notify_cb(engine_ref):
@@ -203,8 +203,7 @@ def _async_complete(void_p):
     assert isinstance(void_p, ffi.CData)
     id = int(ffi.cast("size_t", void_p))
 
-    with _aio_map_lock:
-        rescheduler = _aio_map.pop(id, None)
+    rescheduler = _aio_map.pop(id, None)
     if rescheduler is None:
         return
     rescheduler()
@@ -415,8 +414,7 @@ class AIOHelper:
         else:
             self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
             aio_p = _ffi.new("nng_aio **")
-            with _aio_map_lock:
-                _aio_map[id(self.cb_arg)] = self.cb_arg
+            _aio_map[id(self.cb_arg)] = self.cb_arg
             idarg = id(self.cb_arg)
             as_void = _ffi.cast("void *", idarg)
             try:
@@ -426,8 +424,7 @@ class AIOHelper:
                     ffi=_ffi,
                 )
             except BaseException:
-                with _aio_map_lock:
-                    _aio_map.pop(idarg, None)
+                _aio_map.pop(idarg, None)
                 raise
             self.aio = aio_p[0]
 
@@ -606,8 +603,7 @@ class AIOHelper:
                 self.aio = None
                 self._aio_entry = None
                 if self.cb_arg is not None:
-                    with _aio_map_lock:
-                        _aio_map.pop(id(self.cb_arg), None)
+                    _aio_map.pop(id(self.cb_arg), None)
                 return
         except (ImportError, AttributeError):
             pass
@@ -642,8 +638,7 @@ class AIOHelper:
                 self._mpsc_engine.close()
 
         if self.cb_arg is not None:
-            with _aio_map_lock:
-                _aio_map.pop(id(self.cb_arg), None)
+            _aio_map.pop(id(self.cb_arg), None)
             self.cb_arg = None
 
         if self.awaitable is not None:
@@ -736,8 +731,7 @@ class DeviceAIO:
         else:
             self.awaitable, self.cb_arg = AIOHelper._aio_helper_map[async_backend](self)
             aio_p = self._ffi.new("nng_aio **")
-            with _aio_map_lock:
-                _aio_map[id(self.cb_arg)] = self.cb_arg
+            _aio_map[id(self.cb_arg)] = self.cb_arg
             idarg = id(self.cb_arg)
             as_void = self._ffi.cast("void *", idarg)
             try:
@@ -747,8 +741,7 @@ class DeviceAIO:
                     ffi=self._ffi,
                 )
             except BaseException:
-                with _aio_map_lock:
-                    _aio_map.pop(idarg, None)
+                _aio_map.pop(idarg, None)
                 raise
             self.aio = aio_p[0]
 
@@ -797,8 +790,7 @@ class DeviceAIO:
                 self.aio = None
                 self._aio_entry = None
                 if self.cb_arg is not None:
-                    with _aio_map_lock:
-                        _aio_map.pop(id(self.cb_arg), None)
+                    _aio_map.pop(id(self.cb_arg), None)
                 return
         except (ImportError, AttributeError):
             pass
@@ -823,8 +815,7 @@ class DeviceAIO:
                 self._mpsc_engine.close()
 
         if self.cb_arg is not None:
-            with _aio_map_lock:
-                _aio_map.pop(id(self.cb_arg), None)
+            _aio_map.pop(id(self.cb_arg), None)
             self.cb_arg = None
 
         if self.awaitable is not None:
