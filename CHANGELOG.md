@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
 - Python 3.10 EOL deprecation advisory in documentation and README
 - Modernize GitHub Actions workflows to Node 24-compatible actions
+- Add a `sanitizers` CI workflow that builds nng v1, nng v2 and the cffi extensions with AddressSanitizer and UndefinedBehaviorSanitizer and runs the test suite under them on Linux
 - `post_pipe_remove` callbacks for a pipe now wait until the running `pre_pipe_connect` and `post_pipe_connect` callbacks for that pipe return, so a remove callback no longer runs at the same time as a connect callback for the same pipe
 - A synchronous receive (`recv()`, `recv_msg()`, `recv_into()`) on a socket or context now keeps one receive in flight until it completes, times out, or is interrupted. Before, it cancelled and restarted the receive every 100 ms, which ends a `Req0` request and a `Surveyor0` survey: a `Req0` receive on a socket or a context whose reply took longer than 100 ms raised `BadState`, and after about 100 ms a `Surveyor0` receive raised `Timeout` on a socket and `BadState` on a context, whatever the `survey_time`. Ctrl-C still interrupts a blocking receive
 - `pynng.v2.TLSConfig` is now a subclass of `pynng.TLSConfig` that allocates its configuration with nng v2. Before, it was `pynng.TLSConfig`
