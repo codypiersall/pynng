@@ -255,15 +255,19 @@ class Sub0(Socket):
     _opener = lib.nng_sub0_open
 
     def __init__(self, *, topics=None, **kwargs):
-        super().__init__(**kwargs)
         self._subscriptions = set()
         self._sub_lock = threading.RLock()
-        if topics is None:
-            return
-        if isinstance(topics, (str, bytes)):
-            topics = [topics]
-        for topic in topics:
-            self.subscribe(topic)
+        self._init_topics = topics
+        super().__init__(**kwargs)
+
+    def _configure_protocol_options(self):
+        topics = self._init_topics
+        self._init_topics = None
+        if topics is not None:
+            if isinstance(topics, (str, bytes)):
+                topics = [topics]
+            for topic in topics:
+                self.subscribe(topic)
 
     @property
     def subscriptions(self):

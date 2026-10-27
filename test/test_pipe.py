@@ -3,6 +3,7 @@ Let's test up those pipes
 """
 
 
+import contextlib
 import threading
 import time
 
@@ -470,3 +471,117 @@ def test_v2_nng_pipe_cb_invalid_handle_safe(caplog):
     with caplog.at_level(logging.INFO):
         _nng_pipe_cb(ffi.NULL, lib.NNG_PIPE_EV_ADD_PRE, ffi.NULL)
     assert any("invalid handle" in record.message for record in caplog.records)
+
+
+def _v1_pipe_cb():
+    from pynng.nng import _nng_pipe_cb, ffi, lib
+
+    return _nng_pipe_cb, ffi, lib
+
+
+@contextlib.contextmanager
+def _live_lib_pipe():
+    """Yield the nng_pipe of a connected v1 pipe owned by another socket pair.
+
+    Synthetic events for this pipe id then describe a pipe that nng still
+    knows, as real ADD_PRE and ADD_POST events do.
+    """
+    addr = random_addr()
+    with pynng.Pair0(listen=addr) as a, pynng.Pair0(dial=addr) as b:
+        wait_pipe_len(a, 1)
+        wait_pipe_len(b, 1)
+        yield b.pipes[0].pipe
+
+
+def test_post_pipe_remove_cb_waits_for_running_post_connect_cb():
+    _nng_pipe_cb, _, lib = _v1_pipe_cb()
+    events = []
+    rem_threads = []
+    removed = threading.Event()
+
+    with _live_lib_pipe() as lib_pipe, pynng.Pair0() as s0:
+
+        def post_add(p):
+            events.append("post_add start")
+            t = threading.Thread(
+                target=_nng_pipe_cb,
+                args=(lib_pipe, lib.NNG_PIPE_EV_REM_POST, s0._handle),
+            )
+            rem_threads.append(t)
+            t.start()
+            # Give a dispatcher that does not wait the chance to run post_remove.
+            removed.wait(1.0)
+            events.append("post_add end")
+
+        def on_remove(p):
+            events.append("remove")
+            removed.set()
+
+        s0.add_post_pipe_connect_cb(post_add)
+        s0.add_post_pipe_remove_cb(on_remove)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_PRE, s0._handle)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_POST, s0._handle)
+        rem_threads[0].join(5)
+        assert not rem_threads[0].is_alive()
+        assert events == ["post_add start", "post_add end", "remove"]
+        assert s0.pipes == ()
+
+
+def test_add_post_after_rem_post_is_dropped():
+    _nng_pipe_cb, _, lib = _v1_pipe_cb()
+    events = []
+    with _live_lib_pipe() as lib_pipe, pynng.Pair0() as s0:
+        pipe_id = lib.nng_pipe_id(lib_pipe)
+        s0.add_pre_pipe_connect_cb(lambda p: events.append(("pre_add", p.id)))
+        s0.add_post_pipe_connect_cb(lambda p: events.append(("post_add", p.id)))
+        s0.add_post_pipe_remove_cb(lambda p: events.append(("remove", p.id)))
+
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_PRE, s0._handle)
+        assert [p.id for p in s0.pipes] == [pipe_id]
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_REM_POST, s0._handle)
+        assert s0.pipes == ()
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_POST, s0._handle)
+        assert s0.pipes == ()
+        assert events == [("pre_add", pipe_id), ("remove", pipe_id)]
+
+
+def test_add_events_after_rem_post_for_unseen_pipe_are_dropped():
+    _nng_pipe_cb, _, lib = _v1_pipe_cb()
+    events = []
+    with _live_lib_pipe() as lib_pipe, pynng.Pair0() as s0:
+        s0.add_pre_pipe_connect_cb(lambda p: events.append("pre_add"))
+        s0.add_post_pipe_connect_cb(lambda p: events.append("post_add"))
+        s0.add_post_pipe_remove_cb(lambda p: events.append("remove"))
+
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_REM_POST, s0._handle)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_PRE, s0._handle)
+        _nng_pipe_cb(lib_pipe, lib.NNG_PIPE_EV_ADD_POST, s0._handle)
+
+        assert s0.pipes == ()
+        assert events == []
+
+
+def test_pipe_callbacks_can_read_socket_pipes(nng):
+    """Reading Socket.pipes during a pipe callback must not block on the
+    socket's pipe lock."""
+    addr = random_addr()
+    results = []
+    blocked = []
+    done = threading.Event()
+
+    def on_post_add(p):
+        reader = threading.Thread(
+            target=lambda: results.append([q.id for q in s0.pipes])
+        )
+        reader.start()
+        reader.join(5)
+        blocked.append(reader.is_alive())
+        done.set()
+
+    with nng.Pair0(listen=addr) as s0:
+        s0.add_post_pipe_connect_cb(on_post_add)
+        with nng.Pair0(dial=addr):
+            assert done.wait(10)
+            wait_pipe_len(s0, 1)
+            assert blocked == [False]
+            assert results == [[s0.pipes[0].id]]

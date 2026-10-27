@@ -19,7 +19,7 @@ from pynng._aio import _aio_map, _aio_map_lock
 from pynng._base import (
     _active_handles,
     _active_handles_lock,
-    _do_callbacks,
+    _handle_pipe_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,23 +60,4 @@ def _nng_pipe_cb(lib_pipe, event, arg):
         )
         return
 
-    with sock._pipe_notify_lock:
-        pipe_id = lib.nng_pipe_id(lib_pipe)
-        if event == lib.NNG_PIPE_EV_ADD_PRE:
-            pipe = sock._add_pipe(lib_pipe)
-            _do_callbacks(pipe, sock._on_pre_pipe_add)
-            if pipe.closed:
-                sock._remove_pipe(lib_pipe)
-        elif event == lib.NNG_PIPE_EV_ADD_POST:
-            pipe = sock._add_pipe(lib_pipe)
-            _do_callbacks(pipe, sock._on_post_pipe_add)
-        elif event == lib.NNG_PIPE_EV_REM_POST:
-            try:
-                pipe = sock._pipes[pipe_id]
-            except KeyError:
-                logger.debug("Could not find pipe for v2 socket")
-                return
-            try:
-                _do_callbacks(pipe, sock._on_post_pipe_remove)
-            finally:
-                sock._remove_pipe(lib_pipe)
+    _handle_pipe_event(sock, lib_pipe, event, lib)
