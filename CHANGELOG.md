@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enable `__slots__` on hot-path `Message`, `Request`, `Stat`, and `SockAddr` model classes to eliminate per-instance `__dict__` allocation overhead
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
 - Migrate build system from setuptools/CMake to scikit-build-core with headerkit for C header generation
+- Pin `headerkit~=0.48.1` across `pyproject.toml` build requirements, optional `dev` dependencies, and `cibuildwheel` `before-build` hooks to allow patch updates while preventing unverified breaking minor releases
 - Replace handwritten CFFI bindings with auto-generated bindings from nng headers via headerkit
 - Add CI concurrency groups to cancel stale workflow runs
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
