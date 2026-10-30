@@ -38,7 +38,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit>=0.47.6; python_version >= '3.11'"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit~=0.48.1; python_version >= '3.11'"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinxcontrib-trio"]
 
 [project.urls]
@@ -52,7 +52,7 @@ requires = [
     "scikit-build-core>=0.8.0",
     "cffi",
     "cffi_buildtool",
-    "headerkit>=0.47.6; python_version >= '3.11'",
+    "headerkit~=0.48.1; python_version >= '3.11'",
     "setuptools-scm",
 ]
 
@@ -98,19 +98,19 @@ build-verbosity = 1
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
-before-build = "uv run --python 3.12 --no-project --with 'headerkit>=0.47.6' python -m headerkit.install_libclang --skip-verify"
+before-build = "uv run --python 3.12 --no-project --with 'headerkit~=0.48.1' python -m headerkit.install_libclang --skip-verify"
 
 [tool.cibuildwheel.windows]
 # Windows builds fail because they try to use the same directory for different
 # architectures, and that's no good.
-before-build = "uv run --python 3.12 --no-project --with \"headerkit>=0.47.6\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
+before-build = "uv run --python 3.12 --no-project --with \"headerkit~=0.48.1\" python -m headerkit.install_libclang --skip-verify && python -c \"import shutil; shutil.rmtree('build', ignore_errors=True)\""
 environment = { PATH = "C:\\Program Files\\LLVM\\bin;$PATH" }
 
 [tool.cibuildwheel.macos]
 # Build universal2 for CPython and native arm64 for PyPy (which lacks universal2 binaries)
 archs = ["universal2", "arm64"]
 test-skip = "*_universal2:x86_64"
-before-build = "uv run --python 3.12 --no-project --with 'headerkit>=0.47.6' python -m headerkit.install_libclang --skip-verify"
+before-build = "uv run --python 3.12 --no-project --with 'headerkit~=0.48.1' python -m headerkit.install_libclang --skip-verify"
 
 environment = { CMAKE_OSX_ARCHITECTURES = "x86_64;arm64" }
 
