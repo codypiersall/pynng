@@ -426,6 +426,38 @@ def test_v2_abstract_sockaddr():
     sa[0].s_family = lib2.NNG_AF_ABSTRACT
     addr = pynng.sockaddr._nng_sockaddr(sa, lib=lib2)
     assert type(addr) is pynng.sockaddr.AbstractAddr
+    assert addr.family_as_str == "abstract"
+
+
+@pytest.mark.parametrize("mod", [pynng, v2], ids=["v1", "v2"])
+@pytest.mark.parametrize("use_raw_cls", [False, True], ids=["raw_kw", "RawSurveyor0"])
+def test_raw_surveyor0_sync_send_and_recv(mod, use_raw_cls):
+    """Synchronous send/recv on a raw Surveyor0 succeeds without reading survey_time."""
+    import struct
+
+    addr = random_addr()
+    surv_sock = (
+        mod.RawSurveyor0(listen=addr, recv_timeout=FAST_TIMEOUT)
+        if use_raw_cls
+        else mod.Surveyor0(raw=True, listen=addr, recv_timeout=FAST_TIMEOUT)
+    )
+    with surv_sock as surv, mod.Respondent0(
+        dial=addr, recv_timeout=FAST_TIMEOUT
+    ) as resp:
+        wait_pipe_len(surv, 1)
+        wait_pipe_len(resp, 1)
+
+        # Raw surveyor messages carry a 32-bit survey ID with the high bit set
+        survey_id = struct.pack("!I", 0x80000001)
+        req_msg = mod.Message(b"who-is-there?")
+        req_msg.header_append(survey_id)
+        surv.send_msg(req_msg)
+
+        assert resp.recv() == b"who-is-there?"
+        resp.send(b"present")
+
+        reply_msg = surv.recv_msg()
+        assert (reply_msg.header, reply_msg.bytes) == (survey_id, b"present")
 
 
 def test_v2_device_sync_and_cross_version_error():

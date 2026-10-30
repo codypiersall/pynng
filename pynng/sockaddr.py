@@ -159,6 +159,7 @@ class ZTAddr(SockAddr):
 
 class AbstractAddr(SockAddr):
     __slots__ = ("_mem",)
+    family_as_str = "abstract"
 
     def __init__(self, ffi_sock_addr):
         super().__init__(ffi_sock_addr)
