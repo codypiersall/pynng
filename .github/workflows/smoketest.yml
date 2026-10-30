@@ -136,6 +136,46 @@ jobs:
       - name: Run tests
         run: pytest -v test --ignore=test/test_build.py --ignore=test/test_check_nng_updates.py
 
+  freethreaded:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Upstream CFFI requires Python 3.14+ for free-threaded builds.
+        python-version: [ '3.14t' ]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+      - name: Verify GIL is disabled
+        run: python -c "import sys; assert not sys._is_gil_enabled(), 'Expected GIL to be disabled on 3.14t'"
+      - name: Set up sccache
+        uses: mozilla/sccache-action@v0.0.11
+      - name: Configure sccache cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: ubuntu-latest-freethreaded-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-${{ github.sha }}
+          restore-keys: |
+            ubuntu-latest-freethreaded-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-
+            ubuntu-latest-freethreaded-sccache-
+      - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build libclang-dev)
+      - name: Build and install with test deps
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+        run: uv pip install --system -v -e ".[dev]"
+      - name: Run tests
+        run: pytest -v test --ignore=test/test_build.py --ignore=test/test_check_nng_updates.py
+
   tls-engines:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     runs-on: ubuntu-latest
