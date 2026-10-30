@@ -610,7 +610,6 @@ class Socket:
     # of the survey (surv0_ctx_recv), so a nonblocking recv can block.
     _nonblock_recv_first = True
     _aio_send_fn = None
-    survey_time = None
 
     # the following options correspond to nng options documented at
     # https://nanomsg.github.io/nng/man/v1.0.1/nng_options.5.html
@@ -889,12 +888,6 @@ class Socket:
             else:
                 recv_fn = _lib.nng_recv_aio
             timeout = self.recv_timeout
-            if self.survey_time is not None and self.survey_time >= 0:
-                st = self.survey_time
-                if timeout is None or timeout < 0:
-                    timeout = st
-                else:
-                    timeout = min(timeout, st)
             raw_msg = _sliced_aio_recv(
                 recv_fn,
                 self.socket,
@@ -1059,7 +1052,6 @@ class Socket:
         Asynchronously send the :class:`Message` ``msg`` on the socket.
 
         """
-        _check_fork()
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             helper = self._acquire_send_helper()
@@ -1854,7 +1846,6 @@ class Context:
         """
         Asynchronously send the :class:`Message` ``msg`` on the context.
         """
-        _check_fork()
         with msg._mem_freed_lock:
             msg._ensure_can_send()
             helper = self._acquire_send_helper()
@@ -2102,6 +2093,7 @@ class Message:
         called.
 
         """
+        _check_fork()
         import pynng
 
         assert self._mem_freed_lock.locked()

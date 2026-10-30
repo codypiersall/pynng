@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Socket.close()` called from a pipe callback now returns at once, and the socket is closed on another thread when the running pipe callbacks have returned. Before, a close from a socket's own `post_pipe_connect` callback, or from a `post_pipe_remove` callback when no other thread was closing the socket, never returned
 
 ### Fixed
+- Fix `RawSurveyor0.recv()` / `Surveyor0(raw=True).recv()` raising `NotSupported` by removing the vestigial `survey_time` read in `Socket.recv_msg()`
+- Return `"abstract"` from `AbstractAddr.family_as_str` on nng v2
+- Check for `fork()` in `Message._ensure_can_send()` so `Socket.send_msg()` and `Context.send_msg()` reject inherited handles in forked children
 - Prevent removed pipes from staying in `Socket.pipes` with nng v1: when `NNG_PIPE_EV_REM_POST` from the reaper thread reaches Python before `NNG_PIPE_EV_ADD_PRE` or `NNG_PIPE_EV_ADD_POST` for the same pipe, the late event is now dropped, so it no longer adds the pipe back or runs `post_pipe_connect` callbacks after `post_pipe_remove` callbacks. A message received from a removed pipe also no longer adds the pipe back
 - Prevent a deadlock with nng v2 when a pipe callback reads `Socket.pipes`: v2 pipe callbacks now run without the socket's pipe lock held, as v1 callbacks already did
 - Apply `Sub0(topics=...)` before `listen`/`dial`, so messages that arrive just after the connection is made are no longer dropped before the subscription exists

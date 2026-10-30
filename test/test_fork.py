@@ -139,3 +139,49 @@ def test_fork_inherited_async_operation_raises_runtime_error(op, on_context):
     result = queue.get(timeout=2)
     assert result.startswith("RUNTIME_ERROR")
     assert "does not support fork()" in result
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is only supported on POSIX")
+@pytest.mark.parametrize("use_v2", [False, True], ids=["v1", "v2"])
+@pytest.mark.parametrize("on_context", [False, True], ids=["socket", "context"])
+def test_fork_inherited_send_msg_raises_runtime_error(on_context, use_v2):
+    """Synchronous send_msg on an inherited socket or context raises RuntimeError."""
+    mod = pynng
+    if use_v2:
+        mod = pytest.importorskip("pynng.v2")
+    sock = mod.Rep0()
+    target = sock.new_context() if on_context else sock
+    msg = mod.Message(b"hello")
+
+    ctx = mp.get_context("fork")
+
+    def run_child(queue):
+        expected = None
+        try:
+            pynng._base._check_fork()
+        except RuntimeError as ref_exc:
+            expected = str(ref_exc)
+        try:
+            target.send_msg(msg)
+            queue.put(("SUCCESS", "", expected))
+        except RuntimeError as exc:
+            queue.put(("RUNTIME_ERROR", str(exc), expected))
+        except BaseException as exc:  # noqa: BLE001
+            queue.put(("UNEXPECTED_EXCEPTION", f"{type(exc).__name__}: {exc}", expected))
+
+    queue = ctx.Queue()
+    proc = ctx.Process(target=run_child, args=(queue,))
+    proc.start()
+    proc.join(timeout=10)
+    if proc.exitcode is None:
+        proc.kill()
+        proc.join()
+    if on_context:
+        target.close()
+    sock.close()
+
+    assert proc.exitcode == 0
+    kind, err_msg, expected_msg = queue.get(timeout=2)
+    assert kind == "RUNTIME_ERROR"
+    assert expected_msg is not None
+    assert err_msg == expected_msg
