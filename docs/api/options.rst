@@ -157,3 +157,27 @@ Dialer, Listener, and Pipe Options
      - ``str``
      - Read-only
      - Configured dialer, listener, or pipe URL.
+
+
+Understanding ``send_buffer_size`` and ``recv_buffer_size``
+-----------------------------------------------------------
+
+The options :attr:`~pynng.Socket.send_buffer_size` and :attr:`~pynng.Socket.recv_buffer_size`
+control the depth of nng's internal in-memory queues:
+
+- **Unit:** Count of messages (not bytes). For example, a size of 256 allows up to
+  256 discrete messages to be queued.
+- **Default:** 128 messages on all sockets.
+- **Byte Limits:** To enforce maximum message sizes in bytes, configure
+  :attr:`~pynng.Socket.recv_max_size` (default is 1 MB; set to 0 for unlimited).
+
+**Behavior when buffers are full:**
+
+- In **Pub0 / Sub0**: Saturated queues cause messages to be dropped. Pub/sub is designed
+  to be lossy under load so that slow consumers do not stall publishers or other consumers.
+  If you observe dropped messages during traffic spikes, increase both the publisher's
+  ``send_buffer_size`` and subscriber's ``recv_buffer_size``.
+- In **Pair0, Push0, Req0, Rep0**: Saturated queues apply backpressure. Synchronous
+  :meth:`~pynng.Socket.send` blocks until space is available; async :meth:`~pynng.Socket.asend`
+  yields control to the event loop until space is freed. Non-blocking :meth:`~pynng.Socket.send`
+  with ``block=False`` raises :class:`~pynng.TryAgain`.

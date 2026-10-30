@@ -93,11 +93,38 @@ prefixes it wants to receive.
 **Gotchas:**
 
 - A subscriber with no subscriptions receives nothing at all.
-- Pub/sub is "best effort." Under high load, messages may be silently
-  dropped. Increase ``recv_buffer_size`` if you are losing messages.
+- Pub/sub is "best effort." Under high load or burst traffic, messages may be
+  silently dropped. Increase ``recv_buffer_size`` on the subscriber and
+  ``send_buffer_size`` on the publisher if you are losing messages.
 - Pub0 can only send; calling ``recv()`` raises :class:`~pynng.NotSupported`.
 - Sub0 can only receive; calling ``send()`` raises :class:`~pynng.NotSupported`.
 - Topic matching is a byte prefix match, not a pattern or regex.
+
+Buffer Sizing and Best-Effort Delivery
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Pub/Sub is fundamentally a **lossy, best-effort** protocol. This is an intentional
+design choice in nng: if a subscriber cannot keep up with the publisher's transmission
+rate, nng drops messages rather than stalling the publisher or exhausting host memory.
+
+- **Publisher side (``send_buffer_size``):** Determines how many outgoing messages
+  can be queued in memory before nng begins discarding messages destined for slower
+  pipes or congested networks. The default is 128 messages.
+- **Subscriber side (``recv_buffer_size``):** Determines how many incoming messages
+  can be buffered in memory waiting for application consumption (via :meth:`~pynng.Socket.recv`
+  or :meth:`~pynng.Socket.arecv`). The default is 128 messages.
+
+If your application experiences dropped messages during traffic bursts:
+
+1. **Increase buffer depths:** Set ``send_buffer_size`` on the publisher and
+   ``recv_buffer_size`` on subscribers (e.g. 512, 1024, or 4096)::
+
+       pub = pynng.Pub0(listen=addr, send_buffer_size=1024)
+       sub = pynng.Sub0(dial=addr, topics=[b""], recv_buffer_size=1024)
+
+2. **Drain promptly in async loops:** Ensure your subscriber's receive loop is not
+   blocked by slow CPU work. Offload long-running processing to worker tasks or
+   threads so the receive loop can drain the socket buffer without falling behind.
 
 Req/Rep (Request-Reply)
 -----------------------
@@ -274,3 +301,68 @@ Protocol Comparison
      - Both
      - Both
      - Mesh network, peer-to-peer broadcast
+
+
+Socket Buffer Sizing and Flow Control
+-------------------------------------
+
+Every nng socket maintains internal in-memory queues for pending send and receive
+operations. Understanding how these queues behave under load is critical for building
+robust systems.
+
+Queue Capacity: Message Counts, Not Bytes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Both :attr:`~pynng.Socket.send_buffer_size` and :attr:`~pynng.Socket.recv_buffer_size`
+are configured in **number of messages**, not byte sizes:
+
+- The default buffer size on all sockets is **128 messages**.
+- To limit message sizes by bytes, use :attr:`~pynng.Socket.recv_max_size` (default 1 MB).
+
+Delivery Semantics Under Saturation: Loss vs. Backpressure
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The behavior when a queue reaches its capacity depends entirely on the protocol:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Protocol Family
+     - Queue Full Behavior
+     - Description
+   * - **Pub0 / Sub0**
+     - **Drops** (Lossy)
+     - Messages that exceed buffer limits are silently discarded. This guarantees
+       that one slow or unresponsive subscriber never stalls the publisher or blocks
+       other subscribers.
+   * - **Pair0 / Pair1**
+     - **Backpressures** (Lossless)
+     - Senders block (in sync mode) or yield (in async mode via :meth:`~pynng.Socket.asend`)
+       until buffer space becomes available. If ``block=False`` is passed to :meth:`~pynng.Socket.send`,
+       raises :class:`~pynng.TryAgain`.
+   * - **Push0 / Pull0**
+     - **Backpressures** (Lossless)
+     - Senders pause when pipeline queues are full, applying backpressure upstream
+       to match worker processing rates.
+   * - **Req0 / Rep0**
+     - **Backpressures** (Lossless)
+     - Requests and replies are queued up to buffer limits before applying backpressure.
+   * - **Surveyor0 / Respondent0**
+     - **Backpressures** (Lossless)
+     - Queries and responses pause senders when internal pipe queues are saturated.
+
+Tuning Guidelines
+^^^^^^^^^^^^^^^^^
+
+- **For Burst Absorption:** If your application produces or receives short, intense
+  bursts of data that briefly exceed steady-state throughput, increase buffer sizes
+  (e.g., ``send_buffer_size=1024``, ``recv_buffer_size=1024``). This prevents packet
+  loss in pub/sub and prevents transient producer pauses in pipeline protocols.
+- **For Low Latency / Real-Time Data:** If you are streaming real-time sensor data,
+  telemetry, or market ticks where stale messages are useless, keep buffer sizes
+  small (e.g. 16 or 32). A small buffer ensures that received messages reflect the
+  freshest state and minimizes queue dwell time.
+- **Memory Footprint:** Each buffered message holds its payload in memory. If your
+  messages are large (e.g. megabytes each), large buffer sizes (e.g. 10,000) can
+  consume significant RAM. Size your buffers as a product of ``buffer_size * average_message_size``.

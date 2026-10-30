@@ -311,4 +311,113 @@ of context workers behind a simple ``async for`` interface:
         async for request in service:
             await request.reply(b"echo: " + request.data)
 
+
+Non-Blocking and Async Send Patterns
+------------------------------------
+
+Sending messages in asynchronous applications requires careful consideration of event
+loop cooperation and queue backpressure.
+
+The Synchronous Blocking Trap
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In async functions, you should avoid calling the synchronous :meth:`~pynng.Socket.send`
+with ``block=True`` (the default). If downstream network pipes are congested or the
+socket's send buffer (:attr:`~pynng.Socket.send_buffer_size`) is full, the underlying
+C call in nng will block the OS thread. Because Python event loops (:mod:`asyncio` or
+`Trio`_) run on a single thread by default, blocking the thread stalls **all other tasks
+and coroutines** in the entire application.
+
+Instead, use one of the four patterns below.
+
+Pattern 1: Cooperative Async Send (Standard)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The simplest and most robust approach is :meth:`~pynng.Socket.asend`:
+
+.. code-block:: python
+
+    async def producer(sock):
+        for i in range(1000):
+            data = f"event-{i}".encode()
+            # Yields cooperatively to the event loop if the send buffer is full,
+            # resuming immediately once nng accepts the message.
+            await sock.asend(data)
+
+When the socket has available buffer space, :meth:`~pynng.Socket.asend` queues the message
+almost instantly. If the buffer is full, it suspends the current task without blocking
+the event loop, allowing receive tasks and other coroutines to continue making progress.
+
+Pattern 2: Opportunistic Fast-Path Send
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For performance-critical loops where you want the lowest possible latency and CPU overhead
+during normal operation while preserving async backpressure when queues fill up:
+
+.. code-block:: python
+
+    import pynng
+
+    async def fast_send(sock, data):
+        """Send data with zero async overhead on the fast path, yielding on backpressure."""
+        try:
+            # Try non-blocking synchronous send first (sub-microsecond)
+            sock.send(data, block=False)
+        except pynng.TryAgain:
+            # Buffer is full: yield cooperatively to the event loop
+            await sock.asend(data)
+
+This pattern executes a direct non-blocking C send when queue capacity exists, completely
+bypassing async event loop overhead (AIO handle allocation and futures). If the queue
+saturates, it smoothly falls back to :meth:`~pynng.Socket.asend` to wait for space.
+
+Pattern 3: Best-Effort / Telemetry Non-Blocking Send
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For loss-tolerant telemetry, logging, or high-frequency metrics where dropping a message
+is preferable to slowing down the application:
+
+.. code-block:: python
+
+    import pynng
+
+    dropped_count = 0
+
+    def publish_telemetry(pub_sock, metrics_bytes):
+        global dropped_count
+        try:
+            pub_sock.send(metrics_bytes, block=False)
+        except pynng.TryAgain:
+            dropped_count += 1
+            # Buffer full; drop message and continue without delay
+
+Pattern 4: Decoupled Queue Worker
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When multiple producer tasks generate messages at unpredictable burst rates, decouple
+the producers from the network socket using an in-memory async queue:
+
+.. code-block:: python
+
+    import asyncio
+    import pynng
+
+    async def network_sender(sock, queue: asyncio.Queue):
+        """Dedicated background task draining the memory queue to the socket."""
+        while True:
+            data = await queue.get()
+            try:
+                await sock.asend(data)
+            finally:
+                queue.task_done()
+
+    async def main():
+        queue = asyncio.Queue(maxsize=1000)
+        async with pynng.Push0(dial="tcp://127.0.0.1:5555") as sock:
+            sender_task = asyncio.create_task(network_sender(sock, queue))
+            # Producers can put into the queue with backpressure:
+            await queue.put(b"event")
+            await queue.join()
+            sender_task.cancel()
+
 .. _Trio: https://trio.readthedocs.io

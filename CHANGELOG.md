@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Documentation guidance for `send_buffer_size` and `recv_buffer_size` queue tuning, best-effort message drop semantics in pub/sub, backpressure in pipeline and pair sockets, and non-blocking vs async send patterns in `docs/protocols.rst`, `docs/async.rst`, and `docs/api/options.rst`
 - Non-blocking convenience methods on both `Socket` and `Context`: `recv_nowait()`, `send_nowait()`, `recv_msg_nowait()`, `send_msg_nowait()`, and `recv_into_nowait()`
 - High-performance wait-free C11 MPSC intrusive queue engine and helper pooling for zero-GIL async I/O completions and up to 2x throughput speedups
 - Hardened performance benchmark suite with GC-pause isolation, best-of-N multi-trial execution, and TCP nodelay optimization for reproducible CI measurement
