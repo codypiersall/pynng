@@ -7,13 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b2] - 2026-10-31
+
+### Added
+- Upgrade bundled nng v2 from `v2.0.0` to `v2.1.0`, adding DTLS 1.2/1.3 (`dtls://`, `dtls4://`, `dtls6://`) transport support in `pynng.v2` (`Socket`, `Dialer`, `Listener`, `Pipe.scheme == "dtls"`, and `TLSConfig`)
+- `-DPYNNG_USE_LATEST_PATCH=ON` CMake option to automatically resolve `NNG_REV` and `NNG_V2_REV` to the latest upstream patch tag in their respective `major.minor` series at configure time, with a monotonicity guard that prevents downgrades if a mirror lags behind
+- Dual-track automated NNG release check workflow (`scripts/check_nng_updates.py` and `.github/workflows/check-nng.yml`) monitoring both `v1.x` (`NNG_REV`) and `v2.x` (`NNG_V2_REV`), opening automated bump PRs for verified patch releases and tracking issues for minor/major releases or pre-releases
+
+### Changed
+- Upgrade bundled `wolfSSL` from `v5.8.2-stable` to `v5.9.4-stable` when building with `-DPYNNG_TLS_ENGINE=wolf`, enabling TLS 1.3 and DTLS 1.2/1.3 (`WOLFSSL_DTLS=yes`, `WOLFSSL_DTLS13=yes`, `WOLFSSL_DTLS_MTU=yes`, `WOLFSSL_DTLS_CID=yes`) and staging a `wolfssl-config.cmake` package config for `nng v2`
+- Pin `headerkit~=0.49.4` across `pyproject.toml` build requirements, optional `dev` dependencies, and `cibuildwheel` `before-build` hooks to allow patch updates while preventing unverified breaking minor releases
+- Update documentation across `README.md`, `docs/installation.rst`, `docs/tls.rst`, `docs/transports.rst`, `docs/developing.rst`, and `docs/architecture.rst` for NNG v2.1.0, DTLS 1.2/1.3, `PYNNG_TLS_ENGINE`, `PYNNG_USE_LATEST_PATCH`, and CFFI API-mode extension architecture
+
+### Fixed
+- Fix `RawSurveyor0.recv()` / `Surveyor0(raw=True).recv()` raising `NotSupported` by removing the vestigial `survey_time` read in `Socket.recv_msg()`
+- Return `"abstract"` from `AbstractAddr.family_as_str` on nng v2
+- Check for `fork()` in `Message._ensure_can_send()` so `Socket.send_msg()` and `Context.send_msg()` reject inherited handles in forked children
+
+## [1.0.0b1] - 2026-10-27
+
 ### Added
 - Non-blocking convenience methods on both `Socket` and `Context`: `recv_nowait()`, `send_nowait()`, `recv_msg_nowait()`, `send_msg_nowait()`, and `recv_into_nowait()`
 - High-performance wait-free C11 MPSC intrusive queue engine and helper pooling for zero-GIL async I/O completions and up to 2x throughput speedups
 - Hardened performance benchmark suite with GC-pause isolation, best-of-N multi-trial execution, and TCP nodelay optimization for reproducible CI measurement
-- Dual-version coexistence with nng v2.1.0 under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`), including DTLS 1.2/1.3 (`dtls://`, `dtls4://`, `dtls6://`) transport support
-- Pluggable TLS engine support via CMake `PYNNG_TLS_ENGINE` supporting `mbed` (`mbedTLS v3.6.5`), `wolf` (`wolfSSL v5.9.4-stable` with TLS 1.3 and DTLS 1.2/1.3 enabled), `openssl` (system OpenSSL 3.5+ for v2), and `none`
-- `-DPYNNG_USE_LATEST_PATCH=ON` CMake option to automatically resolve `NNG_REV` and `NNG_V2_REV` to the latest upstream patch tag in their respective `major.minor` series at configure time
+- Dual-version coexistence with nng v2.0.0 GA under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`)
+- Pluggable TLS engine support via CMake `PYNNG_TLS_ENGINE` supporting `mbed` (`mbedTLS`), `wolf` (`wolfSSL`), `openssl` (`OpenSSL`), and `none`
 - Raw socket wrapper classes (`RawBus0`, `RawPair0`, `RawPair1`, `RawReq0`, `RawRep0`, `RawPub0`, `RawSub0`, `RawPush0`, `RawPull0`, `RawSurveyor0`, `RawRespondent0`) for broker and proxy topologies
 - `pynng.device()` and async `pynng.adevice()` forwarding proxies for kernel-level bridging
 - Zero-copy Python buffer protocol support (`Socket.recv_into`, `Socket.arecv_into`, memoryview/bytearray send) across both v1 and v2
@@ -52,7 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enable `__slots__` on hot-path `Message`, `Request`, `Stat`, and `SockAddr` model classes to eliminate per-instance `__dict__` allocation overhead
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
 - Migrate build system from setuptools/CMake to scikit-build-core with headerkit for C header generation
-- Pin `headerkit~=0.49.4` across `pyproject.toml` build requirements, optional `dev` dependencies, and `cibuildwheel` `before-build` hooks to allow patch updates while preventing unverified breaking minor releases
 - Replace handwritten CFFI bindings with auto-generated bindings from nng headers via headerkit
 - Add CI concurrency groups to cancel stale workflow runs
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
@@ -66,9 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Socket.close()` called from a pipe callback now returns at once, and the socket is closed on another thread when the running pipe callbacks have returned. Before, a close from a socket's own `post_pipe_connect` callback, or from a `post_pipe_remove` callback when no other thread was closing the socket, never returned
 
 ### Fixed
-- Fix `RawSurveyor0.recv()` / `Surveyor0(raw=True).recv()` raising `NotSupported` by removing the vestigial `survey_time` read in `Socket.recv_msg()`
-- Return `"abstract"` from `AbstractAddr.family_as_str` on nng v2
-- Check for `fork()` in `Message._ensure_can_send()` so `Socket.send_msg()` and `Context.send_msg()` reject inherited handles in forked children
 - Prevent removed pipes from staying in `Socket.pipes` with nng v1: when `NNG_PIPE_EV_REM_POST` from the reaper thread reaches Python before `NNG_PIPE_EV_ADD_PRE` or `NNG_PIPE_EV_ADD_POST` for the same pipe, the late event is now dropped, so it no longer adds the pipe back or runs `post_pipe_connect` callbacks after `post_pipe_remove` callbacks. A message received from a removed pipe also no longer adds the pipe back
 - Prevent a deadlock with nng v2 when a pipe callback reads `Socket.pipes`: v2 pipe callbacks now run without the socket's pipe lock held, as v1 callbacks already did
 - Apply `Sub0(topics=...)` before `listen`/`dial`, so messages that arrive just after the connection is made are no longer dropped before the subscription exists
@@ -102,4 +116,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `__del__` guards for `Socket`, `Context`, and `TlsConfig` to prevent tracebacks during interpreter shutdown
 - `TLS.set_server_name` validation allows empty string (valid for clearing) and rejects `None` with clear error
 
-[unreleased]: https://github.com/codypiersall/pynng/compare/v0.9.0...HEAD
+[unreleased]: https://github.com/codypiersall/pynng/compare/v1.0.0b2...HEAD
+[1.0.0b2]: https://github.com/codypiersall/pynng/compare/v1.0.0b1...v1.0.0b2
+[1.0.0b1]: https://github.com/codypiersall/pynng/compare/v0.9.0...v1.0.0b1
