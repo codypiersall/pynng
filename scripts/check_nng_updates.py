@@ -121,37 +121,6 @@ def evaluate_track(
     )
 
 
-def find_untracked_release(
-    tags: list[TagInfo],
-    current_v1_rev: str | None,
-    current_v2_rev: str | None,
-) -> tuple[TagInfo | None, TagInfo | None, str, str | None]:
-    """
-    Find a release tag (checking v2.x and v1.x tracks) that is newer than
-    the currently tracked revision in CMakeLists.txt.
-
-    Returns (target_tag, latest_stable_tag, target_var, current_rev).
-    """
-    if not tags:
-        return None, None, "NNG_REV", current_v1_rev
-
-    v2_tags = [t for t in tags if t.version.major >= 2]
-    v1_tags = [t for t in tags if t.version.major == 1]
-
-    v2_info = evaluate_track("v2", "NNG_V2_REV", current_v2_rev, v2_tags)
-    v1_info = evaluate_track("v1", "NNG_REV", current_v1_rev, v1_tags)
-
-    for info in (v2_info, v1_info):
-        if info.is_update_available and info.target_tag is not None:
-            return info.target_tag, info.latest_stable, info.target_var, info.current_rev
-
-    for info in (v2_info, v1_info):
-        if info.target_tag is not None:
-            return info.target_tag, info.latest_stable, info.target_var, info.current_rev
-
-    return None, None, "NNG_REV", current_v1_rev
-
-
 def find_target_release(tags: list[TagInfo]) -> tuple[TagInfo | None, TagInfo | None]:
     """
     Find the latest candidate release tag and latest stable release tag.
@@ -234,7 +203,9 @@ def close_superseded_pre_releases(
         if issue.get("state") != "OPEN":
             continue
         title = issue.get("title", "")
-        m = re.search(r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE)
+        m = re.search(
+            r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE
+        )
         if not m:
             continue
         issue_tag = m.group(1)
@@ -275,6 +246,37 @@ def close_superseded_pre_releases(
                 closed_issue_numbers.append(num)
 
     return closed_issue_numbers
+
+
+def is_already_handled(
+    target_tag: str,
+    existing_issues: list[dict],
+    existing_prs: list[dict],
+) -> bool:
+    """Return True if an issue or PR (open or closed) already tracks target_tag."""
+    for issue in existing_issues:
+        title = issue.get("title", "")
+        m = re.search(
+            r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE
+        )
+        if m and m.group(1) == target_tag:
+            print(
+                f"Issue #{issue['number']} ({issue.get('state')}) already exists for {target_tag}. Skipping."
+            )
+            return True
+
+    branch_name = f"chore/bump-nng-{target_tag}"
+    title_pattern = re.compile(rf"\bto\s+`?{re.escape(target_tag)}`?(?:\s|$)")
+    for pr in existing_prs:
+        if pr.get("headRefName") == branch_name or title_pattern.search(
+            pr.get("title", "")
+        ):
+            print(
+                f"PR #{pr['number']} ({pr.get('state')}) already exists for {target_tag}. Skipping."
+            )
+            return True
+
+    return False
 
 
 def write_github_output(outputs: dict[str, str]) -> None:
@@ -359,28 +361,7 @@ def main() -> int:
             )
             continue
 
-        already_handled = False
-        for issue in existing_issues:
-            title = issue.get("title", "")
-            m = re.search(r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE)
-            if m and m.group(1) == t_tag:
-                already_handled = True
-                print(
-                    f"Issue #{issue['number']} ({issue.get('state')}) already exists for {t_tag}. Skipping."
-                )
-                break
-
-        if not already_handled:
-            branch_name = f"chore/bump-nng-{t_tag}"
-            for pr in existing_prs:
-                if pr.get("headRefName") == branch_name or t_tag in pr.get("title", ""):
-                    already_handled = True
-                    print(
-                        f"PR #{pr['number']} ({pr.get('state')}) already exists for {t_tag}. Skipping."
-                    )
-                    break
-
-        if not already_handled:
+        if not is_already_handled(t_tag, existing_issues, existing_prs):
             pending_updates.append(
                 {
                     "track": info.track_name,
@@ -388,7 +369,11 @@ def main() -> int:
                     "current_rev": info.current_rev or "",
                     "latest_tag": t_tag,
                     "is_patch": "true" if info.is_patch_update else "false",
-                    "fork_latest_tag": fork_latest_tag,
+                    "fork_latest_tag": (
+                        fork_latest_tag
+                        if info.track_name == "v1"
+                        else "N/A (tracks upstream)"
+                    ),
                 }
             )
 
@@ -398,11 +383,17 @@ def main() -> int:
     write_github_output(
         {
             "should_notify": should_notify,
-            "current_rev": primary["current_rev"] if primary else (current_v2_rev or current_v1_rev or ""),
+            "current_rev": (
+                primary["current_rev"]
+                if primary
+                else (current_v2_rev or current_v1_rev or "")
+            ),
             "target_var": primary["target_var"] if primary else "NNG_REV",
             "latest_tag": primary["latest_tag"] if primary else "",
             "is_patch": primary["is_patch"] if primary else "false",
-            "fork_latest_tag": fork_latest_tag,
+            "fork_latest_tag": (
+                primary["fork_latest_tag"] if primary else fork_latest_tag
+            ),
             "updates_json": json.dumps(pending_updates),
         }
     )

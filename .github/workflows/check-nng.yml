@@ -101,7 +101,7 @@ jobs:
             set -e
 
             pr_created="false"
-            if [ "$build_status" = "success" ] && [ "$test_status" = "success" ]; then
+            if [ "$is_patch" = "true" ] && [ "$build_status" = "success" ] && [ "$test_status" = "success" ]; then
               branch_name="chore/bump-nng-${latest_tag}"
               git checkout -B "$branch_name"
               git add CMakeLists.txt
@@ -120,6 +120,9 @@ jobs:
                 )
                 if gh pr create --title "$pr_title" --body "$pr_body" --label "dependencies" --head "$branch_name"; then
                   pr_created="true"
+                else
+                  echo "Failed to create PR; deleting remote branch $branch_name and falling back to creating an issue."
+                  git push origin --delete "$branch_name" || true
                 fi
               fi
             fi
@@ -150,3 +153,4 @@ jobs:
               gh issue create --title "$title" --body "$body" --label "dependencies"
             fi
           done
+          git checkout -f "$base_sha"

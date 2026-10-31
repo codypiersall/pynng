@@ -60,8 +60,18 @@ using `scikit-build-core config-settings <https://scikit-build-core.readthedocs.
    # Build against a fork or custom repository
    pip install -Ccmake.define.NNG_REPO=https://github.com/myorg/nng .
 
-   # Override mbedTLS version
+   # Select the TLS engine (mbed, wolf, openssl, or none)
+   pip install -Ccmake.define.PYNNG_TLS_ENGINE=wolf .
+
+   # Override mbedTLS or wolfSSL version
    pip install -Ccmake.define.MBEDTLS_REV=v3.6.5 .
+   pip install -Ccmake.define.PYNNG_TLS_ENGINE=wolf -Ccmake.define.WOLFSSL_REV=v5.9.4-stable .
+
+   # Build against system OpenSSL 3.5+ (v2 only; v1 built without TLS)
+   pip install -Ccmake.define.PYNNG_TLS_ENGINE=openssl -Ccmake.define.OPENSSL_ROOT_DIR=/opt/openssl .
+
+   # Build a Debug configuration
+   pip install -Ccmake.build-type=Debug .
 
 Available options:
 
@@ -80,22 +90,46 @@ Available options:
      - Git tag, branch, or commit of NNG v1 to use (``import pynng``)
    * - ``NNG_V2_REPO``
      - ``https://github.com/nanomsg/nng``
-     - Git URL of the NNG v2 repository to build from
+     - Git URL (or local filesystem path) of the NNG v2 repository to build from
    * - ``NNG_V2_REV``
      - ``v2.1.0``
      - Git tag, branch, or commit of NNG v2 to use (``import pynng.v2``)
    * - ``BUILD_NNG_V2``
      - ``ON``
-     - Whether to build the NNG v2 extension module alongside v1
+     - Whether to build the NNG v2 extension module (``pynng._nng_v2``) alongside v1
    * - ``PYNNG_USE_LATEST_PATCH``
      - ``OFF``
      - Resolve ``NNG_REV`` and ``NNG_V2_REV`` to the latest upstream patch tag in their ``major.minor`` series
+   * - ``PYNNG_TLS_ENGINE``
+     - ``mbed``
+     - TLS backend to build NNG against: ``mbed`` (fetches mbedTLS for v1 & v2), ``wolf`` (fetches wolfSSL with TLS 1.3 and DTLS 1.2/1.3 for v1 & v2), ``openssl`` (uses system OpenSSL 3.5+ for v2 only; v1 built without TLS), or ``none`` (disables TLS)
    * - ``MBEDTLS_REPO``
      - ``https://github.com/ARMmbed/mbedtls.git``
-     - Git URL of the mbedTLS repository
+     - Git URL of the mbedTLS repository (when ``PYNNG_TLS_ENGINE=mbed``)
    * - ``MBEDTLS_REV``
      - ``v3.6.5``
      - Git tag, branch, or commit of mbedTLS to use
+   * - ``WOLFSSL_REPO``
+     - ``https://github.com/wolfSSL/wolfssl``
+     - Git URL of the wolfSSL repository (when ``PYNNG_TLS_ENGINE=wolf``)
+   * - ``WOLFSSL_REV``
+     - ``v5.9.4-stable``
+     - Git tag, branch, or commit of wolfSSL to use (configured with TLS 1.3 and DTLS 1.2/1.3 support)
+   * - ``OPENSSL_ROOT_DIR``
+     - *(unset)*
+     - Optional root path to a system OpenSSL 3.5+ installation (when ``PYNNG_TLS_ENGINE=openssl``)
+   * - ``CMAKE_BUILD_TYPE``
+     - ``Release``
+     - CMake build configuration (``Release`` or ``Debug``; can also be set via ``-Ccmake.build-type=Debug``)
+   * - ``FETCHCONTENT_SOURCE_DIR_NNG``
+     - *(unset)*
+     - Point NNG v1 ``FetchContent`` to an existing local checkout instead of cloning from ``NNG_REPO``
+   * - ``FETCHCONTENT_SOURCE_DIR_MBEDTLS``
+     - *(unset)*
+     - Point mbedTLS ``FetchContent`` to an existing local checkout instead of cloning from ``MBEDTLS_REPO``
+   * - ``FETCHCONTENT_SOURCE_DIR_WOLFSSL``
+     - *(unset)*
+     - Point wolfSSL ``FetchContent`` to an existing local checkout instead of cloning from ``WOLFSSL_REPO``
 
 Multiple options can be combined:
 

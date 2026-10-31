@@ -1,9 +1,10 @@
 TLS Guide
 =========
 
-pynng supports TLS-encrypted connections using either the ``tls+tcp://``
-(TLS over TCP) or ``wss://`` (WebSocket Secure) transport schemes. TLS is
-configured through the :class:`~pynng.TLSConfig` class, which wraps NNG's
+pynng supports TLS-encrypted connections using ``tls+tcp://`` (TLS over TCP),
+``wss://`` (WebSocket Secure), and — in ``pynng.v2`` (backed by NNG ``v2.1.0``)
+— ``dtls://`` / ``dtls4://`` / ``dtls6://`` (Datagram TLS 1.2 and 1.3 over UDP).
+TLS is configured through the :class:`~pynng.TLSConfig` class, which wraps NNG's
 TLS configuration.
 
 .. contents:: Topics
@@ -20,9 +21,41 @@ To use TLS with pynng:
 2. Create a :class:`~pynng.TLSConfig` for the client (with the CA
    certificate to verify the server).
 3. Assign the TLS config to each socket via the ``tls_config`` attribute (or
-   pass ``tls_config`` to the socket constructor).
-4. Use ``tls+tcp://`` or ``wss://`` as the transport scheme when listening and
-   dialing.
+   pass ``tls_config`` to the socket constructor, or — in ``pynng.v2`` — directly
+   to ``listen(..., tls_config=...)`` / ``dial(..., tls_config=...)``).
+4. Use ``tls+tcp://``, ``wss://``, or (in ``pynng.v2``) ``dtls://`` as the
+   transport scheme when listening and dialing.
+
+TLS Engines & NNG v2 Capabilities
+---------------------------------
+
+When building ``pynng`` from source, you can select the underlying TLS backend
+via the ``PYNNG_TLS_ENGINE`` CMake variable (see :doc:`installation`):
+
+- ``mbed`` (default): Fetches and builds **mbedTLS** (``MBEDTLS_REV``, default
+  ``v3.6.5``) from source for both NNG v1 (``import pynng``) and NNG v2
+  (``import pynng.v2``).
+- ``wolf``: Fetches and builds **wolfSSL** (``WOLFSSL_REV``, default
+  ``v5.9.4-stable``) from source for both NNG v1 and NNG v2, configured with
+  TLS 1.3, DTLS 1.2, DTLS 1.3 (including Connection ID and HRR cookie support),
+  and configurable DTLS MTU.
+- ``openssl``: Links against system **OpenSSL 3.5+** for NNG v2 (``pynng.v2``
+  only; NNG v1 is built without TLS).
+- ``none``: Disables TLS support.
+
+In ``pynng.v2`` (backed by NNG ``v2.1.0``), the TLS subsystem adds:
+
+- **DTLS 1.2 and DTLS 1.3 transports** (``dtls://``, ``dtls4://``, ``dtls6://``)
+  for encrypted datagram messaging over UDP when built with DTLS-capable
+  engines (``mbed``, ``wolf v5.9.4-stable``, or ``openssl``).
+- **Hybrid post-quantum key exchange** for TLS 1.3 and DTLS 1.3 when supported
+  by the configured TLS engine (such as wolfSSL ``v5.9.4-stable`` with ML-KEM
+  or OpenSSL 3.5+).
+- **Per-endpoint TLS configuration**: In ``pynng.v2``, ``tls_config`` can be
+  passed directly to :meth:`~pynng.Socket.listen` and :meth:`~pynng.Socket.dial`
+  (or inspected on ``listener.tls_config`` / ``dialer.tls_config``), allowing a
+  single socket to attach different TLS configurations to different endpoints
+  or mix TLS and non-TLS endpoints on the same socket.
 
 
 Server Configuration

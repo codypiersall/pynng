@@ -645,6 +645,64 @@ def test_v2_tls_endpoints_and_urls():
         assert cli.recv() == b"tls-v2-reply"
 
 
+@pytest.mark.requires_tls("v2")
+def test_v2_dtls_endpoints_and_urls():
+    """Verify DTLS communication, pipe scheme, socket-level tls_config, and peer rejection on v2."""
+    from test_tls import CA_CERT
+
+    srv_cfg, cli_cfg = _tls_configs(v2.TLSConfig, v2.TLSConfig)
+
+    # 1. Endpoint-level tls_config + pipe.scheme == "dtls"
+    with (
+        v2.Pair0(recv_timeout=MEDIUM_TIMEOUT, send_timeout=MEDIUM_TIMEOUT) as srv,
+        v2.Pair0(recv_timeout=MEDIUM_TIMEOUT, send_timeout=MEDIUM_TIMEOUT) as cli,
+    ):
+        listener = srv.listen("dtls://127.0.0.1:0", tls_config=srv_cfg)
+        assert listener.tls_config is srv_cfg
+        port = _bound_port(listener)
+        assert port > 0
+        assert listener.url == f"dtls://127.0.0.1:{port}"
+
+        dialer = cli.dial(listener.url, tls_config=cli_cfg)
+        assert dialer.tls_config is cli_cfg
+        assert dialer.url == f"dtls://127.0.0.1:{port}"
+
+        cli.send(b"dtls-v2-payload")
+        msg = srv.recv_msg()
+        assert msg.bytes == b"dtls-v2-payload"
+        assert msg.pipe.scheme == "dtls"
+        srv.send(b"dtls-v2-reply")
+        reply = cli.recv_msg()
+        assert reply.bytes == b"dtls-v2-reply"
+        assert reply.pipe.scheme == "dtls"
+
+    # 2. Socket-level tls_config inheritance on dtls:// endpoints + untrusted peer rejection
+    bad_cli_cfg = v2.TLSConfig(
+        v2.TLSConfig.MODE_CLIENT,
+        ca_string=CA_CERT,
+        server_name="wrong-hostname.invalid",
+    )
+    with (
+        v2.Pair0(
+            tls_config=srv_cfg, recv_timeout=MEDIUM_TIMEOUT, send_timeout=MEDIUM_TIMEOUT
+        ) as srv,
+        v2.Pair0(
+            tls_config=cli_cfg, recv_timeout=MEDIUM_TIMEOUT, send_timeout=MEDIUM_TIMEOUT
+        ) as cli,
+        v2.Pair0(recv_timeout=FAST_TIMEOUT, send_timeout=FAST_TIMEOUT) as bad_cli,
+    ):
+        listener = srv.listen("dtls://127.0.0.1:0")
+        assert listener.tls_config is srv_cfg
+
+        with pytest.raises((pynng.AuthenticationError, pynng.CryptoError)):
+            bad_cli.dial(listener.url, tls_config=bad_cli_cfg, block=True)
+
+        dialer = cli.dial(listener.url)
+        assert dialer.tls_config is cli_cfg
+        cli.send(b"dtls-socket-default")
+        assert srv.recv() == b"dtls-socket-default"
+
+
 @pytest.mark.requires_tls
 def test_v2_socket_tls_config_skips_endpoints_without_tls():
     """A socket-level TLS config applies only to endpoints whose transport has TLS."""

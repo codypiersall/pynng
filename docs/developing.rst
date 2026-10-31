@@ -9,11 +9,21 @@ Build System
 pynng uses `scikit-build-core`_ as its build backend (configured in
 ``pyproject.toml``). The build process:
 
-1. CMake fetches NNG and mbedTLS via ``FetchContent``
-2. `headerkit`_ parses NNG's C headers using libclang to auto-generate CFFI
-   bindings (``pynng/_nng.py``)
-3. CFFI compiles the extension module
-4. `setuptools-scm`_ derives the version from git tags
+1. CMake fetches **NNG v1** (``NNG_REV``, default ``v1.12.5``) via
+   ``FetchContent``, **NNG v2** (``NNG_V2_REV``, default ``v2.1.0``) via
+   ``FetchContent_Populate`` + ``ExternalProject_Add``, and the selected TLS
+   library via ``PYNNG_TLS_ENGINE``:
+
+   - ``mbed`` (default): fetches and builds `mbedtls`_ (``MBEDTLS_REV``, default ``v3.6.5``) for v1 and v2
+   - ``wolf``: fetches and builds `wolfssl`_ (``WOLFSSL_REV``, default ``v5.9.4-stable``, configured with TLS 1.3 and DTLS 1.2/1.3) for v1 and v2
+   - ``openssl``: links against system OpenSSL 3.5+ via ``find_package(OpenSSL 3.5 REQUIRED)`` (v2 only; v1 is built without TLS)
+   - ``none``: disables TLS for both v1 and v2
+
+2. `headerkit`_ parses NNG's C headers using ``libclang`` via ``build_pynng.py``
+   to auto-generate CFFI bindings for both ``pynng._nng`` (v1) and
+   ``pynng._nng_v2`` (v2).
+3. CFFI compiles the C11 extension modules (``_nng`` and ``_nng_v2``).
+4. `setuptools-scm`_ derives the version from git tags into ``pynng/_version.py``.
 
 Install for development with:
 
@@ -24,18 +34,24 @@ Install for development with:
 Build Options
 -------------
 
-TLS engine selection:
+All CMake cache variables and ``build_pynng.py`` environment variables can be
+overridden during development builds:
 
 .. code-block:: bash
 
-   # Default (mbedTLS)
+   # Default (mbedTLS v3.6.5 for v1 and v2)
    uv pip install -e '.[dev]'
 
-   # wolfSSL
+   # wolfSSL (v5.9.4-stable with TLS 1.3 and DTLS 1.2/1.3)
    uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=wolf"
+
+   # Override wolfSSL or mbedTLS git revision / repository
+   uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=wolf;-DWOLFSSL_REV=v5.9.4-stable"
+   uv pip install -e '.[dev]' -C cmake.args="-DMBEDTLS_REV=v3.6.5"
 
    # OpenSSL 3.5+ (v2 only; v1 built without TLS)
    uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=openssl"
+   uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=openssl;-DOPENSSL_ROOT_DIR=/opt/openssl"
 
    # Disable TLS
    uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_TLS_ENGINE=none"
@@ -46,23 +62,53 @@ TLS engine selection:
    # Resolve NNG_REV (v1.12.x) and NNG_V2_REV (v2.1.x) to latest upstream patch tags
    uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_USE_LATEST_PATCH=ON"
 
+   # Override NNG v1 or v2 repository/revision
+   uv pip install -e '.[dev]' -C cmake.args="-DNNG_REV=v1.12.5;-DNNG_V2_REV=v2.1.0"
+
+   # Debug build
+   uv pip install -e '.[dev]' -C cmake.build-type=Debug
+
+CFFI Codegen Environment Variables (``build_pynng.py``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+During the CMake build, ``CMakeLists.txt`` invokes ``build_pynng.py`` via
+``cffi_buildtool`` with the following environment variables (which can also be
+set when running ``build_pynng.py`` directly):
+
+- ``NNG_INCLUDE_DIR``: Path to the directory containing ``nng/nng.h`` (set by
+  CMake to the v1 ``nng`` source include directory or the staged v2 install
+  include directory; auto-detected from build tree or system paths if unset).
+- ``NNG_MODULE_NAME``: Target CFFI extension module name — ``pynng._nng``
+  (default, parses ``NNG_V1_HEADERS``) or ``pynng._nng_v2`` (parses
+  ``NNG_V2_HEADERS``).
+- ``PYNNG_TLS_ENABLED``: ``"1"`` when TLS is enabled for the target module, or
+  ``"0"`` when TLS is disabled (excludes TLS-only symbols such as
+  ``nng_tls_config_psk`` from the generated ``cdef``).
+
 Testing without pulling dependencies from GitHub
 -------------------------------------------------
 
-By default, CMake's ``FetchContent`` downloads NNG and mbedTLS from GitHub during
-the build. To speed up development iteration, you can point the build to local
-clones instead by passing CMake defines:
+By default, CMake's ``FetchContent`` downloads NNG and the selected TLS library
+from GitHub during the build. To speed up development iteration, you can point
+the build to local clones instead by passing CMake defines:
 
 .. code-block:: bash
 
    # Clone once locally
    git clone https://github.com/nanomsg/nng ~/deps/nng
    git clone https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
+   git clone https://github.com/wolfSSL/wolfssl ~/deps/wolfssl
 
-   # Build with local sources via CMake defines
+   # Build with local mbedTLS and NNG sources via CMake defines
    pip install -e . \
      -C cmake.define.FETCHCONTENT_SOURCE_DIR_NNG=$HOME/deps/nng \
+     -C cmake.define.NNG_V2_REPO=$HOME/deps/nng \
      -C cmake.define.FETCHCONTENT_SOURCE_DIR_MBEDTLS=$HOME/deps/mbedtls
+
+   # Or build with a local wolfSSL checkout
+   pip install -e . \
+     -C cmake.define.PYNNG_TLS_ENGINE=wolf \
+     -C cmake.define.FETCHCONTENT_SOURCE_DIR_WOLFSSL=$HOME/deps/wolfssl
 
 Testing CI changes
 ------------------
@@ -78,7 +124,7 @@ If you have single failing tests, you can narrow down the build by setting speci
 or architectures.
 
 Running CI Locally
-##################
+^^^^^^^^^^^^^^^^^^
 
 Use this command to run Github Actions locally using the `nektos/act`_ tool
 
@@ -152,3 +198,4 @@ VS Code and lldb:
 .. _nng: https://github.com/nanomsg/nng
 .. _scikit-build-core: https://scikit-build-core.readthedocs.io/
 .. _setuptools-scm: https://github.com/pypa/setuptools-scm
+.. _wolfssl: https://github.com/wolfSSL/wolfssl
