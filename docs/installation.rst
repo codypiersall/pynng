@@ -40,14 +40,22 @@ CI. For local builds, install LLVM from https://releases.llvm.org/.
 Customizing the build
 ---------------------
 
-pynng uses CMake cache variables to configure which versions of NNG and mbedTLS
-are fetched and built. You can override these at install time using
-`scikit-build-core config-settings <https://scikit-build-core.readthedocs.io/en/stable/configuration/>`_:
+``pynng`` 1.x builds and bundles both **NNG v1** (used by top-level ``import pynng``)
+and **NNG v2** (used by ``import pynng.v2``; ``pynng`` 2.0 will make NNG v2 the
+top-level default).
+
+pynng uses CMake cache variables to configure which versions of NNG (v1 and v2)
+and TLS libraries are fetched and built. You can override these at install time
+using `scikit-build-core config-settings <https://scikit-build-core.readthedocs.io/en/stable/configuration/>`_:
 
 .. code-block:: bash
 
-   # Build against a specific NNG version
-   pip install -Ccmake.define.NNG_REV=v1.12 .
+   # Build against a specific NNG v1 or v2 version
+   pip install -Ccmake.define.NNG_REV=v1.12.5 -Ccmake.define.NNG_V2_REV=v2.1.0 .
+
+   # Automatically resolve NNG_REV and NNG_V2_REV to the latest upstream patch
+   # release in their major.minor series (e.g. latest v1.12.x and v2.1.x)
+   pip install -Ccmake.define.PYNNG_USE_LATEST_PATCH=ON .
 
    # Build against a fork or custom repository
    pip install -Ccmake.define.NNG_REPO=https://github.com/myorg/nng .
@@ -66,10 +74,22 @@ Available options:
      - Description
    * - ``NNG_REPO``
      - ``https://github.com/nanomsg/nng``
-     - Git URL of the NNG repository to build from
+     - Git URL of the NNG v1 repository to build from
    * - ``NNG_REV``
      - ``v1.12.5``
-     - Git tag, branch, or commit of NNG to use
+     - Git tag, branch, or commit of NNG v1 to use (``import pynng``)
+   * - ``NNG_V2_REPO``
+     - ``https://github.com/nanomsg/nng``
+     - Git URL of the NNG v2 repository to build from
+   * - ``NNG_V2_REV``
+     - ``v2.1.0``
+     - Git tag, branch, or commit of NNG v2 to use (``import pynng.v2``)
+   * - ``BUILD_NNG_V2``
+     - ``ON``
+     - Whether to build the NNG v2 extension module alongside v1
+   * - ``PYNNG_USE_LATEST_PATCH``
+     - ``OFF``
+     - Resolve ``NNG_REV`` and ``NNG_V2_REV`` to the latest upstream patch tag in their ``major.minor`` series
    * - ``MBEDTLS_REPO``
      - ``https://github.com/ARMmbed/mbedtls.git``
      - Git URL of the mbedTLS repository

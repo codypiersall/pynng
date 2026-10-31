@@ -43,6 +43,9 @@ TLS engine selection:
    # Disable v2 module
    uv pip install -e '.[dev]' -C cmake.args="-DBUILD_NNG_V2=OFF"
 
+   # Resolve NNG_REV (v1.12.x) and NNG_V2_REV (v2.1.x) to latest upstream patch tags
+   uv pip install -e '.[dev]' -C cmake.args="-DPYNNG_USE_LATEST_PATCH=ON"
+
 Testing without pulling dependencies from GitHub
 -------------------------------------------------
 

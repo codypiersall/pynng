@@ -120,6 +120,22 @@ Many other protocols are available as well:
 * `Bus0`: mesh networking, where each node can send to and receive from all
   directly connected peers.
 
+### NNG v1 and NNG v2 Support
+
+`pynng` 1.x bundles **both** NNG v1 (`v1.12.5`) and NNG v2 (`v2.1.0`) in the
+same wheel:
+
+* `import pynng` — uses **NNG v1** (`v1.12.5` by default), preserving 100%
+  compatibility with existing `pynng` applications.
+* `import pynng.v2` — uses **NNG v2** (`v2.1.0` by default) with the same
+  Pythonic socket/context API (`pynng` 2.0 will make NNG v2 the top-level
+  default).
+
+When building from source, you can override `NNG_REV` (v1) or `NNG_V2_REV` (v2),
+or pass `-C cmake.args="-DPYNNG_USE_LATEST_PATCH=ON"` to automatically resolve
+both tracks to the latest upstream patch tag in their respective `major.minor`
+series.
+
 Examples
 --------
 

@@ -41,6 +41,7 @@ endif()
 # ============================================
 
 option(BUILD_NNG_V2 "Build nng v2 CFFI module alongside v1" ON)
+option(PYNNG_USE_LATEST_PATCH "Resolve NNG_REV and NNG_V2_REV to the latest upstream patch tag in their major.minor series" OFF)
 
 # TLS engine selection: mbed (default), wolf, openssl (v2 only), or none.
 # - mbed: Fetches and builds mbedTLS from source (works with v1 and v2)
@@ -66,7 +67,55 @@ set(WOLFSSL_REV "v5.8.0-stable" CACHE STRING "Revision of wolfSSL to use")
 
 # v2-specific repository settings
 set(NNG_V2_REPO "https://github.com/nanomsg/nng" CACHE STRING "URL of the NNG v2 repository")
-set(NNG_V2_REV "v2.0.0" CACHE STRING "Revision of NNG v2 to use")
+set(NNG_V2_REV "v2.1.0" CACHE STRING "Revision of NNG v2 to use")
+
+# Optionally resolve NNG_REV and NNG_V2_REV to the latest upstream patch tag
+# in their respective major.minor series (with fallback if offline or non-tag).
+function(_pynng_resolve_latest_patch repo_url rev_var)
+  set(_cur_rev "${${rev_var}}")
+  if(_cur_rev MATCHES "^v([0-9]+)\\.([0-9]+)\\.[0-9]+$")
+    set(_major "${CMAKE_MATCH_1}")
+    set(_minor "${CMAKE_MATCH_2}")
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+      execute_process(
+        COMMAND "${GIT_EXECUTABLE}" ls-remote --tags --refs "${repo_url}" "refs/tags/v${_major}.${_minor}.*"
+        RESULT_VARIABLE _git_res
+        OUTPUT_VARIABLE _git_out
+        ERROR_QUIET
+        TIMEOUT 15
+      )
+      if(_git_res EQUAL 0 AND _git_out)
+        set(_best_patch -1)
+        set(_best_tag "${_cur_rev}")
+        string(REPLACE "\n" ";" _lines "${_git_out}")
+        foreach(_line IN LISTS _lines)
+          if(_line MATCHES "refs/tags/(v${_major}\\.${_minor}\\.([0-9]+))$")
+            set(_candidate_tag "${CMAKE_MATCH_1}")
+            set(_candidate_patch "${CMAKE_MATCH_2}")
+            if(_candidate_patch GREATER _best_patch)
+              set(_best_patch "${_candidate_patch}")
+              set(_best_tag "${_candidate_tag}")
+            endif()
+          endif()
+        endforeach()
+        if(NOT _best_tag STREQUAL _cur_rev)
+          message(STATUS "PYNNG_USE_LATEST_PATCH: Resolved ${rev_var} from ${_cur_rev} to ${_best_tag}")
+          set(${rev_var} "${_best_tag}" PARENT_SCOPE)
+        else()
+          message(STATUS "PYNNG_USE_LATEST_PATCH: ${rev_var} (${_cur_rev}) is already the latest v${_major}.${_minor}.x patch")
+        endif()
+      else()
+        message(STATUS "PYNNG_USE_LATEST_PATCH: Could not query ${repo_url}; falling back to pinned ${rev_var}=${_cur_rev}")
+      endif()
+    endif()
+  endif()
+endfunction()
+
+if(PYNNG_USE_LATEST_PATCH)
+  _pynng_resolve_latest_patch("${NNG_REPO}" NNG_REV)
+  _pynng_resolve_latest_patch("${NNG_V2_REPO}" NNG_V2_REV)
+endif()
 
 # Function to download and build dependencies
 include(FetchContent)

@@ -7,7 +7,9 @@ pynng.v2 -- nng v2 protocol bindings for Python.
     This module requires the ``_nng_v2`` CFFI extension to be built.
 
 This module provides the same protocol classes as ``pynng`` (v1), but backed
-by nng v2. Both v1 and v2 can coexist in the same process.
+by nng v2 (pinned to ``v2.1.0`` by default; ``pynng`` 1.x defaults to nng v1
+at ``import pynng``, while ``pynng`` 2.0 will make nng v2 the top-level default).
+Both v1 and v2 can coexist in the same process.
 
 Usage::
 

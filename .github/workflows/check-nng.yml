@@ -21,7 +21,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       issues: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v7
@@ -43,74 +45,108 @@ jobs:
         run: |
           python scripts/check_nng_updates.py
 
-      - name: Try building against latest upstream
-        if: steps.check.outputs.should_notify == 'true'
-        id: build
-        continue-on-error: true
-        run: |
-          sudo apt-get update && sudo apt-get install -y ninja-build libclang-dev python3-dev
-          uv venv /tmp/build-venv
-
-          set -o pipefail
-
-          latest_tag="${{ steps.check.outputs.latest_tag }}"
-          echo "Testing build against upstream nng $latest_tag..."
-
-          # Temporarily modify CMakeLists.txt to point to upstream
-          sed -i "s|set(NNG_REPO .*|set(NNG_REPO \"https://github.com/nanomsg/nng\" CACHE STRING \"URL of the NNG repository\")|" CMakeLists.txt
-          sed -i "s|set(NNG_REV .*|set(NNG_REV \"$latest_tag\" CACHE STRING \"Revision of NNG to use\")|" CMakeLists.txt
-
-          uv pip install --python /tmp/build-venv -v -e '.[dev]' 2>&1 | tail -50
-          build_result=$?
-
-          if [ $build_result -eq 0 ]; then
-            echo "build_status=success" >> $GITHUB_OUTPUT
-            /tmp/build-venv/bin/pytest -v test 2>&1 | tail -50
-            test_result=$?
-            if [ $test_result -eq 0 ]; then
-              echo "test_status=success" >> $GITHUB_OUTPUT
-            else
-              echo "test_status=failure" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "build_status=failure" >> $GITHUB_OUTPUT
-            echo "test_status=skipped" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create issue
+      - name: Test and open PR or issue for each track update
         if: steps.check.outputs.should_notify == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_REV: ${{ steps.check.outputs.current_rev }}
-          LATEST_TAG: ${{ steps.check.outputs.latest_tag }}
-          FORK_LATEST: ${{ steps.check.outputs.fork_latest_tag }}
-          BUILD_STATUS: ${{ steps.build.outputs.build_status || 'skipped' }}
-          TEST_STATUS: ${{ steps.build.outputs.test_status || 'skipped' }}
+          UPDATES_JSON: ${{ steps.check.outputs.updates_json }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          title="nng update available: $LATEST_TAG"
+          sudo apt-get update && sudo apt-get install -y ninja-build libclang-dev python3-dev jq
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          base_sha="$(git rev-parse HEAD)"
+          count="$(echo "$UPDATES_JSON" | jq 'length')"
 
-          body=$(cat <<EOF
+          for i in $(seq 0 $((count - 1))); do
+            track="$(echo "$UPDATES_JSON" | jq -r ".[$i].track")"
+            target_var="$(echo "$UPDATES_JSON" | jq -r ".[$i].target_var")"
+            current_rev="$(echo "$UPDATES_JSON" | jq -r ".[$i].current_rev")"
+            latest_tag="$(echo "$UPDATES_JSON" | jq -r ".[$i].latest_tag")"
+            is_patch="$(echo "$UPDATES_JSON" | jq -r ".[$i].is_patch")"
+            fork_latest="$(echo "$UPDATES_JSON" | jq -r ".[$i].fork_latest_tag")"
+
+            echo "=== Testing track $track ($target_var: $current_rev -> $latest_tag, is_patch=$is_patch) ==="
+            git checkout -f "$base_sha"
+            rm -rf /tmp/build-venv build
+            uv venv /tmp/build-venv
+
+            if [ "$target_var" = "NNG_V2_REV" ]; then
+              sed -i "s|set(NNG_V2_REPO .*|set(NNG_V2_REPO \"https://github.com/nanomsg/nng\" CACHE STRING \"URL of the NNG v2 repository\")|" CMakeLists.txt
+              sed -i "s|set(NNG_V2_REV .*|set(NNG_V2_REV \"$latest_tag\" CACHE STRING \"Revision of NNG v2 to use\")|" CMakeLists.txt
+            else
+              sed -i "s|set(NNG_REPO .*|set(NNG_REPO \"https://github.com/nanomsg/nng\" CACHE STRING \"URL of the NNG repository\")|" CMakeLists.txt
+              sed -i "s|set(NNG_REV .*|set(NNG_REV \"$latest_tag\" CACHE STRING \"Revision of NNG to use\")|" CMakeLists.txt
+            fi
+
+            set +e
+            set -o pipefail
+            uv pip install --python /tmp/build-venv -v -e '.[dev]' 2>&1 | tail -50
+            build_result=$?
+
+            if [ $build_result -eq 0 ]; then
+              build_status="success"
+              /tmp/build-venv/bin/pytest -v test 2>&1 | tail -50
+              test_result=$?
+              if [ $test_result -eq 0 ]; then
+                test_status="success"
+              else
+                test_status="failure"
+              fi
+            else
+              build_status="failure"
+              test_status="skipped"
+            fi
+            set -e
+
+            pr_created="false"
+            if [ "$build_status" = "success" ] && [ "$test_status" = "success" ]; then
+              branch_name="chore/bump-nng-${latest_tag}"
+              git checkout -B "$branch_name"
+              git add CMakeLists.txt
+              git commit -m "build(deps): bump ${target_var} from ${current_rev} to ${latest_tag}"
+              if git push -u origin "$branch_name" --force; then
+                pr_title="build(deps): bump ${target_var} from ${current_rev} to ${latest_tag}"
+                pr_body=$(cat <<EOF
+          Bumps \`${target_var}\` (NNG ${track} track) from \`${current_rev}\` to [\`${latest_tag}\`](https://github.com/nanomsg/nng/releases/tag/${latest_tag}).
+
+          ## Verification
+          - **Build:** ${build_status}
+          - **Tests:** ${test_status}
+          - **Patch update:** ${is_patch}
+          - **Workflow run:** ${RUN_URL}
+          EOF
+                )
+                if gh pr create --title "$pr_title" --body "$pr_body" --label "dependencies" --head "$branch_name"; then
+                  pr_created="true"
+                fi
+              fi
+            fi
+
+            if [ "$pr_created" != "true" ]; then
+              title="nng update available: $latest_tag"
+              body=$(cat <<EOF
           A new nng version is available upstream.
 
           ## Version Info
-          - **Current tracking:** \`$CURRENT_REV\`
-          - **Latest upstream tag:** \`$LATEST_TAG\`
-          - **Latest fork tag:** \`$FORK_LATEST\`
+          - **Track:** \`$track\` (\`$target_var\`)
+          - **Current tracking (\`$target_var\`):** \`$current_rev\`
+          - **Latest upstream tag:** \`$latest_tag\`
+          - **Latest fork tag:** \`$fork_latest\`
 
           ## Build Test Results
-          - **Build:** $BUILD_STATUS
-          - **Tests:** $TEST_STATUS
+          - **Build:** $build_status
+          - **Tests:** $test_status
 
           ## Action Required
-          1. Review [nng changelog](https://github.com/nanomsg/nng/releases/tag/$LATEST_TAG)
-          2. Update fork if needed: \`https://github.com/elijahr/nng\`
-          3. Update \`NNG_REV\` in \`CMakeLists.txt\`
-          4. Run full test suite
+          1. Review [nng changelog](https://github.com/nanomsg/nng/releases/tag/$latest_tag)
+          2. Update \`$target_var\` in \`CMakeLists.txt\`
+          3. Run full test suite
 
-          **Workflow run:** $run_url
+          **Workflow run:** $RUN_URL
           EOF
-          )
-
-          gh issue create --title "$title" --body "$body" --label "dependencies"
+              )
+              gh issue create --title "$title" --body "$body" --label "dependencies"
+            fi
+          done
