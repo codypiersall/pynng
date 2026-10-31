@@ -242,6 +242,49 @@ IPC without managing socket files on the filesystem.
 
 **Performance:** Same as IPC (Unix domain sockets under the hood).
 
+TLS over TCP (``tls+tcp://``) and DTLS (``dtls://``)
+----------------------------------------------------
+
+**Address format:** ``tls+tcp://host:port`` (NNG v1 and v2) or
+``dtls://host:port`` / ``dtls4://host:port`` / ``dtls6://[host]:port``
+(``pynng.v2``, backed by NNG ``v2.1.0``)
+
+- ``tls+tcp://`` provides stream-oriented TLS encryption over TCP (available in
+  both ``import pynng`` and ``import pynng.v2``).
+- ``dtls://`` (along with ``dtls4://`` for IPv4 and ``dtls6://`` for IPv6)
+  provides **Datagram TLS (DTLS 1.2 and DTLS 1.3)** over UDP in ``pynng.v2``
+  (NNG ``v2.1.0``) when built with TLS and DTLS enabled (default ``mbed``
+  ``v3.6.5``, ``wolf`` ``v5.9.4-stable``, or ``openssl`` 3.5+). NNG ``v2.1.0``
+  also supports hybrid post-quantum key exchange for TLS 1.3 and DTLS 1.3 when
+  the selected TLS engine provides it.
+
+See :doc:`tls` for complete certificate, :class:`~pynng.TLSConfig`, and TLS
+engine configuration details.
+
+**Example (DTLS in ``pynng.v2``):**
+
+.. code-block:: python
+
+    import pynng.v2 as pynng
+
+    server_tls = pynng.TLSConfig(
+        pynng.TLSConfig.MODE_SERVER,
+        cert_key_file="/path/to/server_cert_key.pem",
+        server_name="localhost",
+    )
+    client_tls = pynng.TLSConfig(
+        pynng.TLSConfig.MODE_CLIENT,
+        ca_files=["/path/to/ca.crt"],
+        server_name="localhost",
+    )
+
+    with pynng.Pair0(recv_timeout=1000, send_timeout=1000) as server, \
+         pynng.Pair0(recv_timeout=1000, send_timeout=1000) as client:
+        listener = server.listen("dtls://127.0.0.1:0", tls_config=server_tls)
+        client.dial(listener.url, tls_config=client_tls, block=True)
+        client.send(b"hello over DTLS!")
+        print(server.recv())  # b'hello over DTLS!'
+
 Transport Comparison
 --------------------
 
@@ -257,6 +300,14 @@ Transport Comparison
      - ``tcp://``
      - All
      - Network communication, general purpose
+   * - TLS over TCP
+     - ``tls+tcp://``
+     - All
+     - Encrypted TCP network communication (v1 and v2)
+   * - DTLS over UDP
+     - ``dtls://``, ``dtls4://``, ``dtls6://``
+     - All (``pynng.v2``)
+     - Encrypted UDP datagram communication with DTLS 1.2 / 1.3 (NNG v2.1.0+)
    * - IPC
      - ``ipc://``
      - All

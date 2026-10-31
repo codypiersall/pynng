@@ -19,13 +19,16 @@ class TagInfo(NamedTuple):
     raw_tag: str
 
 
-def get_current_tracking_rev(cmakelists_path: str = "CMakeLists.txt") -> str | None:
-    """Extract NNG_REV from CMakeLists.txt without greedy regex bugs."""
+def get_current_tracking_rev(
+    cmakelists_path: str = "CMakeLists.txt",
+    var_name: str = "NNG_REV",
+) -> str | None:
+    """Extract NNG_REV (or NNG_V2_REV) from CMakeLists.txt without greedy regex bugs."""
     if not os.path.exists(cmakelists_path):
         return None
     with open(cmakelists_path, "r", encoding="utf-8") as f:
         content = f.read()
-    m = re.search(r'set\(NNG_REV\s+"([^"]+)"', content)
+    m = re.search(rf'set\({re.escape(var_name)}\s+"([^"]+)"', content)
     return m.group(1) if m else None
 
 
@@ -59,6 +62,63 @@ def fetch_tags(repo_url: str) -> list[TagInfo]:
 
     tags.sort(key=lambda x: x.version, reverse=True)
     return tags
+
+
+class TrackUpdateInfo(NamedTuple):
+    track_name: str  # "v1" or "v2"
+    target_var: str  # "NNG_REV" or "NNG_V2_REV"
+    current_rev: str | None
+    target_tag: TagInfo | None
+    latest_stable: TagInfo | None
+    is_update_available: bool
+    is_patch_update: bool
+
+
+def evaluate_track(
+    track_name: str,
+    target_var: str,
+    current_rev: str | None,
+    track_tags: list[TagInfo],
+) -> TrackUpdateInfo:
+    """Evaluate a single NNG version track (v1 or v2) for updates."""
+    target, stable = find_target_release(track_tags)
+    if not target:
+        return TrackUpdateInfo(
+            track_name=track_name,
+            target_var=target_var,
+            current_rev=current_rev,
+            target_tag=None,
+            latest_stable=None,
+            is_update_available=False,
+            is_patch_update=False,
+        )
+
+    is_update = True
+    is_patch = False
+    if current_rev:
+        try:
+            curr_v = parse(current_rev.removeprefix("v"))
+            if target.version <= curr_v:
+                is_update = False
+            elif (
+                not target.version.is_prerelease
+                and target.version.major == curr_v.major
+                and target.version.minor == curr_v.minor
+                and target.version.micro > curr_v.micro
+            ):
+                is_patch = True
+        except InvalidVersion:
+            pass
+
+    return TrackUpdateInfo(
+        track_name=track_name,
+        target_var=target_var,
+        current_rev=current_rev,
+        target_tag=target,
+        latest_stable=stable,
+        is_update_available=is_update,
+        is_patch_update=is_patch,
+    )
 
 
 def find_target_release(tags: list[TagInfo]) -> tuple[TagInfo | None, TagInfo | None]:
@@ -109,19 +169,43 @@ def get_existing_issues(repo: str) -> list[dict]:
         return []
 
 
+def get_existing_prs(repo: str) -> list[dict]:
+    """Fetch all pull requests (open and closed) for deduplication."""
+    try:
+        cmd = [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "all",
+            "--limit",
+            "200",
+            "--json",
+            "number,title,state,headRefName",
+        ]
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8")
+        return json.loads(output)
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
 def close_superseded_pre_releases(
     repo: str,
     stable_tag: TagInfo,
     existing_issues: list[dict],
     dry_run: bool = False,
 ) -> list[int]:
-    """Close any open pre-release issues superseded by this stable release."""
+    """Close any open pre-release issues within the same major version superseded by this stable release."""
     closed_issue_numbers: list[int] = []
     for issue in existing_issues:
         if issue.get("state") != "OPEN":
             continue
         title = issue.get("title", "")
-        m = re.search(r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE)
+        m = re.search(
+            r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE
+        )
         if not m:
             continue
         issue_tag = m.group(1)
@@ -131,7 +215,11 @@ def close_superseded_pre_releases(
         except InvalidVersion:
             continue
 
-        if issue_v.is_prerelease and issue_v <= stable_tag.version:
+        if (
+            issue_v.major == stable_tag.version.major
+            and issue_v.is_prerelease
+            and issue_v <= stable_tag.version
+        ):
             num = issue["number"]
             print(
                 f"Closing open issue #{num} ({issue_tag}) as superseded by stable {stable_tag.raw_tag}"
@@ -158,6 +246,37 @@ def close_superseded_pre_releases(
                 closed_issue_numbers.append(num)
 
     return closed_issue_numbers
+
+
+def is_already_handled(
+    target_tag: str,
+    existing_issues: list[dict],
+    existing_prs: list[dict],
+) -> bool:
+    """Return True if an issue or PR (open or closed) already tracks target_tag."""
+    for issue in existing_issues:
+        title = issue.get("title", "")
+        m = re.search(
+            r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE
+        )
+        if m and m.group(1) == target_tag:
+            print(
+                f"Issue #{issue['number']} ({issue.get('state')}) already exists for {target_tag}. Skipping."
+            )
+            return True
+
+    branch_name = f"chore/bump-nng-{target_tag}"
+    title_pattern = re.compile(rf"\bto\s+`?{re.escape(target_tag)}`?(?:\s|$)")
+    for pr in existing_prs:
+        if pr.get("headRefName") == branch_name or title_pattern.search(
+            pr.get("title", "")
+        ):
+            print(
+                f"PR #{pr['number']} ({pr.get('state')}) already exists for {target_tag}. Skipping."
+            )
+            return True
+
+    return False
 
 
 def write_github_output(outputs: dict[str, str]) -> None:
@@ -193,77 +312,89 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    current_rev = get_current_tracking_rev()
-    print(f"Current nng revision: {current_rev}")
+    current_v1_rev = get_current_tracking_rev(var_name="NNG_REV")
+    current_v2_rev = get_current_tracking_rev(var_name="NNG_V2_REV")
+    print(f"Current nng v1 revision: {current_v1_rev}")
+    print(f"Current nng v2 revision: {current_v2_rev}")
 
     upstream_tags = fetch_tags(args.upstream_url)
     fork_tags = fetch_tags(args.fork_url)
     fork_latest_tag = fork_tags[0].raw_tag if fork_tags else ""
     print(f"Latest fork nng tag: {fork_latest_tag}")
 
-    target_tag_info, latest_stable_info = find_target_release(upstream_tags)
-    if not target_tag_info:
+    if not upstream_tags:
         print("No upstream tags found.")
-        write_github_output({"should_notify": "false"})
+        write_github_output({"should_notify": "false", "updates_json": "[]"})
         return 0
 
-    target_tag = target_tag_info.raw_tag
-    target_v = target_tag_info.version
-    print(f"Latest candidate upstream nng tag: {target_tag} ({target_v})")
-    if latest_stable_info:
-        print(
-            f"Latest stable upstream nng tag: {latest_stable_info.raw_tag} ({latest_stable_info.version})"
-        )
+    v2_tags = [t for t in upstream_tags if t.version.major >= 2]
+    v1_tags = [t for t in upstream_tags if t.version.major == 1]
 
-    # Check existing issues across all states (open and closed)
+    v2_info = evaluate_track("v2", "NNG_V2_REV", current_v2_rev, v2_tags)
+    v1_info = evaluate_track("v1", "NNG_REV", current_v1_rev, v1_tags)
+
+    # Check existing issues and PRs across all states (open and closed)
     existing_issues = get_existing_issues(args.repo)
+    existing_prs = get_existing_prs(args.repo)
 
-    # If we have a stable release, close any open pre-release issues superseded by it
-    if latest_stable_info:
-        close_superseded_pre_releases(
-            args.repo, latest_stable_info, existing_issues, dry_run=args.dry_run
+    pending_updates: list[dict[str, str]] = []
+
+    for info in (v2_info, v1_info):
+        if info.latest_stable:
+            close_superseded_pre_releases(
+                args.repo, info.latest_stable, existing_issues, dry_run=args.dry_run
+            )
+
+        if not info.target_tag:
+            continue
+
+        t_tag = info.target_tag.raw_tag
+        t_v = info.target_tag.version
+        print(
+            f"Track {info.track_name} ({info.target_var}): current={info.current_rev}, "
+            f"latest={t_tag} ({t_v}), update={info.is_update_available}, patch={info.is_patch_update}"
         )
 
-    # Check if target tag is already tracked in CMakeLists.txt
-    if current_rev:
-        try:
-            curr_v_str = current_rev.removeprefix("v")
-            curr_v = parse(curr_v_str)
-            if target_v <= curr_v:
-                print(
-                    f"Current tracking revision {current_rev} ({curr_v}) is already >= target {target_tag} ({target_v}). Skipping."
-                )
-                write_github_output(
-                    {
-                        "should_notify": "false",
-                        "current_rev": current_rev,
-                        "latest_tag": target_tag,
-                        "fork_latest_tag": fork_latest_tag,
-                    }
-                )
-                return 0
-        except InvalidVersion:
-            pass
-
-    # Check if issue already exists (open or closed)
-    already_notified = False
-    for issue in existing_issues:
-        title = issue.get("title", "")
-        m = re.search(r"(?:NNG|nng)\s+update\s+available:\s+(\S+)", title, re.IGNORECASE)
-        if m and m.group(1) == target_tag:
-            already_notified = True
+        if not info.is_update_available:
             print(
-                f"Issue #{issue['number']} ({issue.get('state')}) already exists for {target_tag}. Skipping."
+                f"Current tracking revision {info.target_var}={info.current_rev} is already >= {t_tag}. Skipping."
             )
-            break
+            continue
 
-    should_notify = "true" if not already_notified else "false"
+        if not is_already_handled(t_tag, existing_issues, existing_prs):
+            pending_updates.append(
+                {
+                    "track": info.track_name,
+                    "target_var": info.target_var,
+                    "current_rev": info.current_rev or "",
+                    "latest_tag": t_tag,
+                    "is_patch": "true" if info.is_patch_update else "false",
+                    "fork_latest_tag": (
+                        fork_latest_tag
+                        if info.track_name == "v1"
+                        else "N/A (tracks upstream)"
+                    ),
+                }
+            )
+
+    primary = pending_updates[0] if pending_updates else None
+    should_notify = "true" if primary is not None else "false"
+
     write_github_output(
         {
             "should_notify": should_notify,
-            "current_rev": current_rev or "",
-            "latest_tag": target_tag,
-            "fork_latest_tag": fork_latest_tag,
+            "current_rev": (
+                primary["current_rev"]
+                if primary
+                else (current_v2_rev or current_v1_rev or "")
+            ),
+            "target_var": primary["target_var"] if primary else "NNG_REV",
+            "latest_tag": primary["latest_tag"] if primary else "",
+            "is_patch": primary["is_patch"] if primary else "false",
+            "fork_latest_tag": (
+                primary["fork_latest_tag"] if primary else fork_latest_tag
+            ),
+            "updates_json": json.dumps(pending_updates),
         }
     )
     return 0

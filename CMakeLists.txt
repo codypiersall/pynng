@@ -41,6 +41,7 @@ endif()
 # ============================================
 
 option(BUILD_NNG_V2 "Build nng v2 CFFI module alongside v1" ON)
+option(PYNNG_USE_LATEST_PATCH "Resolve NNG_REV and NNG_V2_REV to the latest upstream patch tag in their major.minor series" OFF)
 
 # TLS engine selection: mbed (default), wolf, openssl (v2 only), or none.
 # - mbed: Fetches and builds mbedTLS from source (works with v1 and v2)
@@ -62,11 +63,66 @@ set(MBEDTLS_REPO "https://github.com/ARMmbed/mbedtls.git" CACHE STRING "URL of t
 set(MBEDTLS_REV "v3.6.5" CACHE STRING "Revision of mbedTLS to use")
 
 set(WOLFSSL_REPO "https://github.com/wolfSSL/wolfssl" CACHE STRING "URL of the wolfSSL repository")
-set(WOLFSSL_REV "v5.8.0-stable" CACHE STRING "Revision of wolfSSL to use")
+set(WOLFSSL_REV "v5.9.4-stable" CACHE STRING "Revision of wolfSSL to use")
 
 # v2-specific repository settings
 set(NNG_V2_REPO "https://github.com/nanomsg/nng" CACHE STRING "URL of the NNG v2 repository")
-set(NNG_V2_REV "v2.0.0" CACHE STRING "Revision of NNG v2 to use")
+set(NNG_V2_REV "v2.1.0" CACHE STRING "Revision of NNG v2 to use")
+
+# Optionally resolve NNG_REV and NNG_V2_REV to the latest upstream patch tag
+# in their respective major.minor series (with fallback if offline or non-tag).
+function(_pynng_resolve_latest_patch repo_url rev_var)
+  set(_cur_rev "${${rev_var}}")
+  if(_cur_rev MATCHES "^v([0-9]+)\\.([0-9]+)(\\.([0-9]+))?$")
+    set(_major "${CMAKE_MATCH_1}")
+    set(_minor "${CMAKE_MATCH_2}")
+    if(NOT "${CMAKE_MATCH_4}" STREQUAL "")
+      set(_best_patch "${CMAKE_MATCH_4}")
+    else()
+      set(_best_patch -1)
+    endif()
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+      execute_process(
+        COMMAND "${GIT_EXECUTABLE}" ls-remote --tags --refs "${repo_url}" "refs/tags/v${_major}.${_minor}.*"
+        RESULT_VARIABLE _git_res
+        OUTPUT_VARIABLE _git_out
+        ERROR_QUIET
+        TIMEOUT 15
+      )
+      if(_git_res EQUAL 0 AND _git_out)
+        set(_best_tag "${_cur_rev}")
+        string(REPLACE "\r" "" _git_out "${_git_out}")
+        string(REPLACE "\n" ";" _lines "${_git_out}")
+        foreach(_line IN LISTS _lines)
+          if(_line MATCHES "refs/tags/(v${_major}\\.${_minor}\\.([0-9]+))$")
+            set(_candidate_tag "${CMAKE_MATCH_1}")
+            set(_candidate_patch "${CMAKE_MATCH_2}")
+            if(_candidate_patch GREATER _best_patch)
+              set(_best_patch "${_candidate_patch}")
+              set(_best_tag "${_candidate_tag}")
+            endif()
+          endif()
+        endforeach()
+        if(NOT _best_tag STREQUAL _cur_rev)
+          message(STATUS "PYNNG_USE_LATEST_PATCH: Resolved ${rev_var} from ${_cur_rev} to ${_best_tag}")
+          set(${rev_var} "${_best_tag}" PARENT_SCOPE)
+        else()
+          message(STATUS "PYNNG_USE_LATEST_PATCH: ${rev_var} (${_cur_rev}) is already the latest v${_major}.${_minor}.x patch")
+        endif()
+      else()
+        message(STATUS "PYNNG_USE_LATEST_PATCH: Could not query ${repo_url}; falling back to pinned ${rev_var}=${_cur_rev}")
+      endif()
+    endif()
+  else()
+    message(STATUS "PYNNG_USE_LATEST_PATCH: Skipping ${rev_var} (${_cur_rev}) as it is not a vX.Y[.Z] release tag")
+  endif()
+endfunction()
+
+if(PYNNG_USE_LATEST_PATCH)
+  _pynng_resolve_latest_patch("${NNG_REPO}" NNG_REV)
+  _pynng_resolve_latest_patch("${NNG_V2_REPO}" NNG_V2_REV)
+endif()
 
 # Function to download and build dependencies
 include(FetchContent)
@@ -149,10 +205,20 @@ if(PYNNG_TLS_ENGINE STREQUAL "wolf")
   # - CRL: wolfSSL_CTX_LoadCRLBuffer
   # - OPENSSLEXTRA: wolfSSL_get_verify_result, wolfSSL_CTX_set_default_passwd_cb,
   #   wolfSSL_get_peer_certificate
+  # - OPENSSLALL: wolfSSL_dtls_set_mtu (required by nng v2 DTLS transport)
   # - PSK: wolfSSL_CTX_get_psk_callback_ctx, wolfSSL_CTX_set_psk_*_callback
+  # - DTLS + DTLS13 + DTLS_CID + HRR_COOKIE: DTLS 1.2 and DTLS 1.3 support in nng v2
   set(WOLFSSL_CRL "yes" CACHE STRING "Enable CRL support" FORCE)
   set(WOLFSSL_OPENSSLEXTRA "yes" CACHE STRING "Enable OpenSSL compat layer" FORCE)
+  set(WOLFSSL_OPENSSLALL "yes" CACHE STRING "Enable OpenSSL extra/all layer (includes wolfSSL_dtls_set_mtu)" FORCE)
   set(WOLFSSL_PSK "yes" CACHE STRING "Enable PSK support" FORCE)
+  set(WOLFSSL_DTLS "yes" CACHE STRING "Enable DTLS support" FORCE)
+  set(WOLFSSL_DTLS13 "yes" CACHE STRING "Enable DTLS 1.3 support" FORCE)
+  set(WOLFSSL_DTLS_CID "yes" CACHE STRING "Enable DTLS Connection ID support" FORCE)
+  set(WOLFSSL_HRR_COOKIE "yes" CACHE STRING "Enable HRR cookie support for DTLS 1.3" FORCE)
+  set(WOLFSSL_SEND_HRR_COOKIE "yes" CACHE STRING "Enable HRR cookie support for DTLS 1.3" FORCE)
+  set(WOLFSSL_DH "const" CACHE STRING "Enable DH with constant table (avoids libm dependency in static wolfSSL)" FORCE)
+  set(WOLFSSL_SYS_CA_CERTS "no" CACHE STRING "Disable OS system CA certs in static wolfSSL" FORCE)
   # Disable stringop-overflow warning-as-error for wolfSSL. wolfSSL adds
   # -Werror to CMAKE_C_FLAGS, and GCC >= 12 triggers false positives for
   # stringop-overflow in wolfSSL's tls.c.
@@ -172,9 +238,11 @@ if(PYNNG_TLS_ENGINE STREQUAL "wolf")
   # Restore original C flags so they don't leak to other targets
   set(CMAKE_C_FLAGS "${_SAVED_CMAKE_C_FLAGS}")
 
-  # Disable installation for wolfSSL targets
+  # Disable installation for wolfSSL targets and propagate WOLFSSL_USE_OPTIONS_H
+  # so consumers (including NNG v1) include wolfSSL's generated wolfssl/options.h.
   if(TARGET wolfssl)
     set_target_properties(wolfssl PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_compile_definitions(wolfssl INTERFACE WOLFSSL_USE_OPTIONS_H)
   endif()
 
   # Pre-set wolfSSL feature detection results for nng v1.
@@ -189,6 +257,7 @@ if(PYNNG_TLS_ENGINE STREQUAL "wolf")
   set(NNG_WOLFSSL_HAVE_PEER_CERT 1 CACHE INTERNAL "Have library wolfssl")
   set(NNG_WOLFSSL_HAVE_DH 1 CACHE INTERNAL "Have library wolfssl")
   set(NNG_WOLFSSL_HAVE_PSK 1 CACHE INTERNAL "Have library wolfssl")
+  set(NNG_WOLFSSL_HAVE_CHECK_IP 1 CACHE INTERNAL "Have library wolfssl")
 
   set(_TLS_LINK_LIBS wolfssl)
 endif()
@@ -446,21 +515,74 @@ if(BUILD_NNG_V2)
 
   elseif(_V2_TLS_ENGINE STREQUAL "wolf")
     # Stage wolfSSL headers and library for the v2 ExternalProject.
+    # Also copy wolfSSL's CMake-generated options.h from wolfssl_BINARY_DIR so
+    # nng v2's wolfSSL feature detection sees WOLFSSL_DTLS, WOLFSSL_DTLS13, etc.
     set(WOLFSSL_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/wolfssl-stage")
     file(MAKE_DIRECTORY "${WOLFSSL_STAGE_DIR}/include")
-    file(MAKE_DIRECTORY "${WOLFSSL_STAGE_DIR}/lib")
+    file(MAKE_DIRECTORY "${WOLFSSL_STAGE_DIR}/lib/cmake/wolfssl")
 
     file(COPY "${wolfssl_SOURCE_DIR}/wolfssl" DESTINATION "${WOLFSSL_STAGE_DIR}/include"
       FILES_MATCHING PATTERN "*.h")
+    if(EXISTS "${wolfssl_BINARY_DIR}/wolfssl/options.h")
+      file(COPY "${wolfssl_BINARY_DIR}/wolfssl/options.h" DESTINATION "${WOLFSSL_STAGE_DIR}/include/wolfssl")
+    endif()
+
+    # Write a CMake package config for the staged static wolfSSL library so
+    # nng v2's find_package(wolfSSL) attaches Threads::Threads (and Windows
+    # socket/crypto libs) to wolfssl::wolfssl during check_c_source_compiles.
+    file(WRITE "${WOLFSSL_STAGE_DIR}/lib/cmake/wolfssl/wolfssl-config.cmake" [=[
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+get_filename_component(_WOLFSSL_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+find_library(WOLFSSL_LIBRARY NAMES wolfssl HINTS "${_WOLFSSL_PREFIX}/lib" NO_DEFAULT_PATH REQUIRED)
+set(WOLFSSL_INCLUDE_DIR "${_WOLFSSL_PREFIX}/include")
+if(NOT TARGET wolfssl::wolfssl)
+  add_library(wolfssl::wolfssl STATIC IMPORTED)
+  set_target_properties(wolfssl::wolfssl PROPERTIES
+    IMPORTED_LOCATION "${WOLFSSL_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${WOLFSSL_INCLUDE_DIR}"
+  )
+  if(WIN32)
+    set_target_properties(wolfssl::wolfssl PROPERTIES
+      INTERFACE_LINK_LIBRARIES "Threads::Threads;ws2_32;advapi32;crypt32"
+    )
+  else()
+    set_target_properties(wolfssl::wolfssl PROPERTIES
+      INTERFACE_LINK_LIBRARIES "Threads::Threads"
+    )
+  endif()
+endif()
+set(wolfSSL_FOUND TRUE)
+set(WOLFSSL_FOUND TRUE)
+]=])
+    include(CMakePackageConfigHelpers)
+    write_basic_package_version_file(
+      "${WOLFSSL_STAGE_DIR}/lib/cmake/wolfssl/wolfssl-config-version.cmake"
+      VERSION 5.9.4
+      COMPATIBILITY AnyNewerVersion
+    )
 
     add_custom_target(wolfssl_stage ALL
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:wolfssl>" "${WOLFSSL_STAGE_DIR}/lib/"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${wolfssl_BINARY_DIR}/wolfssl/options.h" "${WOLFSSL_STAGE_DIR}/include/wolfssl/"
       DEPENDS wolfssl
-      COMMENT "Staging wolfSSL library for nng v2 build"
+      COMMENT "Staging wolfSSL library and options.h for nng v2 build"
     )
 
-    list(APPEND _NNG_V2_CMAKE_ARGS -DWOLFSSL_ROOT_DIR=${WOLFSSL_STAGE_DIR})
+    list(APPEND _NNG_V2_CMAKE_ARGS
+      -DwolfSSL_DIR=${WOLFSSL_STAGE_DIR}/lib/cmake/wolfssl
+    )
+    list(APPEND _NNG_V2_CMAKE_CACHE_ARGS
+      -DNNG_WOLFSSL_HAVE_CRL:INTERNAL=1
+      -DNNG_WOLFSSL_HAVE_VERIFY:INTERNAL=1
+      -DNNG_WOLFSSL_HAVE_PASSWORD:INTERNAL=1
+      -DNNG_WOLFSSL_HAVE_PEER_CERT:INTERNAL=1
+      -DNNG_WOLFSSL_HAVE_DH:INTERNAL=1
+      -DNNG_WOLFSSL_HAVE_PSK:INTERNAL=1
+      -DNNG_WOLFSSL_HAVE_CHECK_IP:INTERNAL=1
+    )
     list(APPEND _NNG_V2_DEPENDS wolfssl_stage)
 
   elseif(_V2_TLS_ENGINE STREQUAL "openssl")

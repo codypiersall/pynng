@@ -10,19 +10,29 @@ Build System
 pynng uses `scikit-build-core <https://scikit-build-core.readthedocs.io/>`_ as its
 build backend, configured in ``pyproject.toml``. The build process:
 
-1. **CMake fetches dependencies**: ``CMakeLists.txt`` uses ``FetchContent`` to
-   download NNG and mbedTLS from GitHub (or from local clones if configured).
-   NNG is built as a static library with TLS support via mbedTLS.
+1. **CMake fetches and builds dependencies**: ``CMakeLists.txt`` uses
+   ``FetchContent`` to build **NNG v1** (``NNG_REV``, default ``v1.12.5``) and
+   ``ExternalProject_Add`` to build **NNG v2** (``NNG_V2_REV``, default
+   ``v2.1.0``, when ``BUILD_NNG_V2=ON``) as isolated static libraries. TLS
+   support is configured via ``PYNNG_TLS_ENGINE``:
 
-2. **headerkit generates CFFI declarations**: At build time,
+   - ``mbed`` (default): fetches and builds mbedTLS (``MBEDTLS_REV``, default ``v3.6.5``) from source for both v1 and v2
+   - ``wolf``: fetches and builds wolfSSL (``WOLFSSL_REV``, default ``v5.9.4-stable``, with TLS 1.3 and DTLS 1.2/1.3 enabled) from source for both v1 and v2
+   - ``openssl``: links against system OpenSSL 3.5+ via ``find_package(OpenSSL 3.5 REQUIRED)`` (v2 only; v1 is built without TLS)
+   - ``none``: builds NNG without TLS
+
+2. **headerkit generates CFFI declarations**: At build time, ``CMakeLists.txt``
+   invokes ``build_pynng.py`` via ``cffi_buildtool`` (passing
+   ``NNG_INCLUDE_DIR``, ``NNG_MODULE_NAME``, and ``PYNNG_TLS_ENABLED``).
    `headerkit <https://github.com/axiomantic/headerkit>`_ parses NNG's C
-   headers using libclang and auto-generates the CFFI module definition file
-   ``pynng/_nng.py``. This replaces the previously hand-maintained CFFI
-   declarations.
+   headers using ``libclang`` and auto-generates the CFFI C sources for
+   ``pynng._nng`` (v1) and ``pynng._nng_v2`` (v2), alongside the native C11
+   lock-free AIO completion engine (``src/aio_engine.h``).
 
-3. **CFFI compiles the extension**: The ``_nng`` module is compiled as a CFFI
-   ABI-mode extension, providing the ``lib`` and ``ffi`` objects that bridge
-   Python to the NNG C library.
+3. **CFFI compiles the extensions**: ``_nng`` and ``_nng_v2`` are compiled as
+   C11 CFFI extension modules (using Python's Stable ABI ``abi3`` on CPython
+   3.10+), providing the ``lib`` and ``ffi`` objects that bridge Python to the
+   NNG v1 and v2 C libraries.
 
 4. **setuptools-scm provides versioning**: The version is derived from git tags
    and written to ``pynng/_version.py``.
@@ -33,14 +43,18 @@ Code Organization
 ::
 
     pynng/
-      __init__.py       Public API re-exports
+      __init__.py       Public API re-exports (NNG v1 in pynng 1.x)
       nng.py            Core: Socket, Pipe, Context, Message, protocol classes
       _aio.py           Async layer: AIOHelper, asyncio/trio integration
       options.py        Option getter/setter functions
+      service.py        High-level concurrent Rep0Service
+      stats.py          NNG runtime statistics tree wrapper
       tls.py            TLSConfig wrapper
       sockaddr.py       Socket address types (SockAddr, InprocAddr, IPCAddr, etc.)
       exceptions.py     Exception hierarchy mapping NNG error codes
-      _nng.py           Auto-generated CFFI module definition (not in source tree)
+      v2/               NNG v2 bindings (import pynng.v2 as pynng)
+      _nng.*            Compiled CFFI extension for NNG v1 (generated at build time)
+      _nng_v2.*         Compiled CFFI extension for NNG v2 (generated at build time)
       _version.py       Auto-generated version (setuptools-scm, not in source tree)
 
 
@@ -76,10 +90,11 @@ object type.
 CFFI for C Bindings
 ^^^^^^^^^^^^^^^^^^^^
 
-pynng uses `cffi <https://cffi.readthedocs.io/>`_ in ABI mode to call NNG
-functions. The ``lib`` and ``ffi`` objects from the ``_nng`` module are the
-bridge between Python and C. All interaction with NNG goes through these
-objects:
+pynng uses `cffi <https://cffi.readthedocs.io/>`_ in API mode to compile
+C extension modules (``pynng._nng`` for NNG v1 and ``pynng._nng_v2`` for
+NNG v2) that call NNG functions directly. The ``lib`` and ``ffi`` objects from
+``_nng`` (or ``_nng_v2``) are the bridge between Python and C. All interaction
+with NNG goes through these objects:
 
 - ``lib.nng_*()`` -- NNG function calls
 - ``ffi.new()`` -- allocate C data structures

@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Non-blocking convenience methods on both `Socket` and `Context`: `recv_nowait()`, `send_nowait()`, `recv_msg_nowait()`, `send_msg_nowait()`, and `recv_into_nowait()`
 - High-performance wait-free C11 MPSC intrusive queue engine and helper pooling for zero-GIL async I/O completions and up to 2x throughput speedups
 - Hardened performance benchmark suite with GC-pause isolation, best-of-N multi-trial execution, and TCP nodelay optimization for reproducible CI measurement
-- Dual-version coexistence with nng v2.0.0 GA under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`)
-- Pluggable TLS engine support via CMake `NNG_TLS_ENGINE` supporting `mbedTLS`, `wolfSSL`, `OpenSSL`, and `none`
+- Dual-version coexistence with nng v2.1.0 under the `pynng.v2` namespace (`pynng.v2.Bus0`, `pynng.v2.Req0`, `pynng.v2.Rep0`, `pynng.v2.Pair0`, `pynng.v2.Pair1`, `pynng.v2.Pub0`, `pynng.v2.Sub0`, `pynng.v2.Push0`, `pynng.v2.Pull0`, `pynng.v2.Surveyor0`, `pynng.v2.Respondent0`), including DTLS 1.2/1.3 (`dtls://`, `dtls4://`, `dtls6://`) transport support
+- Pluggable TLS engine support via CMake `PYNNG_TLS_ENGINE` supporting `mbed` (`mbedTLS v3.6.5`), `wolf` (`wolfSSL v5.9.4-stable` with TLS 1.3 and DTLS 1.2/1.3 enabled), `openssl` (system OpenSSL 3.5+ for v2), and `none`
+- `-DPYNNG_USE_LATEST_PATCH=ON` CMake option to automatically resolve `NNG_REV` and `NNG_V2_REV` to the latest upstream patch tag in their respective `major.minor` series at configure time
 - Raw socket wrapper classes (`RawBus0`, `RawPair0`, `RawPair1`, `RawReq0`, `RawRep0`, `RawPub0`, `RawSub0`, `RawPush0`, `RawPull0`, `RawSurveyor0`, `RawRespondent0`) for broker and proxy topologies
 - `pynng.device()` and async `pynng.adevice()` forwarding proxies for kernel-level bridging
 - Zero-copy Python buffer protocol support (`Socket.recv_into`, `Socket.arecv_into`, memoryview/bytearray send) across both v1 and v2
@@ -51,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enable `__slots__` on hot-path `Message`, `Request`, `Stat`, and `SockAddr` model classes to eliminate per-instance `__dict__` allocation overhead
 - Switch cibuildwheel to uv build frontend, eliminating virtualenv.pyz downloads
 - Migrate build system from setuptools/CMake to scikit-build-core with headerkit for C header generation
-- Pin `headerkit~=0.48.1` across `pyproject.toml` build requirements, optional `dev` dependencies, and `cibuildwheel` `before-build` hooks to allow patch updates while preventing unverified breaking minor releases
+- Pin `headerkit~=0.49.4` across `pyproject.toml` build requirements, optional `dev` dependencies, and `cibuildwheel` `before-build` hooks to allow patch updates while preventing unverified breaking minor releases
 - Replace handwritten CFFI bindings with auto-generated bindings from nng headers via headerkit
 - Add CI concurrency groups to cancel stale workflow runs
 - Scope cibuildwheel tests to exclude build-system tests (run in smoketest instead)
