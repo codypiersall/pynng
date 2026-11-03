@@ -2,12 +2,13 @@
 
 """Build the pynng CFFI interface.
 
-Uses headerkit's libclang backend to parse NNG C headers into an IR,
-then converts the IR to CFFI cdef strings.
+Uses headerkit's libclang backend to parse nng C headers into an IR,
+then converts the IR to CFFI cdef strings and PEP 484 .pyi stubs via
+headerkit's CffiWriter and PyiWriter.
 
 This module serves dual purposes:
   1. Build-time: executed by cffi_buildtool to generate CFFI bindings
-  2. Test-time: imported by tests to verify generate_cdef() and _extract_defines()
+  2. Test-time: imported by tests to verify generate_cdef() and generate_pyi()
 
 When imported as a regular Python module (e.g., by tests), only the functions
 and constants are made available. The ffibuilder setup only runs when executed
@@ -22,112 +23,32 @@ controlled by the NNG_MODULE_NAME environment variable:
 import glob
 import logging
 import os
-import re
 import subprocess
 import sys
-
-
-def _transform_headerkit_clang_source(path: str, text: str) -> str:
-    """Adapt headerkit._clang source files to work around PyPy ctypes incompatibilities."""
-    if path.endswith("cindex.py"):
-        # 1. Bind _compat_c_interop_string before FUNCTION_LIST is populated at import time.
-        text = text.replace(
-            "class c_interop_string(c_char_p):",
-            "from headerkit._clang import _compat_c_interop_string as c_interop_string\n"
-            "class _unused_c_interop_string:",
-        )
-        text = text.replace(
-            'return b.decode("utf8")',
-            "return (None if not (ptr := c_void_p.value.__get__(x) if isinstance(x, c_void_p)"
-            " else getattr(x, 'value', None)) else ctypes.string_at(ptr).decode('utf8'))",
-        )
-        # 2. Copy callback struct/pointer arguments off the C stack before storing in Python lists.
-        text = text.replace(
-            "child._tu = self._tu",
-            "child = Cursor.from_buffer_copy(child); child._tu = self._tu",
-        )
-        text = text.replace(
-            "field._tu = self._tu",
-            "field = Cursor.from_buffer_copy(field); field._tu = self._tu",
-        )
-        text = text.replace(
-            "base._tu = self._tu",
-            "base = Cursor.from_buffer_copy(base); base._tu = self._tu",
-        )
-        text = text.replace(
-            "method._tu = self._tu",
-            "method = Cursor.from_buffer_copy(method); method._tu = self._tu",
-        )
-        text = text.replace(
-            "loc = lptr.contents",
-            "loc = SourceLocation.from_buffer_copy(lptr.contents)",
-        )
-        text = text.replace(
-            "File(fobj)",
-            "File(c_object_p.from_buffer_copy(fobj))",
-        )
-        # 3. libclang's clang_equalCursors mutates X.data[1] = 0 in place; under ARM64 AAPCS64
-        # PyPy's _rawffi passes self._buffer by pointer without copying, clobbering Cursor state.
-        text = text.replace(
-            "conf.lib.clang_equalCursors(self, other)",
-            "conf.lib.clang_equalCursors("
-            "Cursor.from_buffer_copy(self), Cursor.from_buffer_copy(other))",
-        )
-    return text
-
-
-if sys.implementation.name == "pypy":
-    import importlib.abc
-
-    class _PyPyHeaderkitClangLoader(importlib.abc.SourceLoader):
-        """SourceLoader that adapts headerkit._clang's ctypes bindings for PyPy."""
-
-        def __init__(self, fullname: str, path: str) -> None:
-            self.fullname = fullname
-            self.path = path
-
-        def get_filename(self, fullname: str) -> str:
-            return self.path
-
-        def get_data(self, path: str | bytes) -> bytes:
-            with open(path, "rb") as f:
-                data = f.read()
-            text = _transform_headerkit_clang_source(str(path), data.decode("utf-8"))
-            return text.encode("utf-8")
-
-        def get_code(self, fullname: str):
-            source = self.get_data(self.path)
-            return compile(source, self.path, "exec", dont_inherit=True)
-
-    class _PyPyHeaderkitClangFinder(importlib.abc.MetaPathFinder):
-        def find_spec(self, fullname, path, target=None):
-            if fullname == "headerkit._clang" or fullname.startswith(
-                "headerkit._clang."
-            ):
-                for finder in sys.meta_path:
-                    if isinstance(finder, _PyPyHeaderkitClangFinder):
-                        continue
-                    find_spec = getattr(finder, "find_spec", None)
-                    if find_spec is None:
-                        continue
-                    spec = find_spec(fullname, path, target)
-                    if spec is not None and spec.origin and spec.origin.endswith(".py"):
-                        spec.loader = _PyPyHeaderkitClangLoader(fullname, spec.origin)
-                        return spec
-            return None
-
-    sys.meta_path.insert(0, _PyPyHeaderkitClangFinder())
-
-from headerkit.backends import get_backend
-from headerkit.writers.cffi import header_to_cffi
+from typing import Any
 
 try:
-    from headerkit.cache import is_up_to_date, save_hash
-    from headerkit.writers import get_writer
+    from headerkit.backends import get_backend
+    from headerkit.writers.cffi import CffiWriter
+    from headerkit.writers.pyi import PyiWriter
 
-    _CACHE_AVAILABLE = True
+    _HAS_HEADERKIT = True
 except ImportError:
-    _CACHE_AVAILABLE = False
+    get_backend = None  # type: ignore[assignment]
+    CffiWriter = None  # type: ignore[assignment,misc]
+    PyiWriter = None  # type: ignore[assignment,misc]
+    _HAS_HEADERKIT = False
+
+
+def _require_headerkit() -> None:
+    """Ensure headerkit is importable before parsing headers or generating bindings."""
+    if not _HAS_HEADERKIT or get_backend is None:
+        raise RuntimeError(
+            "headerkit (requires Python >= 3.11) is required to parse nng "
+            "headers and generate CFFI bindings from source. On Python 3.10, "
+            "install a pre-built pynng wheel instead of building from source."
+        )
+
 
 logger = logging.getLogger(__name__)
 
@@ -182,37 +103,13 @@ EXCLUDE_PATTERNS_V2 = [
     r"_uint64$",  # uint64 typed accessors not implemented in v2
 ]
 
-# Path for the cached cdef file (placed next to build_pynng.py).
-_SCRIPT_DIR = os.path.dirname(
-    os.path.abspath(
-        __file__ if "__file__" in dir() else os.path.join(os.getcwd(), "build_pynng.py")
-    )
+# Repository root and native C source directory paths.
+_BUILD_SCRIPT = os.path.abspath(
+    __file__ if "__file__" in dir() else os.path.join(os.getcwd(), "build_pynng.py")
 )
+_SCRIPT_DIR = os.path.dirname(_BUILD_SCRIPT)
 _SRC_DIR = os.path.join(_SCRIPT_DIR, "src")
 _AIO_ENGINE_H = os.path.join(_SRC_DIR, "aio_engine.h")
-
-# CFFI cdef declarations for the pure C AIO completion engine (aio_engine.h).
-_AIO_ENGINE_CDEF = """
-        typedef struct pynng_aio_entry pynng_aio_entry_t;
-        typedef struct pynng_mpsc_queue pynng_mpsc_queue_t;
-
-        pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd);
-        void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q);
-        void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
-        pynng_aio_entry_t *pynng_aio_entry_new(void *aio, uintptr_t slot_id, pynng_mpsc_queue_t *q);
-        void pynng_aio_entry_set_slot_id(pynng_aio_entry_t *e, uintptr_t slot_id);
-        int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
-        void pynng_aio_entry_free(pynng_aio_entry_t *e);
-        void pynng_native_aio_complete(void *arg);
-        int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries);
-
-        typedef struct pynng_sync_recv pynng_sync_recv_t;
-
-        int pynng_sync_recv_alloc(pynng_sync_recv_t **out);
-        nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
-        int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
-        void pynng_sync_recv_free(pynng_sync_recv_t *r);
-"""
 
 
 def _validate_nng_include_dir(path: str) -> str | None:
@@ -228,7 +125,7 @@ def _detect_env_var() -> str | None:
     if val:
         result = _validate_nng_include_dir(val)
         if result:
-            logger.debug("NNG headers found via NNG_INCLUDE_DIR env var: %s", result)
+            logger.debug("nng headers found via NNG_INCLUDE_DIR env var: %s", result)
         else:
             logger.debug("NNG_INCLUDE_DIR set to %s but nng/nng.h not found there", val)
         return result
@@ -237,14 +134,14 @@ def _detect_env_var() -> str | None:
 
 def _detect_build_tree() -> str | None:
     """Strategy 2: scikit-build-core FetchContent build cache."""
-    project_root = os.path.dirname(os.path.abspath(__file__))
+    project_root = _SCRIPT_DIR
     candidates = glob.glob(
         os.path.join(project_root, "build", "*", "_deps", "nng-src", "include")
     )
     for candidate in candidates:
         result = _validate_nng_include_dir(candidate)
         if result:
-            logger.debug("NNG headers found in build tree: %s", result)
+            logger.debug("nng headers found in build tree: %s", result)
             return result
     return None
 
@@ -257,6 +154,7 @@ def _detect_pkg_config() -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         if output.returncode == 0:
             for flag in output.stdout.strip().split():
@@ -264,7 +162,7 @@ def _detect_pkg_config() -> str | None:
                     path = flag[2:]
                     result = _validate_nng_include_dir(path)
                     if result:
-                        logger.debug("NNG headers found via pkg-config: %s", result)
+                        logger.debug("nng headers found via pkg-config: %s", result)
                         return result
     except (FileNotFoundError, subprocess.TimeoutExpired):
         logger.debug("pkg-config not available or timed out")
@@ -277,7 +175,7 @@ def _detect_system_paths() -> str | None:
     for path in paths:
         result = _validate_nng_include_dir(path)
         if result:
-            logger.debug("NNG headers found in system path: %s", result)
+            logger.debug("nng headers found in system path: %s", result)
             return result
     return None
 
@@ -292,13 +190,14 @@ def _detect_homebrew() -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if output.returncode == 0:
             prefix = output.stdout.strip()
             include_path = os.path.join(prefix, "include")
             result = _validate_nng_include_dir(include_path)
             if result:
-                logger.debug("NNG headers found via Homebrew: %s", result)
+                logger.debug("nng headers found via Homebrew: %s", result)
                 return result
     except (FileNotFoundError, subprocess.TimeoutExpired):
         logger.debug("brew command not available or timed out")
@@ -308,7 +207,7 @@ def _detect_homebrew() -> str | None:
         include_path = os.path.join(prefix, "include")
         result = _validate_nng_include_dir(include_path)
         if result:
-            logger.debug("NNG headers found in Homebrew prefix: %s", result)
+            logger.debug("nng headers found in Homebrew prefix: %s", result)
             return result
     return None
 
@@ -319,12 +218,12 @@ def _detect_macports() -> str | None:
         return None
     result = _validate_nng_include_dir("/opt/local/include")
     if result:
-        logger.debug("NNG headers found via MacPorts: %s", result)
+        logger.debug("nng headers found via MacPorts: %s", result)
     return result
 
 
 def find_nng_include_dir() -> str | None:
-    """Auto-detect the NNG include directory using a cascade of strategies.
+    """Auto-detect the nng include directory using a cascade of strategies.
 
     Tries the following in order, returning the first valid path found:
       1. NNG_INCLUDE_DIR environment variable
@@ -337,7 +236,7 @@ def find_nng_include_dir() -> str | None:
     Each candidate is validated by checking for the existence of nng/nng.h.
 
     Returns:
-        The path to the NNG include directory, or None if not found.
+        The path to the nng include directory, or None if not found.
     """
     strategies = [
         ("env_var", _detect_env_var),
@@ -351,44 +250,104 @@ def find_nng_include_dir() -> str | None:
         result = strategy()
         if result is not None:
             return result
-        logger.debug("Strategy '%s' did not find NNG headers", name)
-    logger.debug("No NNG headers found by any strategy")
+        logger.debug("Strategy '%s' did not find nng headers", name)
+    logger.debug("No nng headers found by any strategy")
     return None
 
 
 def _get_nng_include_dir() -> str:
-    """Detect the NNG include directory.
+    """Detect the nng include directory.
 
     Uses the auto-detection cascade (env var, build tree, pkg-config,
     system paths, Homebrew, MacPorts).
 
     Raises:
-        RuntimeError: If NNG headers cannot be found by any strategy.
+        RuntimeError: If nng headers cannot be found by any strategy.
     """
     include_dir = find_nng_include_dir()
     if include_dir is None:
         raise RuntimeError(
-            "Cannot find NNG headers. Set NNG_INCLUDE_DIR environment "
-            "variable, install NNG development headers, or build first. "
+            "Cannot find nng headers. Set NNG_INCLUDE_DIR environment "
+            "variable, install nng development headers, or build first. "
             "During cmake builds, NNG_INCLUDE_DIR is set automatically."
         )
     return include_dir
 
+
+DEFINE_PATTERNS = [
+    r"^NNG_FLAG_\w+$",
+    r"^NNG_\w+_VERSION$",
+    r"^NNG_MAXADDRLEN$",
+]
+
+EXTERN_PYTHON_CALLBACKS = [
+    "void _async_complete(void *)",
+    "void _nng_pipe_cb(nng_pipe, nng_pipe_ev, void *)",
+]
+
+_PARSE_MEMO: dict[
+    tuple[tuple[tuple[str, float], ...], str], tuple[Any, list[str], str]
+] = {}
 
 _CDEF_MEMO: dict[
     tuple[tuple[tuple[str, float], ...], str, tuple[str, ...]], tuple[str, list[str]]
 ] = {}
 
 
+def _parse_nng_headers(headers=None, include_dir=None):
+    """Parse nng and aio_engine headers into a headerkit Header IR (memoized by mtimes)."""
+    _require_headerkit()
+    if headers is None:
+        headers = NNG_V1_HEADERS
+    if include_dir is None:
+        include_dir = _get_nng_include_dir()
+
+    existing = [h for h in headers if os.path.exists(os.path.join(include_dir, h))]
+    aio_mtime = (
+        os.path.getmtime(_AIO_ENGINE_H) if os.path.exists(_AIO_ENGINE_H) else 0.0
+    )
+    build_mtime = (
+        os.path.getmtime(_BUILD_SCRIPT) if os.path.exists(_BUILD_SCRIPT) else 0.0
+    )
+    parse_key = (
+        tuple((h, os.path.getmtime(os.path.join(include_dir, h))) for h in existing)
+        + (("_aio_engine_h", aio_mtime), ("_build_pynng_py", build_mtime)),
+        include_dir,
+    )
+    if parse_key in _PARSE_MEMO:
+        cached_header, cached_existing, cached_include_dir = _PARSE_MEMO[parse_key]
+        return cached_header, list(cached_existing), cached_include_dir
+
+    includes = "\n".join(f"#include <{h}>" for h in existing)
+    umbrella = f"""\
+#define NNG_DECL
+#define NNG_STATIC_LIB
+#define NNG_DEPRECATED
+#define PYNNG_CFFI_CDEF
+{includes}
+#include "aio_engine.h"
+"""
+    backend = get_backend("libclang")
+    header = backend.parse(
+        umbrella,
+        "umbrella.h",
+        include_dirs=[include_dir, _SRC_DIR],
+        project_prefixes=(include_dir, _SRC_DIR),
+        recursive_includes=False,
+    )
+    _PARSE_MEMO[parse_key] = (header, list(existing), include_dir)
+    return header, existing, include_dir
+
+
 def generate_cdef(
     headers=None, include_dir=None, exclude_patterns=None
 ) -> tuple[str, list[str]]:
-    """Parse NNG headers and generate CFFI cdef declarations.
+    """Parse nng headers and generate CFFI cdef declarations via headerkit.
 
     Args:
         headers: List of header paths relative to the include dir.
             Defaults to NNG_V1_HEADERS.
-        include_dir: Override for NNG include directory.
+        include_dir: Override for nng include directory.
             If None, uses auto-detection (NNG_INCLUDE_DIR env var, etc.).
         exclude_patterns: Regex patterns for symbols to exclude.
             Defaults to EXCLUDE_PATTERNS.
@@ -397,6 +356,7 @@ def generate_cdef(
         A tuple of (cdef_string, existing_headers) where existing_headers
         is the filtered list of headers that exist on disk.
     """
+    _require_headerkit()
     if headers is None:
         headers = NNG_V1_HEADERS
     if exclude_patterns is None:
@@ -404,119 +364,53 @@ def generate_cdef(
     if include_dir is None:
         include_dir = _get_nng_include_dir()
 
-    # Determine cache file if using standard header configurations
-    cache_path = None
-    if headers == NNG_V1_HEADERS and exclude_patterns == EXCLUDE_PATTERNS:
-        cache_path = os.path.join(_SCRIPT_DIR, "_nng_cdef_cache.txt")
-    elif headers == NNG_V2_HEADERS and exclude_patterns == EXCLUDE_PATTERNS_V2:
-        cache_path = os.path.join(_SCRIPT_DIR, "_nng_v2_cdef_cache.txt")
-
     existing = [h for h in headers if os.path.exists(os.path.join(include_dir, h))]
     header_paths = [os.path.join(include_dir, h) for h in existing]
+    aio_mtime = (
+        os.path.getmtime(_AIO_ENGINE_H) if os.path.exists(_AIO_ENGINE_H) else 0.0
+    )
+    build_mtime = (
+        os.path.getmtime(_BUILD_SCRIPT) if os.path.exists(_BUILD_SCRIPT) else 0.0
+    )
     memo_key = (
-        tuple((h, os.path.getmtime(p)) for h, p in zip(existing, header_paths)),
+        tuple((h, os.path.getmtime(p)) for h, p in zip(existing, header_paths))
+        + (("_aio_engine_h", aio_mtime), ("_build_pynng_py", build_mtime)),
         include_dir,
         tuple(exclude_patterns),
     )
     if memo_key in _CDEF_MEMO:
         cached_cdef, cached_existing = _CDEF_MEMO[memo_key]
         return cached_cdef, list(cached_existing)
-    build_script = os.path.join(_SCRIPT_DIR, "build_pynng.py")
 
-    # Check cache freshness
-    if _CACHE_AVAILABLE and cache_path:
-        try:
-            fresh = is_up_to_date(
-                output_path=cache_path,
-                header_paths=header_paths,
-                writer_name="cffi",
-                extra_inputs=[build_script],
-            )
-        except Exception:
-            fresh = False
+    header, existing, _ = _parse_nng_headers(headers=headers, include_dir=include_dir)
 
-        if fresh and os.path.exists(cache_path):
-            with open(cache_path) as f:
-                cdef = f.read()
-            return cdef, existing
-
-    # Build umbrella header that includes all existing NNG headers
-    includes = "\n".join(f"#include <{h}>" for h in existing)
-    umbrella = f"""\
-#define NNG_DECL
-#define NNG_STATIC_LIB
-#define NNG_DEPRECATED
-{includes}
-"""
-
-    # Parse with headerkit libclang backend (umbrella.h already includes all
-    # target headers and project_prefixes=(include_dir,) extracts declarations
-    # from all of them in a single TranslationUnit pass).
-    backend = get_backend("libclang")
-    header = backend.parse(
-        umbrella,
-        "umbrella.h",
-        include_dirs=[include_dir],
-        project_prefixes=(include_dir,),
-        recursive_includes=False,
+    writer = CffiWriter(
+        exclude_patterns=list(exclude_patterns),
+        define_patterns=DEFINE_PATTERNS,
+        extern_python=EXTERN_PYTHON_CALLBACKS,
     )
-
-    # Convert IR to CFFI cdef string
-    cdef = header_to_cffi(header, exclude_patterns=exclude_patterns)
-
-    # Fix anonymous enums: nng.h defines `typedef enum { ... } nng_pipe_ev;`
-    # and `typedef enum { ... } nng_err;` without a tag name, so `enum nng_pipe_ev`
-    # and `enum nng_err` are incomplete types in C.
-    cdef = re.sub(r"\benum\s+nng_pipe_ev\b", "nng_pipe_ev", cdef)
-    cdef = re.sub(r"\benum\s+nng_err\b", "nng_err", cdef)
-
-    # In nng.h v2, nng_init_params is an anonymous struct typedef.
-    # Replace parameter type with void * so CFFI doesn't require the full struct definition
-    # (pynng only passes NULL to nng_init).
-    cdef = re.sub(r"\bconst\s+(?:struct\s+)?nng_init_params\s*\*", "void *", cdef)
-    cdef = re.sub(r"\b(?:struct\s+)?nng_init_params\s*\*", "void *", cdef)
-
-    # Extract additional #define constants from nng.h via regex
-    # (libclang can miss macro values that involve expressions)
-    nng_h_path = os.path.join(include_dir, "nng/nng.h")
-    extra_defines = _extract_defines(nng_h_path)
-    if extra_defines:
-        cdef = cdef + "\n" + extra_defines
-
-    # Write cdef to cache file and save hash
-    if _CACHE_AVAILABLE and cache_path:
-        try:
-            with open(cache_path, "w") as f:
-                f.write(cdef)
-            save_hash(
-                output_path=cache_path,
-                header_paths=header_paths,
-                writer_name="cffi",
-                extra_inputs=[build_script],
-                writer=get_writer("cffi"),
-            )
-        except Exception as exc:
-            logger.debug("Failed to save cdef cache: %s", exc)
+    cdef = writer.write(header)
 
     _CDEF_MEMO[memo_key] = (cdef, list(existing))
     return cdef, existing
 
 
-def _extract_defines(nng_h_path: str) -> str:
-    """Extract #define constants from nng.h that libclang may not capture."""
-    with open(nng_h_path) as f:
-        content = f.read()
+def generate_pyi(headers=None, include_dir=None, exclude_patterns=None) -> str:
+    """Parse nng headers and generate PEP 484 CFFI .pyi stub declarations."""
+    _require_headerkit()
+    if headers is None:
+        headers = NNG_V1_HEADERS
+    if exclude_patterns is None:
+        exclude_patterns = EXCLUDE_PATTERNS
 
-    defines = []
-    for m in re.finditer(
-        r"^#define\s+(NNG_FLAG_\w+|NNG_\w+_VERSION|NNG_MAXADDRLEN)\b",
-        content,
-        re.MULTILINE,
-    ):
-        name = m.group(1)
-        defines.append(f"#define {name} ...")
-
-    return "\n".join(defines)
+    header, _, _ = _parse_nng_headers(headers=headers, include_dir=include_dir)
+    writer = PyiWriter(
+        mode="cffi",
+        exclude_patterns=list(exclude_patterns),
+        define_patterns=DEFINE_PATTERNS,
+        extern_python=EXTERN_PYTHON_CALLBACKS,
+    )
+    return writer.write(header)
 
 
 def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
@@ -559,11 +453,17 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
         exclude_patterns=exclude_patterns,
     )
 
-    callbacks = f"""
-        extern "Python" void _async_complete(void *);
-        extern "Python" void _nng_pipe_cb(nng_pipe, nng_pipe_ev, void *);
-{_AIO_ENGINE_CDEF}
-    """
+    # Emit PEP 484 typing stub for the compiled CFFI extension module
+    stub_rel = module_name.replace(".", os.sep) + ".pyi"
+    stub_path = os.path.join(_SCRIPT_DIR, stub_rel)
+    if os.path.isdir(os.path.dirname(stub_path)):
+        pyi_content = generate_pyi(
+            headers=headers,
+            include_dir=nng_include_dir,
+            exclude_patterns=exclude_patterns,
+        )
+        with open(stub_path, "w", encoding="utf-8") as f:
+            f.write(pyi_content)
 
     ffi = FFI()
 
@@ -580,17 +480,12 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
             #define NNG_DECL
             #define NNG_STATIC_LIB
 {source_includes}
-            /* nng.h declares typedef enum {{ ... }} nng_pipe_ev and nng_err anonymously
-               without tags. CFFI emits sizeof(enum ...); define tags to make them complete. */
-            enum nng_pipe_ev {{ _nng_pipe_ev_dummy = 0 }};
-            enum nng_err {{ _nng_err_dummy = 0 }};
-
             #include "aio_engine.h"
         """,
         include_dirs=include_dirs,
     )
 
-    ffi.cdef(cdef_content + callbacks)
+    ffi.cdef(cdef_content)
     return ffi
 
 

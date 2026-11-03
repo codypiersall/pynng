@@ -348,14 +348,15 @@ endif()
 # Create a custom command to generate the CFFI bindings
 add_custom_command(
   OUTPUT ${CFFI_OUTPUT_FILE}
-  COMMAND ${CMAKE_COMMAND} -E echo "Generating CFFI bindings for NNG v1..."
+  BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng.pyi
+  COMMAND ${CMAKE_COMMAND} -E echo "Generating CFFI bindings for nng v1..."
   COMMAND ${CMAKE_COMMAND} -E env
     "NNG_INCLUDE_DIR=${nng_SOURCE_DIR}/include"
     "PYNNG_TLS_ENABLED=${_V1_TLS_ENABLED_INT}"
     ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE} --ffi-var=ffibuilder
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h
-  COMMENT "Generating CFFI bindings for NNG"
+  COMMENT "Generating CFFI bindings for nng"
   VERBATIM
 )
 
@@ -374,14 +375,10 @@ endif()
 # C11 standard is required for stdatomic.h in pynng's MPSC queue.
 set_target_properties(_nng PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
-# Suppress incompatible-pointer-types errors in CFFI-generated code.
-# The NNG API uses const-qualified pointer-to-pointer params (e.g. const nng_url **)
-# but the generated CFFI cdef doesn't carry the const qualifier yet.
-# TODO: Fix const handling in headerkit cdef writer and remove this workaround.
 if(MSVC)
   target_compile_options(_nng PRIVATE /std:c11 /experimental:c11atomics)
 else()
-  target_compile_options(_nng PRIVATE -Wno-incompatible-pointer-types -fvisibility=hidden)
+  target_compile_options(_nng PRIVATE -fvisibility=hidden)
 endif()
 
 # Include directories for Python and NNG headers
@@ -636,7 +633,8 @@ set(WOLFSSL_FOUND TRUE)
   # The v2 CFFI generation depends on the v2 build completing (so headers are installed).
   add_custom_command(
     OUTPUT ${CFFI_V2_OUTPUT_FILE}
-    COMMAND ${CMAKE_COMMAND} -E echo "Generating CFFI bindings for NNG v2..."
+    BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng_v2.pyi
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating CFFI bindings for nng v2..."
     COMMAND ${CMAKE_COMMAND} -E env
       "NNG_INCLUDE_DIR=${NNG_V2_INSTALL_DIR}/include"
       "NNG_MODULE_NAME=pynng._nng_v2"
@@ -644,7 +642,7 @@ set(WOLFSSL_FOUND TRUE)
       ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE} --ffi-var=ffibuilder
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h nng_v2_build
-    COMMENT "Generating CFFI bindings for NNG v2"
+    COMMENT "Generating CFFI bindings for nng v2"
     VERBATIM
   )
 
@@ -665,7 +663,7 @@ set(WOLFSSL_FOUND TRUE)
   if(MSVC)
     target_compile_options(_nng_v2 PRIVATE /std:c11 /experimental:c11atomics)
   else()
-    target_compile_options(_nng_v2 PRIVATE -Wno-incompatible-pointer-types -fvisibility=hidden)
+    target_compile_options(_nng_v2 PRIVATE -fvisibility=hidden)
   endif()
 
   # Include directories
@@ -724,6 +722,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pynng/
   DESTINATION ${SKBUILD_PROJECT_NAME}
   FILES_MATCHING
   PATTERN "*.py"
+  PATTERN "*.pyi"
   PATTERN "__pycache__" EXCLUDE)
 
 # Install the compiled `_nng` Python extension module

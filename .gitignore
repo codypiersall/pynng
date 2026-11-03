@@ -49,8 +49,9 @@ htmlcov/
 docs/_build/
 docs/_generated/
 
-# headerkit cdef cache
-_nng_cdef_cache.txt
+# headerkit generated stubs and caches
+pynng/_nng.pyi
+pynng/_nng_v2.pyi
 *.hkcache
 
 # Build directories we want to ignore
