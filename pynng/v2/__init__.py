@@ -30,10 +30,17 @@ Key differences from v1:
   v2 getter functions instead of generic option accessors
 """
 
-import atexit
+from __future__ import annotations
+
+import sys as _sys
+import types as _types
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from pynng._nng_v2 import nng_init_params
 
 try:
-    from pynng._nng_v2 import lib as _lib, ffi as _ffi
+    from pynng._nng_v2 import ffi as _ffi, lib as _lib
 except ImportError as exc:
     raise ImportError(
         "pynng.v2 requires the _nng_v2 CFFI extension module, which was not "
@@ -49,37 +56,16 @@ lib = _lib
 ffi = _ffi
 
 # Initialize nng v2 runtime. Must be called before any v2 operations.
-_lib.nng_init(_ffi.NULL)
+_lib.nng_init(cast("nng_init_params", _ffi.NULL))
 _mark_nng_initialized()
 
 from pynng.tls import _register_lib  # noqa: E402
 
 _register_lib(_lib, _ffi)
 
-# Flag to allow users who explicitly need nng_fini() at atexit to opt in.
-# Defaults to False to avoid process-crashing race conditions with Python GC.
-nng_fini_at_exit = False
-_finalized = False
-
-
-def nng_fini():
-    """Explicitly finalize the NNG v2 library runtime."""
-    global _finalized
-    if not _finalized:
-        _finalized = True
-        _lib.nng_fini()
-
-
-def _pynng_v2_atexit():
-    if nng_fini_at_exit:
-        nng_fini()
-
-
-atexit.register(_pynng_v2_atexit)
-
 # Import v2 callbacks module to register the ffi.def_extern callbacks.
 # This must happen before any v2 socket is created.
-from . import _callbacks  # noqa: F401, E402
+from . import _callbacks, nng as _nng_v2_module  # noqa: F401, E402
 
 # Import v2 protocol classes
 from .nng import (  # noqa: F401, E402
@@ -115,6 +101,8 @@ from .nng import (  # noqa: F401, E402
     Rep0Service,
     device,
     adevice,
+    nng_fini,
+    nng_fini_at_exit,
     stats,
     socket_stats,
     Stat,
@@ -248,3 +236,26 @@ __all__ = [
     "socket_stats",
     "stats",
 ]
+
+
+class _PynngV2Module(_types.ModuleType):
+    # The atexit handler reads pynng.v2.nng.nng_fini_at_exit. A plain copy here
+    # would make "pynng.v2.nng_fini_at_exit = True" have no effect.
+    @property
+    def nng_fini_at_exit(self) -> bool:
+        return _nng_v2_module.nng_fini_at_exit
+
+    @nng_fini_at_exit.setter
+    def nng_fini_at_exit(self, value: bool) -> None:
+        _nng_v2_module.nng_fini_at_exit = value
+
+    @property
+    def _finalized(self) -> bool:
+        return _nng_v2_module._finalized
+
+    @_finalized.setter
+    def _finalized(self, value: bool) -> None:
+        _nng_v2_module._finalized = value
+
+
+_sys.modules[__name__].__class__ = _PynngV2Module
