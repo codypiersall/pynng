@@ -2,33 +2,53 @@
 Provides a Pythonic interface to cffi nng bindings
 """
 
-import logging
-import atexit
-import threading
+from __future__ import annotations
 
-import pynng
-from ._nng import ffi, lib
-from .exceptions import check_err, NNGException, Closed, NoEntry, BadState, Timeout
-from . import options
-from .stats import stats, socket_stats, Stat
-from . import _aio
-from . import _base
-from ._base import (
-    _active_handles,
-    _ensure_can_send,
-    to_char,
-    PipeEvent,
-    PipeEventStream,
-    _NNGOption,
+import atexit
+from collections.abc import Callable, Iterable
+import logging
+import threading
+from typing import TYPE_CHECKING, ClassVar, Protocol, TypeVar, cast
+
+import pynng  # noqa: F401
+
+from . import _aio, _base, options
+from ._base import (  # noqa: F401
+    BooleanOption,
     IntOption,
     MsOption,
-    SockAddrOption,
-    SizeOption,
-    StringOption,
-    BooleanOption,
-    PointerOption,
     NotImplementedOption,
+    PipeEvent,
+    PipeEventStream,
+    PointerOption,
+    ReadOnlyBooleanOption,
+    ReadOnlyIntOption,
+    ReadOnlyStringOption,
+    SizeOption,
+    SockAddrOption,
+    StringOption,
+    _active_handles,
+    _ensure_can_send,
+    _NNGOption,
+    _ReadOnlyOption,
+    to_char,
 )
+from ._nng import ffi, lib
+from .exceptions import (  # noqa: F401
+    BadState,
+    Closed,
+    NNGException,
+    NoEntry,
+    Timeout,
+    check_err,
+)
+from .stats import Stat, socket_stats, stats
+
+if TYPE_CHECKING:
+    import cffi
+
+    from . import _nng
+    from .tls import TLSConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +96,11 @@ __all__ = [
 
 # Flag to allow users who explicitly need nng_fini() at atexit to opt in.
 # Defaults to False to avoid process-crashing race conditions with Python GC.
-nng_fini_at_exit = False
-_finalized = False
+nng_fini_at_exit: bool = False
+_finalized: bool = False
 
 
-def nng_fini():
+def nng_fini() -> None:
     """Explicitly finalize the NNG library runtime.
 
     Frees global NNG resources. After calling this function, no further NNG
@@ -93,7 +113,7 @@ def nng_fini():
         lib.nng_fini()
 
 
-def _pynng_atexit():
+def _pynng_atexit() -> None:
     if nng_fini_at_exit:
         nng_fini()
 
@@ -168,8 +188,6 @@ class Socket(_base.Socket):
         * **protocol_name** (str): Read-only option which returns the name of the
           socket's protocol.
         * **peer** (int): Returns the peer protocol id for the socket.
-        * **local_address**: The :class:`~pynng.sockaddr.SockAddr` representing
-          the local address.  Corresponds to ``NNG_OPT_LOCADDR``.
         * **reconnect_time_min** (int): The minimum time to wait before
           attempting reconnects, in ms.  Corresponds to ``NNG_OPT_RECONNMINT``.
           This can also be overridden on the dialers.
@@ -214,39 +232,55 @@ class Socket(_base.Socket):
     """
 
     # Set v1 CFFI lib and ffi
-    _lib = lib
-    _ffi = ffi
+    _lib: ClassVar[_base._NngLib] = lib
+    _ffi: ClassVar[cffi.FFI] = ffi
     _version_tag = "v1"
 
     # v1-specific options (not in base class)
     name = StringOption("socket-name")
-    raw = BooleanOption("raw")
-    protocol = IntOption("protocol")
-    protocol_name = StringOption("protocol-name")
-    peer = IntOption("peer")
-    peer_name = StringOption("peer-name")
-    recv_fd = IntOption("recv-fd")
-    send_fd = IntOption("send-fd")
+    raw = ReadOnlyBooleanOption("raw")
+    protocol = ReadOnlyIntOption("protocol")
+    protocol_name = ReadOnlyStringOption("protocol-name")
+    peer = ReadOnlyIntOption("peer")
+    peer_name = ReadOnlyStringOption("peer-name")
+    recv_fd = ReadOnlyIntOption("recv-fd")
+    send_fd = ReadOnlyIntOption("send-fd")
 
     tls_config = PointerOption("tls-config")
 
     def __init__(
         self,
         *,
-        name=None,
-        tls_config=None,
-        listen=None,
-        dial=None,
-        block_on_dial=None,
-        raw=False,
-        **kwargs,
-    ):
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
         super().__init__(
-            listen=None,
             dial=None,
-            block_on_dial=block_on_dial,
+            listen=None,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
             raw=raw,
-            **kwargs,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
         )
         if tls_config is not None:
             self.tls_config = tls_config
@@ -257,7 +291,7 @@ class Socket(_base.Socket):
         if dial is not None:
             self.dial(dial, block=block_on_dial)
 
-    def close(self):
+    def close(self) -> None:
         """Close the socket, freeing all system resources.
 
         This method is idempotent and thread-safe. It may be called multiple
@@ -268,7 +302,7 @@ class Socket(_base.Socket):
         """
         self._do_close(lib.nng_close)
 
-    def recv(self, block=True):
+    def recv(self, block: bool = True) -> bytes:
         """Receive data on the socket.  If the request times out the exception
         :class:`pynng.Timeout` is raised.  If the socket cannot perform that
         operation (e.g., a :class:`Pub0`, which can only
@@ -286,7 +320,7 @@ class Socket(_base.Socket):
         msg = self.recv_msg(block=block)
         return msg.bytes
 
-    def send(self, data, block=True):
+    def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
         """Sends ``data`` on socket.
 
         Args:
@@ -309,6 +343,7 @@ class Socket(_base.Socket):
         flags = 0
         if not block:
             flags |= lib.NNG_FLAG_NONBLOCK
+        c_buf: bytes | cffi.FFI.CData
         if isinstance(data, bytes):
             c_buf = data
         else:
@@ -316,12 +351,12 @@ class Socket(_base.Socket):
         err = lib.nng_send(self.socket, c_buf, len(data), flags)
         check_err(err)
 
-    async def arecv(self):
+    async def arecv(self) -> bytes:
         """The asynchronous version of :meth:`~Socket.recv`"""
         msg = await self.arecv_msg()
         return msg.bytes
 
-    async def asend(self, data):
+    async def asend(self, data: _base.ReadableBuffer) -> None:
         """Asynchronous version of :meth:`~Socket.send`.
 
         Yields cooperatively to the event loop if the socket's send buffer
@@ -335,13 +370,45 @@ class Socket(_base.Socket):
         finally:
             self._release_send_helper(helper)
 
-    def stats(self):
+    def stats(self) -> Stat | None:
         """Get snapshot of statistics for this socket."""
         return socket_stats(self)
 
-    def stat(self, name):
+    def stat(self, name: str) -> int | str | bool | None:
         """Get a single statistic value by name for this socket."""
-        return socket_stats(self)[name].value
+        st = socket_stats(self)
+        assert st is not None
+        child = st[name]
+        assert isinstance(child, Stat)
+        return child.value
+
+    if TYPE_CHECKING:
+
+        @property
+        def socket(self) -> _nng.nng_socket: ...
+
+        def dial(
+            self, address: str | bytes, *, block: bool | None = None
+        ) -> Dialer: ...
+
+        def listen(self, address: str | bytes, flags: int = 0) -> Listener: ...
+
+        def recv_msg(self, block: bool = True) -> Message: ...
+
+        def recv_msg_nowait(self) -> Message: ...
+
+        async def arecv_msg(self) -> Message: ...
+
+        @property
+        def dialers(self) -> tuple[Dialer, ...]: ...
+
+        @property
+        def listeners(self) -> tuple[Listener, ...]: ...
+
+        @property
+        def pipes(self) -> tuple[Pipe, ...]: ...
+
+        def new_context(self) -> Context: ...
 
 
 class Bus0(Socket):
@@ -362,11 +429,45 @@ class Bus0(Socket):
         :language: python3
     """
 
-    _opener = lib.nng_bus0_open
-    _raw_opener = lib.nng_bus0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_bus0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_bus0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Pair0(Socket):
@@ -392,11 +493,45 @@ class Pair0(Socket):
 
     """
 
-    _opener = lib.nng_pair0_open
-    _raw_opener = lib.nng_pair0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_pair0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_pair0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Pair1(Socket):
@@ -440,16 +575,52 @@ class Pair1(Socket):
 
     """
 
-    _raw_opener = lib.nng_pair1_open_raw
+    _raw_opener: _base._OpenerFn | None = lib.nng_pair1_open_raw
 
-    def __init__(self, *, polyamorous=False, raw=False, **kwargs):
-        if raw:
-            kwargs["opener"] = lib.nng_pair1_open_raw
-        elif polyamorous:
-            kwargs["opener"] = lib.nng_pair1_open_poly
-        else:
-            kwargs["opener"] = lib.nng_pair1_open
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        polyamorous: bool = False,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        if opener is None:
+            if raw:
+                opener = lib.nng_pair1_open_raw
+            elif polyamorous:
+                opener = lib.nng_pair1_open_poly
+            else:
+                opener = lib.nng_pair1_open
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
     polyamorous = BooleanOption("pair1:polyamorous")
 
@@ -475,11 +646,45 @@ class Push0(Socket):
 
     """
 
-    _opener = lib.nng_push0_open
-    _raw_opener = lib.nng_push0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_push0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_push0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Pull0(Socket):
@@ -499,11 +704,45 @@ class Pull0(Socket):
 
     """
 
-    _opener = lib.nng_pull0_open
-    _raw_opener = lib.nng_pull0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_pull0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_pull0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Pub0(Socket):
@@ -531,11 +770,45 @@ class Pub0(Socket):
 
     """
 
-    _opener = lib.nng_pub0_open
-    _raw_opener = lib.nng_pub0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_pub0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_pub0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Sub0(Socket):
@@ -576,16 +849,51 @@ class Sub0(Socket):
 
     """
 
-    _opener = lib.nng_sub0_open
-    _raw_opener = lib.nng_sub0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_sub0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_sub0_open_raw
 
-    def __init__(self, *, topics=None, raw=False, **kwargs):
-        self._subscriptions = set()
+    def __init__(
+        self,
+        *,
+        topics: str | bytes | Iterable[str | bytes] | None = None,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        self._subscriptions: set[bytes] = set()
         self._sub_lock = threading.RLock()
         self._init_topics = topics
-        super().__init__(raw=raw, **kwargs)
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
-    def _configure_protocol_options(self):
+    def _configure_protocol_options(self) -> None:
         topics = self._init_topics
         self._init_topics = None
         if topics is not None:
@@ -596,12 +904,12 @@ class Sub0(Socket):
                 self.subscribe(topic)
 
     @property
-    def subscriptions(self):
+    def subscriptions(self) -> frozenset[bytes]:
         """Return a frozenset of current subscriptions (as bytes)."""
         with self._sub_lock:
             return frozenset(self._subscriptions)
 
-    def subscribe(self, topic):
+    def subscribe(self, topic: str | bytes) -> None:
         """Subscribe to the specified topic.
 
         Topics are matched by looking at the first bytes of any received
@@ -620,7 +928,7 @@ class Sub0(Socket):
         with self._sub_lock:
             self._subscriptions.add(topic)
 
-    def unsubscribe(self, topic):
+    def unsubscribe(self, topic: str | bytes) -> None:
         """Unsubscribe from the specified topic.
 
         .. Note::
@@ -636,7 +944,7 @@ class Sub0(Socket):
         with self._sub_lock:
             self._subscriptions.discard(topic)
 
-    def subscribe_all(self, topics):
+    def subscribe_all(self, topics: Iterable[str | bytes]) -> None:
         """Subscribe to multiple topics at once.
 
         Args:
@@ -646,7 +954,7 @@ class Sub0(Socket):
         for topic in topics:
             self.subscribe(topic)
 
-    def unsubscribe_all(self):
+    def unsubscribe_all(self) -> None:
         """Unsubscribe from all current subscriptions."""
         with self._sub_lock:
             current = list(self._subscriptions)
@@ -689,11 +997,46 @@ class Req0(Socket):
     """
 
     resend_time = MsOption("req:resend-time")
-    _opener = lib.nng_req0_open
-    _raw_opener = lib.nng_req0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_req0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_req0_open_raw
 
-    def __init__(self, *, resend_time=None, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        resend_time: int | None = None,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
         if resend_time is not None:
             self.resend_time = resend_time
 
@@ -723,11 +1066,45 @@ class Rep0(Socket):
 
     """
 
-    _opener = lib.nng_rep0_open
-    _raw_opener = lib.nng_rep0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_rep0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_rep0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Surveyor0(Socket):
@@ -752,17 +1129,58 @@ class Surveyor0(Socket):
 
     """
 
-    _opener = lib.nng_surveyor0_open
-    _raw_opener = lib.nng_surveyor0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_surveyor0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_surveyor0_open_raw
     _nonblock_recv_first = False
     survey_time = MsOption("surveyor:survey-time")
 
-    def __init__(self, *, survey_time=None, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        survey_time: int | None = None,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
         if survey_time is not None:
             self.survey_time = survey_time
 
-    async def asurvey(self, data, *, timeout=None, max_responses=None):
+    async def asurvey(
+        self,
+        data: _base.ReadableBuffer,
+        *,
+        timeout: int | None = None,
+        max_responses: int | None = None,
+    ) -> list[bytes]:
         """Send a survey and collect all responses until timeout.
 
         Args:
@@ -794,7 +1212,7 @@ class Surveyor0(Socket):
 
         try:
             await self.asend(data)
-            responses = []
+            responses: list[bytes] = []
             while True:
                 if max_responses is not None and len(responses) >= max_responses:
                     break
@@ -812,10 +1230,12 @@ class Surveyor0(Socket):
             except Closed:
                 pass
 
-    def recv_msg(self, block=True):
+    def recv_msg(self, block: bool = True) -> Message:
         """Receive a message on the surveyor socket, translating survey expiration to Timeout."""
         try:
-            return super().recv_msg(block=block)
+            msg = super().recv_msg(block=block)
+            assert isinstance(msg, Message)
+            return msg
         except BadState:
             raise Timeout("Timed out", 5)
 
@@ -839,99 +1259,504 @@ class Respondent0(Socket):
 
     """
 
-    _opener = lib.nng_respondent0_open
-    _raw_opener = lib.nng_respondent0_open_raw
+    _opener: _base._OpenerFn | None = lib.nng_respondent0_open
+    _raw_opener: _base._OpenerFn | None = lib.nng_respondent0_open_raw
 
-    def __init__(self, *, raw=False, **kwargs):
-        super().__init__(raw=raw, **kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = False,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawBus0(Bus0):
     """A raw bus0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawPair0(Pair0):
     """A raw pair0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawPair1(Pair1):
     """A raw pair1 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        polyamorous: bool = False,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            polyamorous=polyamorous,
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawPush0(Push0):
     """A raw push0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawPull0(Pull0):
     """A raw pull0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawPub0(Pub0):
     """A raw pub0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawSub0(Sub0):
     """A raw sub0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        topics: str | bytes | Iterable[str | bytes] | None = None,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            topics=topics,
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawReq0(Req0):
     """A raw req0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        resend_time: int | None = None,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            resend_time=resend_time,
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawRep0(Rep0):
     """A raw rep0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawSurveyor0(Surveyor0):
     """A raw surveyor0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        survey_time: int | None = None,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            survey_time=survey_time,
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class RawRespondent0(Respondent0):
     """A raw respondent0 socket."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("raw", True)
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        dial: str | bytes | None = None,
+        listen: str | bytes | None = None,
+        recv_timeout: int | None = None,
+        send_timeout: int | None = None,
+        recv_buffer_size: int | None = None,
+        send_buffer_size: int | None = None,
+        recv_max_size: int | None = None,
+        reconnect_time_min: int | None = None,
+        reconnect_time_max: int | None = None,
+        opener: _base._OpenerFn | None = None,
+        raw: bool = True,
+        block_on_dial: bool | None = None,
+        async_backend: str | None = None,
+        name: str | bytes | None = None,
+        tls_config: TLSConfig | None = None,
+    ) -> None:
+        super().__init__(
+            dial=dial,
+            listen=listen,
+            recv_timeout=recv_timeout,
+            send_timeout=send_timeout,
+            recv_buffer_size=recv_buffer_size,
+            send_buffer_size=send_buffer_size,
+            recv_max_size=recv_max_size,
+            reconnect_time_min=reconnect_time_min,
+            reconnect_time_max=reconnect_time_max,
+            opener=opener,
+            raw=raw,
+            block_on_dial=block_on_dial,
+            async_backend=async_backend,
+            name=name,
+            tls_config=tls_config,
+        )
 
 
 class Dialer(_base.Dialer):
@@ -946,12 +1771,29 @@ class Dialer(_base.Dialer):
 
     """
 
+    local_address = SockAddrOption("local-address")
+    remote_address = SockAddrOption("remote-address")
+    reconnect_time_min = MsOption("reconnect-time-min")
+    reconnect_time_max = MsOption("reconnect-time-max")
+    recv_max_size = SizeOption("recv-size-max")
+    url = ReadOnlyStringOption("url")
+    peer = ReadOnlyIntOption("peer")
+    peer_name = ReadOnlyStringOption("peer-name")
+    tcp_nodelay = BooleanOption("tcp-nodelay")
+    tcp_keepalive = BooleanOption("tcp-keepalive")
+
     # v1-specific TLS options on the dialer
     tls_config = PointerOption("tls-config")
     tls_ca_file = StringOption("tls-ca-file")
     tls_cert_key_file = StringOption("tls-cert-key-file")
     tls_auth_mode = IntOption("tls-authmode")
     tls_server_name = StringOption("tls-server-name")
+
+    if TYPE_CHECKING:
+        socket: Socket
+
+        @property
+        def dialer(self) -> _nng.nng_dialer: ...
 
 
 class Listener(_base.Listener):
@@ -966,12 +1808,29 @@ class Listener(_base.Listener):
 
     """
 
+    local_address = SockAddrOption("local-address")
+    remote_address = SockAddrOption("remote-address")
+    reconnect_time_min = MsOption("reconnect-time-min")
+    reconnect_time_max = MsOption("reconnect-time-max")
+    recv_max_size = SizeOption("recv-size-max")
+    url = ReadOnlyStringOption("url")
+    peer = ReadOnlyIntOption("peer")
+    peer_name = ReadOnlyStringOption("peer-name")
+    tcp_nodelay = BooleanOption("tcp-nodelay")
+    tcp_keepalive = BooleanOption("tcp-keepalive")
+
     # v1-specific TLS options on the listener
     tls_config = PointerOption("tls-config")
     tls_ca_file = StringOption("tls-ca-file")
     tls_cert_key_file = StringOption("tls-cert-key-file")
     tls_auth_mode = IntOption("tls-authmode")
     tls_server_name = StringOption("tls-server-name")
+
+    if TYPE_CHECKING:
+        socket: Socket
+
+        @property
+        def listener(self) -> _nng.nng_listener: ...
 
 
 class Context(_base.Context):
@@ -1024,7 +1883,13 @@ class Context(_base.Context):
 
     """
 
-    pass
+    if TYPE_CHECKING:
+
+        def recv_msg(self, block: bool = True) -> Message: ...
+
+        def recv_msg_nowait(self) -> Message: ...
+
+        async def arecv_msg(self) -> Message: ...
 
 
 class Pipe(_base.Pipe):
@@ -1038,7 +1903,25 @@ class Pipe(_base.Pipe):
 
     """
 
-    pass
+    local_address = SockAddrOption("local-address")
+    remote_address = SockAddrOption("remote-address")
+    url = ReadOnlyStringOption("url")
+    protocol = ReadOnlyIntOption("protocol")
+    protocol_name = ReadOnlyStringOption("protocol-name")
+    peer = ReadOnlyIntOption("peer")
+    peer_name = ReadOnlyStringOption("peer-name")
+
+    if TYPE_CHECKING:
+        socket: Socket
+
+        @property
+        def pipe(self) -> _nng.nng_pipe: ...
+
+        @property
+        def dialer(self) -> Dialer: ...
+
+        @property
+        def listener(self) -> Listener: ...
 
 
 # Wire up the v1-specific subclasses so base class factory methods
@@ -1080,20 +1963,38 @@ class Message(_base.Message):
 
     __slots__ = ()
 
+    if TYPE_CHECKING:
+
+        @property
+        def pipe(self) -> Pipe | None: ...
+
+        @pipe.setter
+        def pipe(self, pipe: _base.Pipe) -> None: ...
+
 
 Socket._message_class = Message
 
+_F = TypeVar("_F", bound=Callable[..., object])
 
-@ffi.def_extern()
-def _nng_pipe_cb(lib_pipe, event, arg):
-    logger.debug("Pipe callback event {}".format(event))
+
+class _ExternDecorator(Protocol):
+    def __call__(self, fn: _F, /) -> _F: ...
+
+
+_def_extern: Callable[[], _ExternDecorator] = getattr(ffi, "def_extern")
+_ffi_error: type[BaseException] = getattr(ffi, "error", RuntimeError)
+
+
+@_def_extern()
+def _nng_pipe_cb(lib_pipe: _nng.nng_pipe, event: int, arg: cffi.FFI.CData) -> None:
+    logger.debug(f"Pipe callback event {event}")
 
     # Get the Socket from the handle passed through the callback arguments.
     # If the Socket has been GC'd and the handle is invalid, from_handle()
     # will crash. Guard against this by catching exceptions.
     try:
-        sock = ffi.from_handle(arg)
-    except (RuntimeError, ValueError, ffi.error):
+        sock: _base.Socket = ffi.from_handle(arg)
+    except (RuntimeError, ValueError, _ffi_error):
         logger.info(
             "Pipe callback fired with invalid handle (socket likely GC'd); ignoring"
         )
@@ -1102,7 +2003,10 @@ def _nng_pipe_cb(lib_pipe, event, arg):
     _base._handle_pipe_event(sock, lib_pipe, event, lib)
 
 
-def device(s1, s2=None):
+def device(
+    s1: _base.Socket | _nng.nng_socket | cffi.FFI.CData,
+    s2: _base.Socket | _nng.nng_socket | cffi.FFI.CData | None = None,
+) -> None:
     """Forward messages between socket s1 and socket s2 synchronously.
 
     If s2 is None, messages are forwarded in only one direction (from s1, which
@@ -1120,26 +2024,37 @@ def device(s1, s2=None):
     _device(s1, s2, lib, ffi)
 
 
-def _device(s1, s2, default_lib, default_ffi):
+def _device(
+    s1: _base.Socket | _base._NngSocket | cffi.FFI.CData,
+    s2: _base.Socket | _base._NngSocket | cffi.FFI.CData | None,
+    default_lib: _base._NngLib,
+    default_ffi: cffi.FFI,
+) -> None:
     _base._check_fork()
     _base._mark_nng_initialized()
     _lib, _ffi, s1_raw, s2_raw = _base._device_sockets(s1, s2, default_lib, default_ffi)
+    base_lib = cast(_base._BaseLibProtocol, _lib)
     owners = [s for s in (s1, s2) if isinstance(s, _base.Socket)]
     aio_p = _ffi.new("nng_aio **")
-    check_err(_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL), lib=_lib, ffi=_ffi)
-    aio = aio_p[0]
+    check_err(base_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL), lib=_lib, ffi=_ffi)
+    aio: _base._NngAio = aio_p[0]
     try:
         _base._start_device(owners, _lib, aio, s1_raw, s2_raw)
         try:
-            _lib.nng_aio_wait(aio)
+            base_lib.nng_aio_wait(aio)
         finally:
             _base._stop_device(owners, aio)
-        check_err(_lib.nng_aio_result(aio), lib=_lib, ffi=_ffi)
+        check_err(base_lib.nng_aio_result(aio), lib=_lib, ffi=_ffi)
     finally:
-        _lib.nng_aio_free(aio)
+        base_lib.nng_aio_free(aio)
 
 
-async def adevice(s1, s2=None, *, async_backend=None):
+async def adevice(
+    s1: _base.Socket | _nng.nng_socket | cffi.FFI.CData,
+    s2: _base.Socket | _nng.nng_socket | cffi.FFI.CData | None = None,
+    *,
+    async_backend: str | None = None,
+) -> None:
     """Forward messages between socket s1 and socket s2 asynchronously.
 
     Can be cancelled cleanly in asyncio and trio tasks.
@@ -1156,7 +2071,13 @@ async def adevice(s1, s2=None, *, async_backend=None):
     await _adevice(s1, s2, async_backend, lib, ffi)
 
 
-async def _adevice(s1, s2, async_backend, default_lib, default_ffi):
+async def _adevice(
+    s1: _base.Socket | _base._NngSocket | cffi.FFI.CData,
+    s2: _base.Socket | _base._NngSocket | cffi.FFI.CData | None,
+    async_backend: str | None,
+    default_lib: _base._NngLib,
+    default_ffi: cffi.FFI,
+) -> None:
     _base._check_fork()
     _base._mark_nng_initialized()
     with _aio.DeviceAIO(

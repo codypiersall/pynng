@@ -7,13 +7,24 @@ Generally, each number in nng_errno_enum corresponds with an Exception type.
 
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
+
 from ._nng import ffi as _default_ffi, lib as _default_lib
+
+if TYPE_CHECKING:
+    import cffi
+
+    from . import _nng, _nng_v2
 
 
 class NNGException(Exception):
     """The base exception for any exceptional condition in the nng bindings."""
 
-    def __init__(self, msg, errno):
+    errno: int | None
+
+    def __init__(self, msg: str, errno: int | None = None) -> None:
         super().__init__(msg)
         self.errno = errno
 
@@ -148,7 +159,7 @@ class Stopped(NNGException):  # NNG_ESTOPPED (v2 only, value 999)
 
 # Build the exception map using numeric constants extracted from v1 lib.
 # These integer values are stable across v1 and v2.
-EXCEPTION_MAP = {
+EXCEPTION_MAP: dict[int, type[NNGException]] = {
     int(_default_lib.NNG_EINTR): Interrupted,
     int(_default_lib.NNG_ENOMEM): NoMemory,
     int(_default_lib.NNG_EINVAL): InvalidOperation,
@@ -193,14 +204,18 @@ class MessageStateError(Exception):
     """
 
 
-def check_err(err, lib=None, ffi=None):
+def check_err(
+    err: int,
+    lib: _nng._Lib | _nng_v2._Lib | None = None,
+    ffi: cffi.FFI | None = None,
+) -> None:
     """
     Raises an exception if the return value of an nng_function is nonzero.
 
     The enum nng_errno_enum is defined in nng.h
 
     Args:
-        err: The error code returned by an NNG function.
+        err: The error code returned by an nng function.
         lib: The CFFI lib to use for nng_strerror. Defaults to v1 lib.
         ffi: The CFFI ffi to use for string conversion. Defaults to v1 ffi.
     """
@@ -208,13 +223,11 @@ def check_err(err, lib=None, ffi=None):
     if not err:
         return
 
-    if lib is None:
-        lib = _default_lib
-    if ffi is None:
-        ffi = _default_ffi
+    active_lib = lib if lib is not None else _default_lib
+    active_ffi = ffi if ffi is not None else _default_ffi
 
-    msg = lib.nng_strerror(err)
-    string = ffi.string(msg)
-    string = string.decode()
+    msg = active_lib.nng_strerror(cast("_nng_v2.nng_err", err))
+    raw = active_ffi.string(cast("cffi.FFI.CData", msg))
+    string = raw.decode() if isinstance(raw, bytes) else str(raw)
     exc = EXCEPTION_MAP.get(err, NNGException)
     raise exc(string, err)

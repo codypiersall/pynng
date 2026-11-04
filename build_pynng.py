@@ -281,8 +281,8 @@ DEFINE_PATTERNS = [
 ]
 
 EXTERN_PYTHON_CALLBACKS = [
-    "void _async_complete(void *)",
-    "void _nng_pipe_cb(nng_pipe, nng_pipe_ev, void *)",
+    "_async_complete",
+    "_nng_pipe_cb",
 ]
 
 _PARSE_MEMO: dict[
@@ -384,8 +384,11 @@ def generate_cdef(
 
     header, existing, _ = _parse_nng_headers(headers=headers, include_dir=include_dir)
 
+    cdef_exclude = list(exclude_patterns) + [
+        f"^{name}$" for name in EXTERN_PYTHON_CALLBACKS
+    ]
     writer = CffiWriter(
-        exclude_patterns=list(exclude_patterns),
+        exclude_patterns=cdef_exclude,
         define_patterns=DEFINE_PATTERNS,
         extern_python=EXTERN_PYTHON_CALLBACKS,
     )
@@ -395,13 +398,24 @@ def generate_cdef(
     return cdef, existing
 
 
-def generate_pyi(headers=None, include_dir=None, exclude_patterns=None) -> str:
+def generate_pyi(
+    headers=None,
+    include_dir=None,
+    exclude_patterns=None,
+    *,
+    tls_enabled: bool = True,
+) -> str:
     """Parse nng headers and generate PEP 484 CFFI .pyi stub declarations."""
     _require_headerkit()
     if headers is None:
         headers = NNG_V1_HEADERS
     if exclude_patterns is None:
-        exclude_patterns = EXCLUDE_PATTERNS
+        if headers == NNG_V2_HEADERS:
+            exclude_patterns = list(EXCLUDE_PATTERNS_V2)
+        else:
+            exclude_patterns = list(EXCLUDE_PATTERNS)
+    if not tls_enabled:
+        exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
     header, _, _ = _parse_nng_headers(headers=headers, include_dir=include_dir)
     writer = PyiWriter(
@@ -413,7 +427,14 @@ def generate_pyi(headers=None, include_dir=None, exclude_patterns=None) -> str:
     return writer.write(header)
 
 
-def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
+def _build_ffi(
+    module_name="pynng._nng",
+    headers=None,
+    exclude_patterns=None,
+    include_dir=None,
+    *,
+    tls_enabled: bool | None = None,
+):
     """Set up the CFFI ffibuilder for use by cffi_buildtool.
 
     Args:
@@ -421,6 +442,8 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
         headers: Header list to parse. Defaults based on module_name.
         exclude_patterns: Regex patterns for symbols to exclude.
             Defaults based on module_name.
+        include_dir: Override for nng include directory.
+        tls_enabled: Whether TLS symbols are enabled. Defaults to PYNNG_TLS_ENABLED env var.
 
     This is called at module level only during builds (cffi_buildtool or
     direct execution), never when imported by tests.
@@ -441,10 +464,12 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
 
     # When TLS is disabled, exclude additional symbols that only exist
     # when a TLS engine is compiled in.
-    if os.environ.get("PYNNG_TLS_ENABLED") == "0":
+    if tls_enabled is None:
+        tls_enabled = os.environ.get("PYNNG_TLS_ENABLED") != "0"
+    if not tls_enabled:
         exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
-    nng_include_dir = _get_nng_include_dir()
+    nng_include_dir = include_dir if include_dir is not None else _get_nng_include_dir()
 
     # Generate cdef content and get the list of existing headers
     cdef_content, existing_headers = generate_cdef(
@@ -453,17 +478,23 @@ def _build_ffi(module_name="pynng._nng", headers=None, exclude_patterns=None):
         exclude_patterns=exclude_patterns,
     )
 
-    # Emit PEP 484 typing stub for the compiled CFFI extension module
+    # Emit PEP 484 typing stub for the compiled CFFI extension module.
+    # Only overwrite an existing stub when TLS is enabled and the generated stub
+    # is Any-free (headerkit >= 0.51.0), so partial builds with PYNNG_TLS_ENGINE=none
+    # or older headerkit releases do not degrade the tracked stubs.
     stub_rel = module_name.replace(".", os.sep) + ".pyi"
     stub_path = os.path.join(_SCRIPT_DIR, stub_rel)
-    if os.path.isdir(os.path.dirname(stub_path)):
+    if os.path.isdir(os.path.dirname(stub_path)) and (
+        tls_enabled or not os.path.exists(stub_path)
+    ):
         pyi_content = generate_pyi(
             headers=headers,
             include_dir=nng_include_dir,
             exclude_patterns=exclude_patterns,
         )
-        with open(stub_path, "w", encoding="utf-8") as f:
-            f.write(pyi_content)
+        if not os.path.exists(stub_path) or "from typing import Any" not in pyi_content:
+            with open(stub_path, "w", encoding="utf-8") as f:
+                f.write(pyi_content)
 
     ffi = FFI()
 
