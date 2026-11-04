@@ -8,6 +8,14 @@
 #ifndef PYNNG_AIO_ENGINE_H
 #define PYNNG_AIO_ENGINE_H
 
+#ifdef PYNNG_CFFI_CDEF
+
+typedef struct pynng_aio_entry pynng_aio_entry_t;
+typedef struct pynng_mpsc_queue pynng_mpsc_queue_t;
+typedef struct pynng_sync_recv pynng_sync_recv_t;
+
+#else
+
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -56,6 +64,16 @@ typedef struct pynng_mpsc_queue {
 #endif
 } pynng_mpsc_queue_t;
 
+/* Synchronous receive: one nng_aio whose completion is signalled in C, so a
+   completion does not take the GIL. Python waits in short slices with
+   pynng_sync_recv_wait() so that it can run signal handlers between them. */
+typedef struct pynng_sync_recv {
+    nng_aio *aio;
+    nng_mtx *mtx;
+    nng_cv *cv;
+    int done;
+} pynng_sync_recv_t;
+
 /* Each entry holds one reference on its queue and the owner holds one, so the
    queue outlives MPSCAIOEngine when cyclic GC finalizes it before the
    AIOHelper/DeviceAIO objects whose entries use it. */
@@ -77,6 +95,8 @@ static void _pynng_mpsc_queue_release(pynng_mpsc_queue_t *q, size_t n) {
     }
 }
 
+#endif /* PYNNG_CFFI_CDEF */
+
 pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd);
 void pynng_mpsc_queue_close(pynng_mpsc_queue_t *q);
 void pynng_mpsc_queue_free(pynng_mpsc_queue_t *q);
@@ -86,6 +106,13 @@ int pynng_aio_entry_is_idle(pynng_aio_entry_t *e);
 void pynng_aio_entry_free(pynng_aio_entry_t *e);
 void pynng_native_aio_complete(void *arg);
 int pynng_mpsc_drain_batch(pynng_mpsc_queue_t *q, uintptr_t *out_slot_ids, int max_entries);
+
+int pynng_sync_recv_alloc(pynng_sync_recv_t **out);
+nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
+int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
+void pynng_sync_recv_free(pynng_sync_recv_t *r);
+
+#ifndef PYNNG_CFFI_CDEF
 
 pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
     pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)malloc(sizeof(pynng_mpsc_queue_t));
@@ -306,21 +333,6 @@ void pynng_aio_entry_free(pynng_aio_entry_t *e) {
     }
 }
 
-/* Synchronous receive: one nng_aio whose completion is signalled in C, so a
-   completion does not take the GIL. Python waits in short slices with
-   pynng_sync_recv_wait() so that it can run signal handlers between them. */
-typedef struct pynng_sync_recv {
-    nng_aio *aio;
-    nng_mtx *mtx;
-    nng_cv *cv;
-    int done;
-} pynng_sync_recv_t;
-
-int pynng_sync_recv_alloc(pynng_sync_recv_t **out);
-nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
-int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
-void pynng_sync_recv_free(pynng_sync_recv_t *r);
-
 static void _pynng_sync_recv_complete(void *arg) {
     pynng_sync_recv_t *r = (pynng_sync_recv_t *)arg;
     nng_mtx_lock(r->mtx);
@@ -374,5 +386,7 @@ int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms) {
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* !PYNNG_CFFI_CDEF */
 
 #endif /* PYNNG_AIO_ENGINE_H */

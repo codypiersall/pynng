@@ -32,35 +32,47 @@ from ._base import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = """
-ffi
-Bus0
-Pair0
-Pair1
-Pull0 Push0
-Pub0 Sub0
-Req0 Rep0
-Socket
-Surveyor0 Respondent0
-RawBus0
-RawPair0
-RawPair1
-RawPush0
-RawPull0
-RawPub0
-RawSub0
-RawReq0
-RawRep0
-RawSurveyor0
-RawRespondent0
-device
-adevice
-stats
-socket_stats
-Stat
-nng_fini
-nng_fini_at_exit
-""".split()
+__all__ = [
+    "Bus0",
+    "Context",
+    "Dialer",
+    "Listener",
+    "Message",
+    "Pair0",
+    "Pair1",
+    "Pipe",
+    "PipeEvent",
+    "PipeEventStream",
+    "Pub0",
+    "Pull0",
+    "Push0",
+    "RawBus0",
+    "RawPair0",
+    "RawPair1",
+    "RawPub0",
+    "RawPull0",
+    "RawPush0",
+    "RawRep0",
+    "RawReq0",
+    "RawRespondent0",
+    "RawSub0",
+    "RawSurveyor0",
+    "Rep0",
+    "Req0",
+    "Respondent0",
+    "Socket",
+    "Stat",
+    "Sub0",
+    "Surveyor0",
+    "adevice",
+    "device",
+    "ffi",
+    "lib",
+    "nng_fini",
+    "nng_fini_at_exit",
+    "socket_stats",
+    "stats",
+]
 
 # Flag to allow users who explicitly need nng_fini() at atexit to opt in.
 # Defaults to False to avoid process-crashing race conditions with Python GC.

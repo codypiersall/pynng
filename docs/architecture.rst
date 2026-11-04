@@ -21,13 +21,14 @@ build backend, configured in ``pyproject.toml``. The build process:
    - ``openssl``: links against system OpenSSL 3.5+ via ``find_package(OpenSSL 3.5 REQUIRED)`` (v2 only; v1 is built without TLS)
    - ``none``: builds NNG without TLS
 
-2. **headerkit generates CFFI declarations**: At build time, ``CMakeLists.txt``
-   invokes ``build_pynng.py`` via ``cffi_buildtool`` (passing
-   ``NNG_INCLUDE_DIR``, ``NNG_MODULE_NAME``, and ``PYNNG_TLS_ENABLED``).
-   `headerkit <https://github.com/axiomantic/headerkit>`_ parses NNG's C
-   headers using ``libclang`` and auto-generates the CFFI C sources for
-   ``pynng._nng`` (v1) and ``pynng._nng_v2`` (v2), alongside the native C11
-   lock-free AIO completion engine (``src/aio_engine.h``).
+2. **headerkit generates CFFI declarations and .pyi type stubs**: At build
+   time, ``CMakeLists.txt`` invokes ``build_pynng.py`` via ``cffi_buildtool``
+   (passing ``NNG_INCLUDE_DIR``, ``NNG_MODULE_NAME``, and
+   ``PYNNG_TLS_ENABLED``). `headerkit <https://github.com/axiomantic/headerkit>`_
+   parses nng's C headers and ``src/aio_engine.h`` using ``libclang`` into an
+   intermediate representation (IR), then uses ``CffiWriter`` and
+   ``PyiWriter(mode="cffi")`` to auto-generate the CFFI C sources and PEP 484
+   ``.pyi`` typing stubs for ``pynng._nng`` (v1) and ``pynng._nng_v2`` (v2).
 
 3. **CFFI compiles the extensions**: ``_nng`` and ``_nng_v2`` are compiled as
    C11 CFFI extension modules (using Python's Stable ABI ``abi3`` on CPython
@@ -52,9 +53,9 @@ Code Organization
       tls.py            TLSConfig wrapper
       sockaddr.py       Socket address types (SockAddr, InprocAddr, IPCAddr, etc.)
       exceptions.py     Exception hierarchy mapping NNG error codes
-      v2/               NNG v2 bindings (import pynng.v2 as pynng)
-      _nng.*            Compiled CFFI extension for NNG v1 (generated at build time)
-      _nng_v2.*         Compiled CFFI extension for NNG v2 (generated at build time)
+      v2/               nng v2 bindings (import pynng.v2 as pynng)
+      _nng.*            Compiled CFFI extension and .pyi stub for nng v1 (generated at build time)
+      _nng_v2.*         Compiled CFFI extension and .pyi stub for nng v2 (generated at build time)
       _version.py       Auto-generated version (setuptools-scm, not in source tree)
 
 

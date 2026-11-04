@@ -19,9 +19,10 @@ pynng uses `scikit-build-core`_ as its build backend (configured in
    - ``openssl``: links against system OpenSSL 3.5+ via ``find_package(OpenSSL 3.5 REQUIRED)`` (v2 only; v1 is built without TLS)
    - ``none``: disables TLS for both v1 and v2
 
-2. `headerkit`_ parses NNG's C headers using ``libclang`` via ``build_pynng.py``
-   to auto-generate CFFI bindings for both ``pynng._nng`` (v1) and
-   ``pynng._nng_v2`` (v2).
+2. `headerkit`_ parses nng's C headers and ``src/aio_engine.h`` using
+   ``libclang`` via ``build_pynng.py``, emitting CFFI bindings (``CffiWriter``)
+   and PEP 484 ``.pyi`` type stubs (``PyiWriter(mode="cffi")``) for both
+   ``pynng._nng`` (v1) and ``pynng._nng_v2`` (v2).
 3. CFFI compiles the C11 extension modules (``_nng`` and ``_nng_v2``).
 4. `setuptools-scm`_ derives the version from git tags into ``pynng/_version.py``.
 
