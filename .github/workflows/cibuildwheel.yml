@@ -78,7 +78,7 @@ jobs:
             ${{ matrix.os }}-sccache-
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.3.4
+        uses: pypa/cibuildwheel@v4.3.5
         env:
           CIBW_ENVIRONMENT_WINDOWS: CMAKE_C_COMPILER_LAUNCHER=sccache SCCACHE_DIRECT=true
           CIBW_ENVIRONMENT_MACOS: CMAKE_C_COMPILER_LAUNCHER=sccache SCCACHE_DIRECT=true
