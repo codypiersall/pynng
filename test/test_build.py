@@ -717,6 +717,176 @@ class TestPyPyHeaderkitCompat:
         assert "BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng.pyi" in cmake_lines
         assert "BYPRODUCTS ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng_v2.pyi" in cmake_lines
         assert 'PATTERN "*.pyi"' in cmake_lines
+        assert 'PATTERN "py.typed"' in cmake_lines
+
+    def test_py_typed_marker_exists(self):
+        """Verify PEP 561 py.typed marker exists in the pynng package directory."""
+        py_typed_path = os.path.join(_PROJECT_ROOT, "pynng", "py.typed")
+        assert os.path.isfile(py_typed_path)
+
+    def test_all_python_modules_have_pep484_type_annotations(self):
+        """Verify every function and method across all pynng Python modules has PEP 484 type annotations."""
+        import ast
+        import glob
+
+        pynng_dir = os.path.join(_PROJECT_ROOT, "pynng")
+        py_files = [
+            path
+            for path in sorted(
+                glob.glob(os.path.join(pynng_dir, "**", "*.py"), recursive=True)
+            )
+            if not path.endswith("_version.py")
+        ]
+        assert len(py_files) == 14
+
+        untyped: list[str] = []
+        for path in py_files:
+            rel_path = os.path.relpath(path, _PROJECT_ROOT)
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=rel_path)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.returns is None:
+                        untyped.append(
+                            f"{rel_path}:{node.lineno} {node.name} missing return annotation"
+                        )
+                    args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+                    if node.args.vararg is not None:
+                        args.append(node.args.vararg)
+                    if node.args.kwarg is not None:
+                        args.append(node.args.kwarg)
+                    for idx, arg in enumerate(args):
+                        if idx == 0 and arg.arg in ("self", "cls"):
+                            continue
+                        if arg.annotation is None:
+                            untyped.append(
+                                f"{rel_path}:{node.lineno} {node.name}({arg.arg}) missing parameter annotation"
+                            )
+
+        assert untyped == []
+
+    def test_zero_any_annotations_across_pynng(self):
+        """Verify zero Any imports, zero | Any unions, and zero Any annotations across pynng."""
+        import ast
+        import glob
+
+        pynng_dir = os.path.join(_PROJECT_ROOT, "pynng")
+        py_files = [
+            path
+            for path in sorted(
+                glob.glob(os.path.join(pynng_dir, "**", "*.py"), recursive=True)
+            )
+            if not path.endswith("_version.py")
+        ]
+        assert len(py_files) == 14
+
+        any_violations: list[str] = []
+        for path in py_files:
+            rel_path = os.path.relpath(path, _PROJECT_ROOT)
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=rel_path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.name == "Any":
+                            any_violations.append(
+                                f"{rel_path}:{node.lineno} imports Any"
+                            )
+                elif isinstance(node, ast.Name) and node.id == "Any":
+                    any_violations.append(f"{rel_path}:{node.lineno} references Any")
+
+        assert any_violations == []
+
+    def test_protocol_sockets_have_explicit_init_parameters_without_kwargs(self):
+        """Verify Socket and all 22 protocol classes in v1 and v2 have explicit __init__ parameters and no **kwargs."""
+        import ast
+
+        protocol_classes = (
+            "Socket",
+            "Bus0",
+            "Pair0",
+            "Pair1",
+            "Push0",
+            "Pull0",
+            "Pub0",
+            "Sub0",
+            "Req0",
+            "Rep0",
+            "Surveyor0",
+            "Respondent0",
+            "RawBus0",
+            "RawPair0",
+            "RawPair1",
+            "RawPush0",
+            "RawPull0",
+            "RawPub0",
+            "RawSub0",
+            "RawReq0",
+            "RawRep0",
+            "RawSurveyor0",
+            "RawRespondent0",
+        )
+        base_kwargs = {
+            "dial",
+            "listen",
+            "recv_timeout",
+            "send_timeout",
+            "recv_buffer_size",
+            "send_buffer_size",
+            "recv_max_size",
+            "reconnect_time_min",
+            "reconnect_time_max",
+            "opener",
+            "raw",
+            "block_on_dial",
+            "async_backend",
+            "tls_config",
+        }
+        extra_kwargs: dict[str, set[str]] = {
+            "Pair1": {"polyamorous"},
+            "RawPair1": {"polyamorous"},
+            "Sub0": {"topics"},
+            "RawSub0": {"topics"},
+            "Req0": {"resend_time"},
+            "RawReq0": {"resend_time"},
+            "Surveyor0": {"survey_time"},
+            "RawSurveyor0": {"survey_time"},
+        }
+
+        for rel_path, has_name in (
+            ("pynng/nng.py", True),
+            ("pynng/v2/nng.py", False),
+        ):
+            full_path = os.path.join(_PROJECT_ROOT, rel_path)
+            with open(full_path, encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=rel_path)
+
+            class_defs = {
+                node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
+            }
+            for cls_name in protocol_classes:
+                assert cls_name in class_defs, f"{cls_name} missing in {rel_path}"
+                cls_node = class_defs[cls_name]
+                init_nodes = [
+                    n
+                    for n in cls_node.body
+                    if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+                ]
+                assert len(init_nodes) == 1, (
+                    f"{rel_path}:{cls_name} must define explicit __init__"
+                )
+                init_node = init_nodes[0]
+                assert init_node.args.kwarg is None, (
+                    f"{rel_path}:{cls_name}.__init__ must not use **kwargs"
+                )
+                kwonly_names = {arg.arg for arg in init_node.args.kwonlyargs}
+                expected = set(base_kwargs) | extra_kwargs.get(cls_name, set())
+                if has_name:
+                    expected.add("name")
+                assert kwonly_names == expected, (
+                    f"{rel_path}:{cls_name}.__init__ kwargs mismatch: "
+                    f"{kwonly_names} != {expected}"
+                )
 
     @_skip_no_headers
     def test_build_pynng_executes_without_dunder_file_in_globals(self, monkeypatch):
@@ -810,6 +980,336 @@ class TestPyPyHeaderkitCompat:
             "nng_fini_at_exit",
         ):
             assert required in pynng.v2.__all__
+        assert "nng_fini" in pynng.v2.nng.__all__
+        assert "nng_fini_at_exit" in pynng.v2.nng.__all__
+
+    def test_committed_pyi_stubs_exist_and_not_gitignored(self, monkeypatch, tmp_path):
+        """Verify pynng/_nng.pyi and pynng/_nng_v2.pyi are tracked on disk and guarded against partial-TLS overwrites."""
+        import ast
+
+        import build_pynng
+
+        gitignore_path = os.path.join(_PROJECT_ROOT, ".gitignore")
+        with open(gitignore_path, encoding="utf-8") as f:
+            gitignore_lines = {
+                line.strip()
+                for line in f.read().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            }
+        assert "pynng/_nng.pyi" not in gitignore_lines
+        assert "pynng/_nng_v2.pyi" not in gitignore_lines
+
+        v1_pyi_path = os.path.join(_PROJECT_ROOT, "pynng", "_nng.pyi")
+        v2_pyi_path = os.path.join(_PROJECT_ROOT, "pynng", "_nng_v2.pyi")
+        assert os.path.isfile(v1_pyi_path)
+        assert os.path.isfile(v2_pyi_path)
+
+        with open(v1_pyi_path, encoding="utf-8") as f:
+            v1_pyi_text = f.read()
+        with open(v2_pyi_path, encoding="utf-8") as f:
+            v2_pyi_text = f.read()
+
+        v1_tree = ast.parse(v1_pyi_text, filename="pynng/_nng.pyi")
+        v2_tree = ast.parse(v2_pyi_text, filename="pynng/_nng_v2.pyi")
+
+        def _extract_lib_members(tree: ast.Module) -> set[str]:
+            lib_cls = next(
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef) and node.name == "_Lib"
+            )
+            return {
+                node.name
+                for node in lib_cls.body
+                if isinstance(node, ast.FunctionDef)
+            } | {
+                node.target.id
+                for node in lib_cls.body
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+            }
+
+        v1_members = _extract_lib_members(v1_tree)
+        v2_members = _extract_lib_members(v2_tree)
+        assert "NNG_TLS_AUTH_MODE_NONE" in v1_members
+        assert "nng_tls_config_psk" in v1_members
+        assert "NNG_TLS_AUTH_MODE_NONE" in v2_members
+        assert "NNG_TLS_1_2" in v2_members
+
+        if _has_compiled_nng:
+            assert v1_members == set(dir(lib))
+        try:
+            import pynng._nng_v2 as nng_v2
+
+            assert v2_members == set(dir(nng_v2.lib))
+        except ImportError:
+            pass
+
+        if _NNG_INCLUDE_DIR is not None:
+            pyi_no_tls = build_pynng.generate_pyi(
+                include_dir=_NNG_INCLUDE_DIR,
+                tls_enabled=False,
+            )
+            no_tls_members = _extract_lib_members(ast.parse(pyi_no_tls))
+            assert "nng_tls_config_psk" not in no_tls_members
+
+            # Verify partial build (tls_enabled=False) does not overwrite an existing .pyi stub
+            fake_pkg_dir = tmp_path / "pynng"
+            fake_pkg_dir.mkdir()
+            fake_stub = fake_pkg_dir / "_nng.pyi"
+            sentinel = "# existing full stub\n"
+            fake_stub.write_text(sentinel, encoding="utf-8")
+            monkeypatch.setattr(build_pynng, "_SCRIPT_DIR", str(tmp_path))
+            build_pynng._build_ffi(
+                module_name="pynng._nng",
+                include_dir=_NNG_INCLUDE_DIR,
+                tls_enabled=False,
+            )
+            assert fake_stub.read_text(encoding="utf-8") == sentinel
+
+    def test_mypy_strict_and_pyright_pass_with_zero_issues(self, tmp_path):
+        """Verify mypy --strict and pyright pass with zero errors on pynng and consumer code."""
+        import subprocess
+        import textwrap
+
+        pytest.importorskip("mypy")
+        pytest.importorskip("pyright")
+
+        mypy_res = subprocess.run(
+            [sys.executable, "-m", "mypy", "--strict", "pynng"],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert mypy_res.returncode == 0, (
+            f"mypy --strict failed:\n{mypy_res.stdout}\n{mypy_res.stderr}"
+        )
+        assert "Success: no issues found" in mypy_res.stdout
+
+        pyright_res = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pyright",
+                "--pythonpath",
+                sys.executable,
+                "pynng",
+            ],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert pyright_res.returncode == 0, (
+            f"pyright failed:\n{pyright_res.stdout}\n{pyright_res.stderr}"
+        )
+        assert "0 errors, 0 warnings, 0 informations" in pyright_res.stdout
+
+        valid_consumer = tmp_path / "valid_consumer.py"
+        valid_consumer.write_text(
+            textwrap.dedent(
+                """\
+                from __future__ import annotations
+                import pynng
+                import pynng.v2 as v2
+                from pynng._base import MsOption, PointerOption, ReadOnlyIntOption, SockAddrOption
+
+                desc_proto: ReadOnlyIntOption = pynng.Socket.protocol
+                desc_timeout: MsOption = pynng.Socket.recv_timeout
+                desc_tls: PointerOption = pynng.Socket.tls_config
+                desc_addr: SockAddrOption = pynng.Dialer.local_address
+
+                async def exercise_types(req: pynng.Request) -> None:
+                    with pynng.Pair0(listen="inproc://t1", name=b"bname") as s1:
+                        proto: int = s1.protocol
+                        s1.name = b"updated"
+                        s1.name = "updated-str"
+                        with s1.listen("inproc://t2") as listener:
+                            lsock: pynng.Socket = listener.socket
+                            _ = lsock.protocol
+                        with s1.dial("inproc://t1") as dialer:
+                            dsock: pynng.Socket = dialer.socket
+                            _ = dsock.protocol
+                        msg = pynng.Message(b"hello")
+                        msg2: pynng.Message = msg.copy()
+                        msg3: pynng.Message = msg.dup()
+                        _ = (proto, msg2, msg3)
+
+                    with v2.Pair0(listen="inproc://v2_t1") as vs1:
+                        with vs1.listen("inproc://v2_t2") as vlistener:
+                            vlsock: v2.Socket = vlistener.socket
+                            _ = vlsock.protocol
+                        vmsg = v2.Message(b"hello")
+                        vmsg2: v2.Message = vmsg.copy()
+                        _ = vmsg2
+
+                    async with v2.Rep0Service("inproc://v2_svc") as svc:
+                        svc_typed: v2.Rep0Service = svc
+                        _ = svc_typed
+
+                    await req.reply(bytearray(b"ok"))
+                    await req.reply(memoryview(b"ok"))
+                    _ = v2.nng.nng_fini
+                    _ = v2.nng.nng_fini_at_exit
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        env = os.environ.copy()
+        env["MYPYPATH"] = _PROJECT_ROOT
+        env["PYTHONPATH"] = _PROJECT_ROOT
+
+        valid_mypy = subprocess.run(
+            [sys.executable, "-m", "mypy", "--strict", str(valid_consumer)],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert valid_mypy.returncode == 0, (
+            f"valid_consumer mypy failed:\n{valid_mypy.stdout}\n{valid_mypy.stderr}"
+        )
+
+        invalid_consumer = tmp_path / "invalid_consumer.py"
+        invalid_consumer.write_text(
+            textwrap.dedent(
+                """\
+                import pynng
+                import pynng.v2 as v2
+
+                def bad(s: pynng.Pair0, d: pynng.Dialer, vd: v2.Dialer) -> None:
+                    s.protocol = 1
+                    s.raw = True
+                    d.url = "tcp://127.0.0.1:80"
+                    _ = s.tls_config
+                    _ = vd.tcp_nodelay
+                """
+            ),
+            encoding="utf-8",
+        )
+        invalid_mypy = subprocess.run(
+            [sys.executable, "-m", "mypy", "--strict", str(invalid_consumer)],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert invalid_mypy.returncode != 0
+        assert invalid_mypy.stdout.count("error:") == 5
+
+    @_skip_no_compiled_nng
+    def test_option_descriptors_and_v1_v2_runtime_contracts(self):
+        """Verify runtime option descriptor behavior, sync endpoint context managers, and v1/v2 separation."""
+        import pynng
+        from pynng._base import (
+            MsOption,
+            PointerOption,
+            ReadOnlyBooleanOption,
+            ReadOnlyIntOption,
+            ReadOnlyStringOption,
+            SockAddrOption,
+        )
+
+        # Class-level descriptor access returns the descriptor object itself
+        assert isinstance(pynng.Socket.recv_timeout, MsOption)
+        assert isinstance(pynng.Socket.raw, ReadOnlyBooleanOption)
+        assert isinstance(pynng.Socket.protocol, ReadOnlyIntOption)
+        assert isinstance(pynng.Socket.protocol_name, ReadOnlyStringOption)
+        assert isinstance(pynng.Socket.tls_config, PointerOption)
+        assert isinstance(pynng.Dialer.local_address, SockAddrOption)
+        assert isinstance(pynng.Dialer.url, ReadOnlyStringOption)
+        assert isinstance(pynng.Pipe.local_address, SockAddrOption)
+
+        # Misleading local_address removed from Socket docstring
+        assert pynng.Socket.__doc__ is not None
+        assert "local_address" not in pynng.Socket.__doc__
+
+        # Redundant import builtins removed from pynng/_base.py
+        base_path = os.path.join(_PROJECT_ROOT, "pynng", "_base.py")
+        with open(base_path, encoding="utf-8") as f:
+            base_source = f.read()
+        assert "import builtins" not in base_source
+
+        with pynng.Pair0() as sock:
+            sock.name = b"bytes-sock-name"
+            assert sock.name == "bytes-sock-name"
+
+            # Read-only options raise TypeError on write
+            with pytest.raises(TypeError, match="readonly"):
+                sock.protocol = 1  # type: ignore[misc]
+            with pytest.raises(TypeError, match="readonly"):
+                sock.raw = True  # type: ignore[misc]
+            with pytest.raises(TypeError, match="readonly"):
+                sock.recv_fd = 1  # type: ignore[misc]
+
+            # Write-only PointerOption raises TypeError on instance read
+            with pytest.raises(TypeError, match="write-only"):
+                _ = sock.tls_config  # type: ignore[arg-type]
+
+            # Synchronous context manager on Listener and Dialer
+            with sock.listen("inproc://sync-cm-test") as listener:
+                assert listener.id > 0
+                assert listener.socket is sock
+                with pytest.raises(TypeError, match="readonly"):
+                    listener.url = "inproc://other"  # type: ignore[misc]
+                with pynng.Pair0() as client:
+                    with client.dial("inproc://sync-cm-test") as dialer:
+                        assert dialer.id > 0
+                        assert dialer.socket is client
+                    assert client.dialers == ()
+            assert sock.listeners == ()
+
+            msg = pynng.Message(b"abc")
+            dup_msg = msg.copy()
+            assert isinstance(dup_msg, pynng.Message)
+            assert dup_msg.bytes == b"abc"
+
+        try:
+            import pynng.v2 as v2
+            import pynng.v2.nng as v2_nng
+        except ImportError:
+            return
+
+        # Zero # type: ignore[override] comments in pynng/v2/nng.py
+        v2_nng_path = os.path.join(_PROJECT_ROOT, "pynng", "v2", "nng.py")
+        with open(v2_nng_path, encoding="utf-8") as f:
+            v2_nng_source = f.read()
+        assert "type: ignore[override]" not in v2_nng_source
+
+        # v1-only option descriptors are not inherited by v2.Dialer, v2.Listener, or v2.Pipe
+        for v1_only_attr in (
+            "tcp_nodelay",
+            "tcp_keepalive",
+            "reconnect_time_min",
+            "reconnect_time_max",
+            "recv_max_size",
+            "peer",
+            "peer_name",
+        ):
+            assert not hasattr(v2.Dialer, v1_only_attr)
+            assert not hasattr(v2.Listener, v1_only_attr)
+
+        for v1_only_pipe_attr in (
+            "url",
+            "protocol",
+            "protocol_name",
+            "peer",
+            "peer_name",
+        ):
+            assert not hasattr(v2.Pipe, v1_only_pipe_attr)
+
+        # v2.nng_fini_at_exit forwards to v2.nng.nng_fini_at_exit
+        orig_flag = v2_nng.nng_fini_at_exit
+        try:
+            v2.nng_fini_at_exit = True
+            assert v2_nng.nng_fini_at_exit is True
+            v2_nng.nng_fini_at_exit = False
+            assert v2.nng_fini_at_exit is False
+        finally:
+            v2_nng.nng_fini_at_exit = orig_flag
 
 
 class TestAioEngineHeader:

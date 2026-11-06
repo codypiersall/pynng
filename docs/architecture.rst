@@ -46,13 +46,16 @@ Code Organization
     pynng/
       __init__.py       Public API re-exports (NNG v1 in pynng 1.x)
       nng.py            Core: Socket, Pipe, Context, Message, protocol classes
+      _base.py          Shared v1/v2 base classes and generic option descriptors
       _aio.py           Async layer: AIOHelper, asyncio/trio integration
+      _finalized.py     Process-exit finalization tracking
       options.py        Option getter/setter functions
       service.py        High-level concurrent Rep0Service
       stats.py          NNG runtime statistics tree wrapper
       tls.py            TLSConfig wrapper
       sockaddr.py       Socket address types (SockAddr, InprocAddr, IPCAddr, etc.)
       exceptions.py     Exception hierarchy mapping NNG error codes
+      py.typed          PEP 561 marker indicating inline PEP 484 type annotations
       v2/               nng v2 bindings (import pynng.v2 as pynng)
       _nng.*            Compiled CFFI extension and .pyi stub for nng v1 (generated at build time)
       _nng_v2.*         Compiled CFFI extension and .pyi stub for nng v2 (generated at build time)
@@ -100,6 +103,16 @@ with NNG goes through these objects:
 - ``lib.nng_*()`` -- NNG function calls
 - ``ffi.new()`` -- allocate C data structures
 - ``ffi.def_extern()`` -- define callback functions callable from C
+
+Static Typing
+^^^^^^^^^^^^^
+
+pynng ships a `PEP 561 <https://peps.python.org/pep-0561/>`_ ``py.typed`` marker
+alongside inline `PEP 484 <https://peps.python.org/pep-0484/>`_ type annotations
+across all Python modules (including generic ``_NNGOption`` descriptors and
+v1/v2 narrowed return types on ``Socket``, ``Context``, ``Pipe``, and
+``Message``) and build-time generated ``_nng.pyi`` and ``_nng_v2.pyi`` CFFI
+extension stubs.
 
 Async Layer
 ^^^^^^^^^^^^

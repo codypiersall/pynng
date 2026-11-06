@@ -40,7 +40,16 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "pytest-trio>=0.8.0", "trio>=0.22.0", "headerkit~=0.50.0 ; python_version >= '3.11'"]
+dev = [
+    "mypy>=1.0",
+    "pyright>=1.1",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-trio>=0.8.0",
+    "trio>=0.22.0",
+    "types-cffi>=1.16.0",
+    "headerkit~=0.50.0 ; python_version >= '3.11'",
+]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinxcontrib-trio"]
 
 [project.urls]
@@ -129,3 +138,20 @@ markers = [
     "nng_v2: marks tests as v2-only (deselected when _nng_v2 is not built)",
     "requires_tls(*versions): marks tests that need TLS support in the named nng versions, or in the test's own version when none are named (skipped when built with PYNNG_TLS_ENGINE=none)",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+disallow_any_generics = true
+warn_return_any = true
+warn_redundant_casts = true
+disallow_subclassing_any = true
+
+[[tool.mypy.overrides]]
+module = ["cffi", "pynng._version", "sniffio", "trio", "trio.*"]
+ignore_missing_imports = true
+
+[tool.pyright]
+include = ["pynng"]
+pythonVersion = "3.10"
+reportMissingModuleSource = false

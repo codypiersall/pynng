@@ -1,15 +1,32 @@
-"""Runtime statistics interface for pynng using NNG statistics API."""
+"""Runtime statistics interface for pynng using nng statistics API."""
 
-from collections.abc import Mapping
+from __future__ import annotations
+
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 from ._base import Socket, _resolve_socket
 from ._nng import ffi, lib
 from .exceptions import check_err
 
+if TYPE_CHECKING:
+    import cffi
 
-_STAT_TYPE_NAMES = {
+    from . import _nng, _nng_v2
+
+    class _NngStat(_nng.nng_stat, _nng_v2.nng_stat):
+        pass
+
+    class _NngSocket(_nng.nng_socket, _nng_v2.nng_socket):
+        pass
+
+
+StatValue: TypeAlias = "int | str | bool | None | Stat | list[Stat]"
+StatDict: TypeAlias = "dict[str, int | str | bool | None | list[StatDict]]"
+
+
+_STAT_TYPE_NAMES: dict[int, str] = {
     lib.NNG_STAT_SCOPE: "scope",
     lib.NNG_STAT_LEVEL: "level",
     lib.NNG_STAT_COUNTER: "counter",
@@ -18,7 +35,7 @@ _STAT_TYPE_NAMES = {
     lib.NNG_STAT_ID: "id",
 }
 
-_STAT_UNIT_NAMES = {
+_STAT_UNIT_NAMES: dict[int, str] = {
     lib.NNG_UNIT_NONE: "none",
     lib.NNG_UNIT_BYTES: "bytes",
     lib.NNG_UNIT_MESSAGES: "messages",
@@ -28,8 +45,8 @@ _STAT_UNIT_NAMES = {
 
 
 @dataclass(slots=True)
-class Stat(Mapping):
-    """A structured representation of an NNG runtime statistic.
+class Stat(Mapping[str, StatValue]):
+    """A structured representation of an nng runtime statistic.
 
     Supports both attribute access (e.g. ``stat.value``) and mapping/dict
     access (e.g. ``stat['value']``).
@@ -39,22 +56,22 @@ class Stat(Mapping):
     desc: str
     type: int
     unit: int
-    value: Any
+    value: int | str | bool | None
     timestamp: int
     type_name: str
     unit_name: str
-    children: list["Stat"] = field(default_factory=list)
+    children: list[Stat] = field(default_factory=list)
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> StatValue:
         if hasattr(self, key):
-            return getattr(self, key)
+            return cast(StatValue, getattr(self, key))
         # Allow looking up direct child by name
         for child in self.children:
             if child.name == key:
                 return child
         raise KeyError(key)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(
             (
                 "name",
@@ -72,7 +89,7 @@ class Stat(Mapping):
     def __len__(self) -> int:
         return 9
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> StatDict:
         """Convert this Stat and all its children into a pure Python dictionary."""
         return {
             "name": self.name,
@@ -88,7 +105,7 @@ class Stat(Mapping):
 
     to_dict = as_dict
 
-    def find(self, name: str) -> Optional["Stat"]:
+    def find(self, name: str) -> Stat | None:
         """Find the first stat with matching ``name`` in this tree."""
         if self.name == name:
             return self
@@ -98,9 +115,9 @@ class Stat(Mapping):
                 return found
         return None
 
-    def find_all(self, name: str) -> list["Stat"]:
+    def find_all(self, name: str) -> list[Stat]:
         """Find all stats with matching ``name`` in this tree."""
-        results = []
+        results: list[Stat] = []
         if self.name == name:
             results.append(self)
         for child in self.children:
@@ -108,34 +125,62 @@ class Stat(Mapping):
         return results
 
 
-def _extract_stat_value(st, st_type, _lib=lib, _ffi=ffi):
+def _extract_stat_value(
+    st: _nng.nng_stat | _nng_v2.nng_stat,
+    st_type: int,
+    _lib: _nng._Lib | _nng_v2._Lib = lib,
+    _ffi: cffi.FFI = ffi,
+) -> int | str | bool | None:
+    st_compat = cast("_NngStat", st)
     if st_type in (_lib.NNG_STAT_LEVEL, _lib.NNG_STAT_COUNTER, _lib.NNG_STAT_ID):
-        return _lib.nng_stat_value(st)
+        return int(_lib.nng_stat_value(st_compat))
     elif st_type == _lib.NNG_STAT_STRING:
-        c_str = _lib.nng_stat_string(st)
+        c_str = cast("cffi.FFI.CData", _lib.nng_stat_string(st_compat))
         if c_str == _ffi.NULL:
             return ""
-        return _ffi.string(c_str).decode("utf-8", "replace")
+        raw = _ffi.string(c_str)
+        return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
     elif st_type == _lib.NNG_STAT_BOOLEAN:
-        return bool(_lib.nng_stat_bool(st))
+        return bool(_lib.nng_stat_bool(st_compat))
     return None
 
 
-def _build_stat_node(st, _lib=lib, _ffi=ffi) -> Stat:
-    name_p = _lib.nng_stat_name(st)
-    desc_p = _lib.nng_stat_desc(st)
-    name = _ffi.string(name_p).decode("utf-8", "replace") if name_p != _ffi.NULL else ""
-    desc = _ffi.string(desc_p).decode("utf-8", "replace") if desc_p != _ffi.NULL else ""
-    st_type = _lib.nng_stat_type(st)
-    st_unit = _lib.nng_stat_unit(st)
-    val = _extract_stat_value(st, st_type, _lib=_lib, _ffi=_ffi)
-    ts = _lib.nng_stat_timestamp(st)
+def _build_stat_node(
+    st: _nng.nng_stat | _nng_v2.nng_stat,
+    _lib: _nng._Lib | _nng_v2._Lib = lib,
+    _ffi: cffi.FFI = ffi,
+) -> Stat:
+    st_compat = cast("_NngStat", st)
+    name_p = cast("cffi.FFI.CData", _lib.nng_stat_name(st_compat))
+    desc_p = cast("cffi.FFI.CData", _lib.nng_stat_desc(st_compat))
+    if name_p != _ffi.NULL:
+        raw_name = _ffi.string(name_p)
+        name = (
+            raw_name.decode("utf-8", "replace")
+            if isinstance(raw_name, bytes)
+            else str(raw_name)
+        )
+    else:
+        name = ""
+    if desc_p != _ffi.NULL:
+        raw_desc = _ffi.string(desc_p)
+        desc = (
+            raw_desc.decode("utf-8", "replace")
+            if isinstance(raw_desc, bytes)
+            else str(raw_desc)
+        )
+    else:
+        desc = ""
+    st_type = int(_lib.nng_stat_type(st_compat))
+    st_unit = int(_lib.nng_stat_unit(st_compat))
+    val = _extract_stat_value(st_compat, st_type, _lib=_lib, _ffi=_ffi)
+    ts = int(_lib.nng_stat_timestamp(st_compat))
 
-    children = []
-    child = _lib.nng_stat_child(st)
-    while child != _ffi.NULL:
+    children: list[Stat] = []
+    child = _lib.nng_stat_child(st_compat)
+    while cast("cffi.FFI.CData", child) != _ffi.NULL:
         children.append(_build_stat_node(child, _lib=_lib, _ffi=_ffi))
-        child = _lib.nng_stat_next(child)
+        child = _lib.nng_stat_next(cast("_NngStat", child))
 
     return Stat(
         name=name,
@@ -159,17 +204,19 @@ def stats() -> Stat:
     return _stats(lib, ffi)
 
 
-def _stats(_lib, _ffi) -> Stat:
+def _stats(_lib: _nng._Lib | _nng_v2._Lib, _ffi: cffi.FFI) -> Stat:
     stat_p = _ffi.new("nng_stat **")
     check_err(_lib.nng_stats_get(stat_p), lib=_lib, ffi=_ffi)
-    root = stat_p[0]
+    root = cast("_NngStat", stat_p[0])
     try:
         return _build_stat_node(root, _lib=_lib, _ffi=_ffi)
     finally:
         _lib.nng_stats_free(root)
 
 
-def socket_stats(sock) -> Optional[Stat]:
+def socket_stats(
+    sock: Socket | _nng.nng_socket | _nng_v2.nng_socket | cffi.FFI.CData,
+) -> Stat | None:
     """Retrieve runtime statistics for a specific socket.
 
     Args:
@@ -181,16 +228,20 @@ def socket_stats(sock) -> Optional[Stat]:
     return _socket_stats(sock, lib, ffi)
 
 
-def _socket_stats(sock, default_lib, default_ffi):
+def _socket_stats(
+    sock: Socket | _nng.nng_socket | _nng_v2.nng_socket | cffi.FFI.CData,
+    default_lib: _nng._Lib | _nng_v2._Lib,
+    default_ffi: cffi.FFI,
+) -> Stat | None:
     if not isinstance(sock, Socket):
         sock = getattr(sock, "socket", sock)
     _lib, _ffi, nng_sock = _resolve_socket(sock, default_lib, default_ffi)
     stat_p = _ffi.new("nng_stat **")
     check_err(_lib.nng_stats_get(stat_p), lib=_lib, ffi=_ffi)
-    root = stat_p[0]
+    root = cast("_NngStat", stat_p[0])
     try:
-        s_stat = _lib.nng_stat_find_socket(root, nng_sock)
-        if s_stat == _ffi.NULL:
+        s_stat = _lib.nng_stat_find_socket(root, cast("_NngSocket", nng_sock))
+        if cast("cffi.FFI.CData", s_stat) == _ffi.NULL:
             return None
         return _build_stat_node(s_stat, _lib=_lib, _ffi=_ffi)
     finally:

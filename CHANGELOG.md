@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Add inline PEP 484 type annotations across all `pynng` and `pynng.v2` Python modules, ship the PEP 561 `pynng/py.typed` marker in built wheels, and narrow v1/v2 `Socket`, `Context`, `Pipe`, and `Message` return types for `mypy --strict` consumers
 - Generate and install PEP 484 `_nng.pyi` and `_nng_v2.pyi` type stubs into built wheels via `CMakeLists.txt`, and define explicit `__all__` exports on `pynng`, `pynng.nng`, `pynng.v2`, and `pynng.v2.nng`
 
 ### Changed
