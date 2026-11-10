@@ -1479,11 +1479,78 @@ class TestPyPyHeaderkitCompat:
         self, monkeypatch, tmp_path
     ):
         """Verify pynng._nng_cdef matches generate_cdef() 1:1 and _build_ffi succeeds without headerkit."""
+        import pathlib
         import re
 
-        from pynng._nng_cdef import get_cached_cdef
+        from pynng._nng_cdef import (
+            CDEF_V1_NO_TLS,
+            CDEF_V1_TLS,
+            CDEF_V2_NO_TLS,
+            CDEF_V2_TLS,
+            get_cached_cdef,
+        )
 
         assert _NNG_INCLUDE_DIR is not None
+
+        def _extract_cdef_version(cdef_text: str) -> tuple[int, int, int]:
+            m_maj = re.search(
+                r"^#define NNG_MAJOR_VERSION\s+(\d+)$", cdef_text, re.MULTILINE
+            )
+            m_min = re.search(
+                r"^#define NNG_MINOR_VERSION\s+(\d+)$", cdef_text, re.MULTILINE
+            )
+            m_pat = re.search(
+                r"^#define NNG_PATCH_VERSION\s+(\d+)$", cdef_text, re.MULTILINE
+            )
+            assert m_maj is not None and m_min is not None and m_pat is not None
+            return (int(m_maj.group(1)), int(m_min.group(1)), int(m_pat.group(1)))
+
+        def _extract_pyi_version(pyi_text: str) -> tuple[int, int, int]:
+            m_maj = re.search(
+                r"^\s*NNG_MAJOR_VERSION:\s*int\s*=\s*(\d+)$", pyi_text, re.MULTILINE
+            )
+            m_min = re.search(
+                r"^\s*NNG_MINOR_VERSION:\s*int\s*=\s*(\d+)$", pyi_text, re.MULTILINE
+            )
+            m_pat = re.search(
+                r"^\s*NNG_PATCH_VERSION:\s*int\s*=\s*(\d+)$", pyi_text, re.MULTILINE
+            )
+            assert m_maj is not None and m_min is not None and m_pat is not None
+            return (int(m_maj.group(1)), int(m_min.group(1)), int(m_pat.group(1)))
+
+        cmake_text = pathlib.Path(_PROJECT_ROOT, "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        m_v1_rev = re.search(
+            r'set\(NNG_REV\s+"v(\d+)\.(\d+)\.(\d+)"', cmake_text
+        )
+        m_v2_rev = re.search(
+            r'set\(NNG_V2_REV\s+"v(\d+)\.(\d+)\.(\d+)"', cmake_text
+        )
+        assert m_v1_rev is not None and m_v2_rev is not None
+        expected_v1_ver = (
+            int(m_v1_rev.group(1)),
+            int(m_v1_rev.group(2)),
+            int(m_v1_rev.group(3)),
+        )
+        expected_v2_ver = (
+            int(m_v2_rev.group(1)),
+            int(m_v2_rev.group(2)),
+            int(m_v2_rev.group(3)),
+        )
+
+        v1_pyi_text = pathlib.Path(_PROJECT_ROOT, "pynng", "_nng.pyi").read_text(
+            encoding="utf-8"
+        )
+        v2_pyi_text = pathlib.Path(_PROJECT_ROOT, "pynng", "_nng_v2.pyi").read_text(
+            encoding="utf-8"
+        )
+        assert _extract_cdef_version(CDEF_V1_TLS) == expected_v1_ver
+        assert _extract_cdef_version(CDEF_V1_NO_TLS) == expected_v1_ver
+        assert _extract_pyi_version(v1_pyi_text) == expected_v1_ver
+        assert _extract_cdef_version(CDEF_V2_TLS) == expected_v2_ver
+        assert _extract_cdef_version(CDEF_V2_NO_TLS) == expected_v2_ver
+        assert _extract_pyi_version(v2_pyi_text) == expected_v2_ver
 
         def _normalize_nng_version_defines(cdef_text: str) -> str:
             return re.sub(

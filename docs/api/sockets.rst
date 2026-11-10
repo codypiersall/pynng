@@ -58,9 +58,6 @@ Protocol Sockets
    :members:
    :show-inheritance:
 
-.. autoclass:: pynng.SurveyBuilder
-   :members:
-
 Raw Protocol Sockets
 --------------------
 
@@ -120,17 +117,9 @@ Devices and Runtime Lifecycle
 Runtime Statistics
 ------------------
 
-.. autofunction:: pynng.stats
+.. autofunction:: pynng.stats.stats
 
-.. autofunction:: pynng.socket_stats
+.. autofunction:: pynng.stats.socket_stats
 
-.. autoclass:: pynng.Stat
+.. autoclass:: pynng.stats.Stat
    :members:
-
-NNG v2 Namespace (``pynng.v2``)
--------------------------------
-
-.. automodule:: pynng.v2
-   :members:
-   :undoc-members:
-   :show-inheritance:

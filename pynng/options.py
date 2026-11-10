@@ -279,7 +279,7 @@ def _getopt_sockaddr(
     obj, lib_func = _get_inst_and_func(py_obj, "addr", "get")
     ret = lib_func(obj, opt_as_char, sock_addr)
     pynng.check_err(ret, lib=_lib, ffi=_ffi)
-    return pynng.sockaddr._nng_sockaddr(sock_addr, lib=_lib)
+    return pynng.sockaddr._nng_sockaddr(sock_addr, lib=_lib, ffi=_ffi)
 
 
 def _setopt_ptr(

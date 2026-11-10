@@ -390,3 +390,70 @@ async def test_recv_timeout_expiry_logs_no_error_trio(caplog):
             assert (await req.arecv()) == b"served"
 
     assert _service_errors(caplog) == []
+
+
+@pytest.mark.trio
+async def test_unreplied_request_cross_thread_gc_trio():
+    """Cross-thread GC of an unreplied Request wakes a Trio task waiting on replied_event."""
+    import gc
+    import threading
+    from unittest.mock import MagicMock
+
+    ev = trio.Event()
+    ctx = MagicMock()
+    req_holder = [Request(b"trio-cross-thread", ctx, _replied_event=ev)]
+
+    def drop_in_thread():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            req_holder.clear()
+            gc.collect()
+
+    t = threading.Thread(target=drop_in_thread)
+    t.start()
+    with trio.fail_after(2.0):
+        await ev.wait()
+    t.join(timeout=2.0)
+    assert ev.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_unreplied_request_cross_thread_gc_standalone_asyncio_event():
+    """Cross-thread GC of a Request with standalone asyncio.Event (no explicit _loop) wakes waiter."""
+    import gc
+    import threading
+    from unittest.mock import MagicMock
+
+    ev = asyncio.Event()
+    ctx = MagicMock()
+    req_holder = [Request(b"asyncio-standalone", ctx, _replied_event=ev)]
+
+    def drop_in_thread():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            req_holder.clear()
+            gc.collect()
+
+    t = threading.Thread(target=drop_in_thread)
+    t.start()
+    await asyncio.wait_for(ev.wait(), timeout=2.0)
+    t.join(timeout=2.0)
+    assert ev.is_set() is True
+
+
+def test_uninitialized_request_del_no_attribute_error():
+    """Request failing in __init__ does not raise AttributeError in __del__."""
+    import gc
+    import sys
+
+    unraisable_errors = []
+    old_hook = sys.unraisablehook
+    sys.unraisablehook = lambda args: unraisable_errors.append(args)
+    try:
+        with pytest.raises(TypeError):
+            Request()  # type: ignore[call-arg]
+        gc.collect()
+    finally:
+        sys.unraisablehook = old_hook
+    assert unraisable_errors == []
+

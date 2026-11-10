@@ -19,7 +19,7 @@ class SockAddr:
 
     """
 
-    __slots__ = ("_sock_addr",)
+    __slots__ = ("_ffi", "_sock_addr")
 
     type_to_str: dict[int, str] = {
         pynng.lib.NNG_AF_UNSPEC: "Unspecified",
@@ -31,8 +31,19 @@ class SockAddr:
         pynng.lib.NNG_AF_ABSTRACT: "abstract",
     }
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
+    _base_type_to_str: dict[int, str] = {
+        pynng.lib.NNG_AF_UNSPEC: "Unspecified",
+        pynng.lib.NNG_AF_INPROC: "inproc",
+        pynng.lib.NNG_AF_IPC: "ipc",
+        pynng.lib.NNG_AF_INET: "inet",
+        pynng.lib.NNG_AF_INET6: "inetv6",
+    }
+
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
         self._sock_addr = ffi_sock_addr
+        self._ffi: cffi.FFI = ffi if ffi is not None else pynng.ffi
 
     @property
     def sock_addr(self) -> _nng.nng_sockaddr | _nng_v2.nng_sockaddr:
@@ -46,7 +57,7 @@ class SockAddr:
     @property
     def family_as_str(self) -> str:
         """The string representation of the address family."""
-        return self.type_to_str[self.family]
+        return self._base_type_to_str.get(self.family, f"unknown ({self.family})")
 
     def __repr__(self) -> str:
         return f"nng_sockaddr {{.family = {self.family}}}"
@@ -55,14 +66,20 @@ class SockAddr:
 class InprocAddr(SockAddr):
     __slots__ = ("_mem",)
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
-        super().__init__(ffi_sock_addr)
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
+        super().__init__(ffi_sock_addr, ffi=ffi)
         # union member
         self._mem = self.sock_addr.s_inproc
 
     @property
+    def family_as_str(self) -> str:
+        return "inproc"
+
+    @property
     def name_bytes(self) -> bytes:
-        name = pynng.ffi.string(cast("cffi.FFI.CData", self._mem.sa_name))
+        name = self._ffi.string(cast("cffi.FFI.CData", self._mem.sa_name))
         return name if isinstance(name, bytes) else name.encode()
 
     @property
@@ -76,14 +93,20 @@ class InprocAddr(SockAddr):
 class IPCAddr(SockAddr):
     __slots__ = ("_mem",)
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
-        super().__init__(ffi_sock_addr)
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
+        super().__init__(ffi_sock_addr, ffi=ffi)
         # union member
         self._mem = self.sock_addr.s_ipc
 
     @property
+    def family_as_str(self) -> str:
+        return "ipc"
+
+    @property
     def path_bytes(self) -> bytes:
-        path = pynng.ffi.string(cast("cffi.FFI.CData", self._mem.sa_path))
+        path = self._ffi.string(cast("cffi.FFI.CData", self._mem.sa_path))
         return path if isinstance(path, bytes) else path.encode()
 
     @property
@@ -97,10 +120,16 @@ class IPCAddr(SockAddr):
 class InAddr(SockAddr):
     __slots__ = ("_mem",)
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
-        super().__init__(ffi_sock_addr)
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
+        super().__init__(ffi_sock_addr, ffi=ffi)
         # union member
         self._mem = self.sock_addr.s_in
+
+    @property
+    def family_as_str(self) -> str:
+        return "inet"
 
     @property
     def port(self) -> int:
@@ -122,10 +151,16 @@ class InAddr(SockAddr):
 class In6Addr(SockAddr):
     __slots__ = ("_mem",)
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
-        super().__init__(ffi_sock_addr)
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
+        super().__init__(ffi_sock_addr, ffi=ffi)
         # union member
         self._mem = self.sock_addr.s_in6
+
+    @property
+    def family_as_str(self) -> str:
+        return "inetv6"
 
     @property
     def port(self) -> int:
@@ -147,8 +182,10 @@ class In6Addr(SockAddr):
 class ZTAddr(SockAddr):
     __slots__ = ("_mem",)
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
-        super().__init__(ffi_sock_addr)
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
+        super().__init__(ffi_sock_addr, ffi=ffi)
         # union member
         self._mem = cast("_nng.nng_sockaddr", self.sock_addr).s_zt
 
@@ -172,8 +209,10 @@ class ZTAddr(SockAddr):
 class AbstractAddr(SockAddr):
     __slots__ = ("_mem",)
 
-    def __init__(self, ffi_sock_addr: cffi.FFI.CData) -> None:
-        super().__init__(ffi_sock_addr)
+    def __init__(
+        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+    ) -> None:
+        super().__init__(ffi_sock_addr, ffi=ffi)
         # union member
         self._mem = self.sock_addr.s_abstract
 
@@ -215,10 +254,14 @@ class AbstractAddr(SockAddr):
 
 
 def _nng_sockaddr(
-    sa: cffi.FFI.CData, *, lib: _nng._Lib | _nng_v2._Lib | None = None
+    sa: cffi.FFI.CData,
+    *,
+    lib: _nng._Lib | _nng_v2._Lib | None = None,
+    ffi: cffi.FFI | None = None,
 ) -> SockAddr:
     # ensures the correct class gets instantiated based on s_family
     _lib = lib if lib is not None else pynng.lib
+    _ffi = ffi if ffi is not None else pynng.ffi
     lookup: dict[int, type[SockAddr]] = {
         _lib.NNG_AF_INPROC: InprocAddr,
         _lib.NNG_AF_IPC: IPCAddr,
@@ -231,4 +274,4 @@ def _nng_sockaddr(
     # fall through to SockAddr, e.g. if it's unspecified
     sock_addr = cast("_nng.nng_sockaddr | _nng_v2.nng_sockaddr", sa[0])
     cls = lookup.get(sock_addr.s_family, SockAddr)
-    return cls(sa)
+    return cls(sa, ffi=_ffi)
