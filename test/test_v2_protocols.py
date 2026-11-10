@@ -418,7 +418,7 @@ def test_v2_raw_pair0_message_flow():
         assert cooked.recv() == b"to-cooked"
 
 
-def test_v2_abstract_sockaddr():
+def test_v2_abstract_sockaddr(monkeypatch):
     """Verify a v2 abstract address maps to AbstractAddr, not v1's ZTAddr."""
     from pynng._nng_v2 import ffi as ffi2, lib as lib2
     import sys
@@ -430,12 +430,34 @@ def test_v2_abstract_sockaddr():
     assert type(addr) is pynng.sockaddr.AbstractAddr
     assert addr.family_as_str == "abstract"
 
+    # Also test pynng.options._getopt_sockaddr directly with a v2 Socket on all OSes
+    with v2.Pair0() as s0:
+        def fake_get_inst_and_func(py_obj, option_type, get_or_set):
+            assert py_obj is s0
+            assert (option_type, get_or_set) == ("addr", "get")
+            def fake_getter(_obj, _opt, out_addr):
+                out_addr[0].s_family = lib2.NNG_AF_ABSTRACT
+                return 0
+            return s0.socket, fake_getter
+
+        monkeypatch.setattr(pynng.options, "_get_inst_and_func", fake_get_inst_and_func)
+        opt_addr = pynng.options._getopt_sockaddr(s0, "local-address")
+        assert type(opt_addr) is pynng.sockaddr.AbstractAddr
+        assert opt_addr.family_as_str == "abstract"
+
     if sys.platform.startswith("linux"):
         url = f"abstract://pynng-v2-test-{uuid.uuid4().hex}"
-        with v2.Pair0() as s0:
+        with v2.Pair0(recv_timeout=FAST_TIMEOUT) as s0, v2.Pair0(
+            recv_timeout=FAST_TIMEOUT
+        ) as s1:
             listener = s0.listen(url)
+            s1.dial(url, block=True)
+            s0.send(b"ping")
+            assert s1.recv() == b"ping"
             assert type(listener.local_address) is pynng.sockaddr.AbstractAddr
             assert listener.local_address.family_as_str == "abstract"
+            assert type(s0.pipes[0].local_address) is pynng.sockaddr.AbstractAddr
+            assert s0.pipes[0].local_address.family_as_str == "abstract"
 
 
 @pytest.mark.parametrize("mod", [pynng, v2], ids=["v1", "v2"])
