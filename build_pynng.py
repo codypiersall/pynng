@@ -7,12 +7,13 @@ then converts the IR to CFFI cdef strings and PEP 484 .pyi stubs via
 headerkit's CffiWriter and PyiWriter.
 
 This module serves dual purposes:
-  1. Build-time: executed by cffi_buildtool to generate CFFI bindings
+  1. Build-time: executed by CMake (or directly) to emit CFFI C sources
   2. Test-time: imported by tests to verify generate_cdef() and generate_pyi()
 
 When imported as a regular Python module (e.g., by tests), only the functions
 and constants are made available. The ffibuilder setup only runs when executed
-by cffi_buildtool (which sets __name__ to "gen-cffi-src") or directly.
+directly as a script (__name__ == "__main__") or via exec() with __name__ set
+to "gen-cffi-src".
 
 Supports generating bindings for both nng v1 and v2. The target module is
 controlled by the NNG_MODULE_NAME environment variable:
@@ -601,9 +602,9 @@ def _build_ffi(
     return ffi
 
 
-# Only run the build when executed by cffi_buildtool (sets __name__ to
-# "gen-cffi-src") or when run directly as a script. When imported normally
-# by tests (__name__ == "build_pynng"), skip the build setup.
+# Only run the build when executed directly as a script (__name__ == "__main__")
+# or via exec() with __name__ == "gen-cffi-src". When imported normally by
+# tests (__name__ == "build_pynng"), skip the build setup.
 if __name__ in ("gen-cffi-src", "__main__"):
     # Check NNG_MODULE_NAME env var to determine which module to build.
     # Default is v1 ("pynng._nng").

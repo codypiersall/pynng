@@ -153,16 +153,20 @@ class ZTAddr(SockAddr):
         self._mem = cast("_nng.nng_sockaddr", self.sock_addr).s_zt
 
     @property
+    def family_as_str(self) -> str:
+        return "zerotier"
+
+    @property
     def nwid(self) -> int:
-        return int(getattr(self._mem, "as_nwid"))
+        return int(self._mem.sa_nwid)
 
     @property
     def nodeid(self) -> int:
-        return int(getattr(self._mem, "as_nodeid"))
+        return int(self._mem.sa_nodeid)
 
     @property
     def port(self) -> int:
-        return int(getattr(self._mem, "as_port"))
+        return int(self._mem.sa_port)
 
 
 class AbstractAddr(SockAddr):

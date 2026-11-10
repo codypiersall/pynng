@@ -82,12 +82,20 @@ def test_sockaddr_slots(family, expected_cls):
     """Verify SockAddr and every concrete address subclass define __slots__ and lack __dict__."""
     raw = pynng.ffi.new("nng_sockaddr *")
     raw.s_family = family
+    if family == pynng.lib.NNG_AF_ZT:
+        raw.s_zt.sa_nwid = 0x123456789ABCDEF0
+        raw.s_zt.sa_nodeid = 0xFED1234567
+        raw.s_zt.sa_port = 9993
     addr = sa._nng_sockaddr(raw)
     assert type(addr) is expected_cls
     assert not hasattr(addr, "__dict__")
     assert "__slots__" in type(addr).__dict__
     assert addr.family == family
     assert addr.family_as_str == sa.SockAddr.type_to_str[family]
+    if family == pynng.lib.NNG_AF_ZT:
+        assert addr.nwid == 0x123456789ABCDEF0
+        assert addr.nodeid == 0xFED1234567
+        assert addr.port == 9993
     with pytest.raises(AttributeError):
         addr._unslotted_dynamic_field = "leak"
 

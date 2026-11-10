@@ -21,13 +21,17 @@ build backend, configured in ``pyproject.toml``. The build process:
    - ``openssl``: links against system OpenSSL 3.5+ via ``find_package(OpenSSL 3.5 REQUIRED)`` (v2 only; v1 is built without TLS)
    - ``none``: builds NNG without TLS
 
-2. **headerkit generates CFFI declarations and .pyi type stubs**: At build
-   time, ``CMakeLists.txt`` invokes ``build_pynng.py`` via ``cffi_buildtool``
+2. **build_pynng.py emits CFFI C sources and headerkit refreshes .pyi stubs**:
+   At build time, ``CMakeLists.txt`` invokes ``python build_pynng.py <output_c>``
    (passing ``NNG_INCLUDE_DIR``, ``NNG_MODULE_NAME``, and
-   ``PYNNG_TLS_ENABLED``). `headerkit <https://github.com/axiomantic/headerkit>`_
+   ``PYNNG_TLS_ENABLED``). By default, ``build_pynng.py`` uses pre-generated
+   ``cdef`` strings in ``pynng/_nng_cdef.py`` and calls
+   ``ffibuilder.emit_c_code()`` so builds succeed without requiring
+   ``headerkit`` or ``libclang``. When ``headerkit`` is installed and
+   ``PYNNG_USE_CACHED_CDEF=0``, `headerkit <https://github.com/axiomantic/headerkit>`_
    parses nng's C headers and ``src/aio_engine.h`` using ``libclang`` into an
    intermediate representation (IR), then uses ``CffiWriter`` and
-   ``PyiWriter(mode="cffi")`` to auto-generate the CFFI C sources and PEP 484
+   ``PyiWriter(mode="cffi")`` to regenerate the CFFI ``cdef`` and PEP 484
    ``.pyi`` typing stubs for ``pynng._nng`` (v1) and ``pynng._nng_v2`` (v2).
 
 3. **CFFI compiles the extensions**: ``_nng`` and ``_nng_v2`` are compiled as

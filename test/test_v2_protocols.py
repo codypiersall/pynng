@@ -421,12 +421,42 @@ def test_v2_raw_pair0_message_flow():
 def test_v2_abstract_sockaddr():
     """Verify a v2 abstract address maps to AbstractAddr, not v1's ZTAddr."""
     from pynng._nng_v2 import ffi as ffi2, lib as lib2
+    import sys
+    import uuid
 
     sa = ffi2.new("nng_sockaddr *")
     sa[0].s_family = lib2.NNG_AF_ABSTRACT
     addr = pynng.sockaddr._nng_sockaddr(sa, lib=lib2)
     assert type(addr) is pynng.sockaddr.AbstractAddr
     assert addr.family_as_str == "abstract"
+
+    if sys.platform.startswith("linux"):
+        url = f"abstract://pynng-v2-test-{uuid.uuid4().hex}"
+        with v2.Pair0() as s0:
+            listener = s0.listen(url)
+            assert type(listener.local_address) is pynng.sockaddr.AbstractAddr
+            assert listener.local_address.family_as_str == "abstract"
+
+
+@pytest.mark.parametrize("mod", [pynng, v2], ids=["v1", "v2"])
+def test_surveyor0_recv_without_survey_raises_bad_state(mod):
+    """Surveyor0.recv() without an active survey raises BadState, while expired survey raises Timeout."""
+    addr = random_addr()
+    with mod.Surveyor0(listen=addr, survey_time=30, recv_timeout=200) as surv:
+        # No active survey -> BadState
+        with pytest.raises(pynng.BadState):
+            surv.recv()
+        with pytest.raises(pynng.BadState):
+            surv.recv_msg()
+
+        # Start a survey with no respondents -> expires with Timeout
+        surv.send(b"hello?")
+        with pytest.raises(pynng.Timeout):
+            surv.recv()
+
+        # After survey expiration, another recv without sending raises BadState
+        with pytest.raises(pynng.BadState):
+            surv.recv()
 
 
 @pytest.mark.parametrize("mod", [pynng, v2], ids=["v1", "v2"])

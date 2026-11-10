@@ -217,12 +217,40 @@ async def test_double_reply_raises_asyncio():
 
 def test_unreplied_request_warns():
     """A Request that goes out of scope without reply emits ResourceWarning."""
+    import gc
+
+    dummy_ctx = object()
     with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        r = Request(b"test-data", None)
+        warnings.simplefilter("always", ResourceWarning)
+        r = Request(b"test-data", dummy_ctx)
         del r
-        # ResourceWarning may or may not fire depending on GC timing,
-        # so we just verify the class works without errors.
+        gc.collect()
+        resource_warnings = [item for item in w if issubclass(item.category, ResourceWarning)]
+        assert len(resource_warnings) == 1
+        assert str(resource_warnings[0].message) == "Request with data b'test-data' was never replied to"
+
+
+@pytest.mark.asyncio
+async def test_unreplied_request_gc_on_background_thread_wakes_event():
+    """Request.__del__ on a background thread safely sets _replied_event via loop.call_soon_threadsafe."""
+    import gc
+    import threading
+
+    loop = asyncio.get_running_loop()
+    replied_event = asyncio.Event()
+    holder = [Request(b"bg-data", object(), _replied_event=replied_event, _loop=loop)]
+
+    def drop_in_thread():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            holder.clear()
+            gc.collect()
+
+    t = threading.Thread(target=drop_in_thread)
+    t.start()
+    t.join(timeout=2.0)
+    await asyncio.wait_for(replied_event.wait(), timeout=2.0)
+    assert replied_event.is_set()
 
 
 # ---------------------------------------------------------------------------

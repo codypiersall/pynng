@@ -903,7 +903,7 @@ class TestPyPyHeaderkitCompat:
 
     @_skip_no_headers
     def test_build_pynng_executes_without_dunder_file_in_globals(self, monkeypatch):
-        """Verify build_pynng.py runs cleanly via exec() when __file__ is absent (as in cffi_buildtool)."""
+        """Verify build_pynng.py runs cleanly via exec() when __file__ is absent from globals()."""
         assert _NNG_INCLUDE_DIR is not None
         monkeypatch.setenv("NNG_INCLUDE_DIR", _NNG_INCLUDE_DIR)
         monkeypatch.chdir(_PROJECT_ROOT)
