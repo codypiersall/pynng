@@ -260,7 +260,8 @@ ffi: cffi.FFI
 class _Lib:
     NNG_MAJOR_VERSION: int = 1
     NNG_MINOR_VERSION: int = 12
-    NNG_PATCH_VERSION: int = 5
+    # Upstream nanomsg/nng v1.12.5 defines NNG_PATCH_VERSION 4 in nng.h
+    NNG_PATCH_VERSION: int = 4
     NNG_MAXADDRLEN: int = 128
     NNG_DURATION_INFINITE: int = -1
     NNG_DURATION_DEFAULT: int = -2
