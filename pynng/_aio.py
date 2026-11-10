@@ -89,10 +89,10 @@ class _AioLibProtocol(Protocol):
         self, msg: _NngMsg, data: bytes | cffi.FFI.CData, size: int
     ) -> int: ...
     def nng_msg_free(self, msg: _NngMsg) -> None: ...
-    def nng_recv_aio(self, s: _AioTargetHandle, aio: _NngAio) -> int: ...
-    def nng_send_aio(self, s: _AioTargetHandle, aio: _NngAio) -> int: ...
-    def nng_ctx_recv(self, ctx: _AioTargetHandle, aio: _NngAio) -> int: ...
-    def nng_ctx_send(self, ctx: _AioTargetHandle, aio: _NngAio) -> int: ...
+    def nng_recv_aio(self, s: _AioTargetHandle, aio: _NngAio) -> None: ...
+    def nng_send_aio(self, s: _AioTargetHandle, aio: _NngAio) -> None: ...
+    def nng_ctx_recv(self, ctx: _AioTargetHandle, aio: _NngAio) -> None: ...
+    def nng_ctx_send(self, ctx: _AioTargetHandle, aio: _NngAio) -> None: ...
 
 
 # global variable for mapping asynchronous operations with the Python data
@@ -508,18 +508,18 @@ class AIOHelper:
         # we need to choose the correct nng lib functions based on the type of
         # object we've been passed; but really, all the logic is identical
         self._nng_obj: _AioTargetHandle
-        self._lib_arecv: Callable[[_AioTargetHandle, _NngAio], int]
-        self._lib_asend: Callable[[_AioTargetHandle, _NngAio], int]
+        self._lib_arecv: Callable[[_AioTargetHandle, _NngAio], None]
+        self._lib_asend: Callable[[_AioTargetHandle, _NngAio], None]
         if isinstance(obj, _base.Socket):
             self._nng_obj = obj.socket
             # Use _aio_recv_fn / _aio_send_fn properties if available,
             # otherwise fall back to v1 function names
             if getattr(obj, "_aio_recv_fn", None) is not None:
                 self._lib_arecv = cast(
-                    "Callable[[_AioTargetHandle, _NngAio], int]", obj._aio_recv_fn
+                    "Callable[[_AioTargetHandle, _NngAio], None]", obj._aio_recv_fn
                 )
                 self._lib_asend = cast(
-                    "Callable[[_AioTargetHandle, _NngAio], int]", obj._aio_send_fn
+                    "Callable[[_AioTargetHandle, _NngAio], None]", obj._aio_send_fn
                 )
             else:
                 self._lib_arecv = aio_lib.nng_recv_aio
@@ -670,7 +670,7 @@ class AIOHelper:
         aio_lib = cast(_AioLibProtocol, _lib)
         self._prepare_aio()
         try:
-            check_err(self._lib_arecv(self._nng_obj, self.aio), lib=_lib, ffi=_ffi)
+            self._lib_arecv(self._nng_obj, self.aio)
         except BaseException:
             self._cleanup_prepared_aio()
             raise
@@ -716,7 +716,7 @@ class AIOHelper:
             self._prepare_aio()
             aio_lib.nng_aio_set_msg(self.aio, msg)
             self._sending = True
-            check_err(self._lib_asend(self._nng_obj, self.aio), lib=_lib, ffi=_ffi)
+            self._lib_asend(self._nng_obj, self.aio)
         except BaseException:
             self._sending = False
             self._cleanup_prepared_aio()
@@ -749,7 +749,7 @@ class AIOHelper:
         msg._mem_freed = True
         self._sending = True
         try:
-            check_err(self._lib_asend(self._nng_obj, self.aio), lib=_lib, ffi=_ffi)
+            self._lib_asend(self._nng_obj, self.aio)
         except BaseException:
             self._sending = False
             self._cleanup_prepared_aio()

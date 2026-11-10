@@ -83,8 +83,8 @@ pip install -e . \
 `pynng` supports free-threaded CPython (Python 3.13t and 3.14t with the GIL disabled):
 
 ```bash
-uv venv --python 3.13t .venv-freethreaded
-source .venv-freethreaded/bin/activate
+uv venv --python 3.13t
+source .venv/bin/activate
 uv pip install -e '.[dev]'
 pytest test
 ```

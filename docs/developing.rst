@@ -19,10 +19,14 @@ pynng uses `scikit-build-core`_ as its build backend (configured in
    - ``openssl``: links against system OpenSSL 3.5+ via ``find_package(OpenSSL 3.5 REQUIRED)`` (v2 only; v1 is built without TLS)
    - ``none``: disables TLS for both v1 and v2
 
-2. `headerkit`_ parses nng's C headers and ``src/aio_engine.h`` using
-   ``libclang`` via ``build_pynng.py``, emitting CFFI bindings (``CffiWriter``)
-   and PEP 484 ``.pyi`` type stubs (``PyiWriter(mode="cffi")``) for both
-   ``pynng._nng`` (v1) and ``pynng._nng_v2`` (v2).
+2. ``CMakeLists.txt`` invokes ``python build_pynng.py <output_c>`` to emit the
+   CFFI C extension sources (``ffibuilder.emit_c_code()``) using the tracked
+   ``pynng/_nng_cdef.py`` cache by default. When regenerating CFFI declarations
+   or PEP 484 ``.pyi`` type stubs (``PYNNG_USE_CACHED_CDEF=0``), `headerkit`_
+   parses nng's C headers and ``src/aio_engine.h`` using ``libclang`` via
+   ``build_pynng.py``, emitting CFFI bindings (``CffiWriter``) and PEP 484
+   ``.pyi`` type stubs (``PyiWriter(mode="cffi")``) for both ``pynng._nng`` (v1)
+   and ``pynng._nng_v2`` (v2).
 3. CFFI compiles the C11 extension modules (``_nng`` and ``_nng_v2``).
 4. `setuptools-scm`_ derives the version from git tags into ``pynng/_version.py``.
 
@@ -72,9 +76,9 @@ overridden during development builds:
 CFFI Codegen Environment Variables (``build_pynng.py``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-During the CMake build, ``CMakeLists.txt`` invokes ``build_pynng.py`` via
-``cffi_buildtool`` with the following environment variables (which can also be
-set when running ``build_pynng.py`` directly):
+During the CMake build, ``CMakeLists.txt`` invokes ``python build_pynng.py <output_c>``
+directly with the following environment variables (which can also be set when
+running ``build_pynng.py`` directly):
 
 - ``NNG_INCLUDE_DIR``: Path to the directory containing ``nng/nng.h`` (set by
   CMake to the v1 ``nng`` source include directory or the staged v2 install
@@ -85,13 +89,20 @@ set when running ``build_pynng.py`` directly):
 - ``PYNNG_TLS_ENABLED``: ``"1"`` when TLS is enabled for the target module, or
   ``"0"`` when TLS is disabled (excludes TLS-only symbols such as
   ``nng_tls_config_psk`` from the generated ``cdef``).
+- ``PYNNG_USE_CACHED_CDEF``: Defaults to ``"1"`` so ``build_pynng.py`` uses the
+  tracked ``pynng/_nng_cdef.py`` cache without invoking ``libclang``. Set to
+  ``"0"`` (with ``headerkit`` installed) to re-parse headers with ``libclang``
+  and refresh ``_nng.pyi`` / ``_nng_v2.pyi``.
 
 Testing without pulling dependencies from GitHub
 -------------------------------------------------
 
 By default, CMake's ``FetchContent`` downloads NNG and the selected TLS library
-from GitHub during the build. To speed up development iteration, you can point
-the build to local clones instead by passing CMake defines:
+from GitHub during the build. For offline builds or faster local iteration,
+``CMakeLists.txt`` automatically detects pre-populated in-tree ``nng/``,
+``nng_v2/``, ``mbedtls/``, and ``wolfssl/`` directories, or you can point the
+build to local checkouts via ``*_SOURCE_DIR`` or ``FETCHCONTENT_SOURCE_DIR_*``
+CMake defines:
 
 .. code-block:: bash
 
@@ -100,16 +111,16 @@ the build to local clones instead by passing CMake defines:
    git clone https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
    git clone https://github.com/wolfSSL/wolfssl ~/deps/wolfssl
 
-   # Build with local mbedTLS and NNG sources via CMake defines
+   # Build with local mbedTLS and NNG sources via *_SOURCE_DIR (or FETCHCONTENT_SOURCE_DIR_*)
    pip install -e . \
-     -C cmake.define.FETCHCONTENT_SOURCE_DIR_NNG=$HOME/deps/nng \
-     -C cmake.define.NNG_V2_REPO=$HOME/deps/nng \
-     -C cmake.define.FETCHCONTENT_SOURCE_DIR_MBEDTLS=$HOME/deps/mbedtls
+     -C cmake.define.NNG_SOURCE_DIR=$HOME/deps/nng \
+     -C cmake.define.NNG_V2_SOURCE_DIR=$HOME/deps/nng \
+     -C cmake.define.MBEDTLS_SOURCE_DIR=$HOME/deps/mbedtls
 
    # Or build with a local wolfSSL checkout
    pip install -e . \
      -C cmake.define.PYNNG_TLS_ENGINE=wolf \
-     -C cmake.define.FETCHCONTENT_SOURCE_DIR_WOLFSSL=$HOME/deps/wolfssl
+     -C cmake.define.WOLFSSL_SOURCE_DIR=$HOME/deps/wolfssl
 
 Testing CI changes
 ------------------

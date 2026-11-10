@@ -15,9 +15,12 @@ dist
 *.egg-info
 build/
 nng/
+nng_v2/
 mbedtls/
+wolfssl/
 .eggs
 .venv/
+.envrc
 .lvimrc
 .ycm_extra_conf.py
 *.whl
@@ -55,5 +58,3 @@ docs/_generated/
 # Build directories we want to ignore
 _skbuild/
 
-# Vine strand metadata
-.vine.json

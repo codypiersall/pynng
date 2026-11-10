@@ -73,9 +73,9 @@ if TYPE_CHECKING:
         | Callable[[_NngSocket], int]
     )
     _AioFn: TypeAlias = (
-        Callable[[_nng.nng_socket, _nng.nng_aio], object]
-        | Callable[[_nng_v2.nng_socket, _nng_v2.nng_aio], object]
-        | Callable[[_NngSocket | _NngCtx, _NngAio], object]
+        Callable[[_nng.nng_socket, _nng.nng_aio], None]
+        | Callable[[_nng_v2.nng_socket, _nng_v2.nng_aio], None]
+        | Callable[[_NngSocket | _NngCtx, _NngAio], None]
     )
 else:
     ReadableBuffer: TypeAlias = bytes | bytearray | memoryview
@@ -158,8 +158,8 @@ class _BaseLibProtocol(Protocol):
         self, s: _NngSocket | _NngCtx, msgp: cffi.FFI.CData, flags: int
     ) -> int: ...
     def nng_sendmsg(self, s: _NngSocket, msg: _NngMsg, flags: int) -> int: ...
-    def nng_recv_aio(self, s: _NngSocket | _NngCtx, aio: _NngAio) -> object: ...
-    def nng_send_aio(self, s: _NngSocket | _NngCtx, aio: _NngAio) -> object: ...
+    def nng_recv_aio(self, s: _NngSocket | _NngCtx, aio: _NngAio) -> None: ...
+    def nng_send_aio(self, s: _NngSocket | _NngCtx, aio: _NngAio) -> None: ...
     def nng_device_aio(self, aio: _NngAio, s1: _NngSocket, s2: _NngSocket) -> None: ...
     def nng_dialer_id(self, d: _NngDialer) -> int: ...
     def nng_dialer_close(self, d: _NngDialer) -> int: ...
@@ -172,8 +172,8 @@ class _BaseLibProtocol(Protocol):
     def nng_ctx_open(self, ctxp: cffi.FFI.CData, s: _NngSocket) -> int: ...
     def nng_ctx_close(self, ctx: _NngCtx) -> int: ...
     def nng_ctx_id(self, ctx: _NngCtx) -> int: ...
-    def nng_ctx_recv(self, ctx: _NngSocket | _NngCtx, aio: _NngAio) -> object: ...
-    def nng_ctx_send(self, ctx: _NngCtx, aio: _NngAio) -> object: ...
+    def nng_ctx_recv(self, ctx: _NngSocket | _NngCtx, aio: _NngAio) -> None: ...
+    def nng_ctx_send(self, ctx: _NngCtx, aio: _NngAio) -> None: ...
     def nng_ctx_recvmsg(
         self, ctx: _NngSocket | _NngCtx, msgp: cffi.FFI.CData, flags: int
     ) -> int: ...
@@ -320,7 +320,7 @@ _yield_cpu: Callable[[], None] = getattr(os, "sched_yield", None) or (
 
 
 def _sliced_aio_recv(
-    recv_fn: Callable[[_NngSocket | _NngCtx, _NngAio], object],
+    recv_fn: Callable[[_NngSocket | _NngCtx, _NngAio], None],
     target_handle: _NngSocket | _NngCtx,
     lib: _NngLib,
     ffi: cffi.FFI,
@@ -995,7 +995,7 @@ class Socket:
         from .exceptions import check_err
 
         opener_fn = cast("Callable[[cffi.FFI.CData], int]", self._opener)
-        check_err(opener_fn(self._socket))
+        check_err(opener_fn(self._socket), lib=self._lib, ffi=_ffi)
 
         if recv_timeout is not None:
             self.recv_timeout = recv_timeout
@@ -1045,7 +1045,9 @@ class Socket:
             check_err(
                 base_lib.nng_pipe_notify(
                     self.socket, event, base_lib._nng_pipe_cb, handle
-                )
+                ),
+                lib=self._lib,
+                ffi=_ffi,
             )
 
     def dial(self, address: str | bytes, *, block: bool | None = None) -> Dialer:
@@ -1094,7 +1096,7 @@ class Socket:
 
         dialer = _ffi.new("nng_dialer *")
         ret = base_lib.nng_dial(self.socket, to_char(address, ffi=_ffi), dialer, flags)
-        check_err(ret)
+        check_err(ret, lib=self._lib, ffi=_ffi)
         # we can only get here if check_err doesn't raise
         d_id = int(base_lib.nng_dialer_id(cast("_NngDialer", dialer[0])))
         dialer_cls = self._dialer_class or Dialer
@@ -1117,7 +1119,7 @@ class Socket:
         ret = base_lib.nng_listen(
             self.socket, to_char(address, ffi=_ffi), listener, flags
         )
-        check_err(ret)
+        check_err(ret, lib=self._lib, ffi=_ffi)
         # we can only get here if check_err doesn't raise
         l_id = int(base_lib.nng_listener_id(cast("_NngListener", listener[0])))
         listener_cls = self._listener_class or Listener
@@ -1134,12 +1136,42 @@ class Socket:
             self._do_close(base_lib.nng_socket_close)
 
     def recv(self, block: bool = True) -> bytes:
-        """Receive data on the socket."""
+        """Receive data on the socket.  If the request times out the exception
+        :class:`pynng.Timeout` is raised.  If the socket cannot perform that
+        operation (e.g., a :class:`Pub0`, which can only
+        :meth:`~Socket.send`), the exception :class:`pynng.NotSupported`
+        is raised.
+
+        Args:
+
+          block: If block is True (the default), the function will not return
+            until the operation is completed or times out.  If block is False,
+            the function will return data immediately.  If no data is ready on
+            the socket, the function will raise ``pynng.TryAgain``.
+
+        """
         msg = self.recv_msg(block=block)
         return msg.bytes
 
     def send(self, data: ReadableBuffer, block: bool = True) -> None:
-        """Send data on the socket."""
+        """Sends ``data`` on socket.
+
+        Args:
+
+          data: bytes, bytearray, memoryview, or any buffer-protocol object.
+
+          block: If block is True (the default), the function will
+            not return until the operation is completed or times out.
+            If block is False, the function will raise ``pynng.TryAgain``
+            immediately if no data was sent (such as when the send buffer is full).
+
+        .. note::
+
+            In asynchronous code (asyncio/Trio), avoid calling synchronous
+            ``send(data, block=True)`` when the send queue might fill, as it blocks
+            the event loop thread. Use :meth:`~Socket.asend` or non-blocking
+            ``send(data, block=False)`` instead.
+        """
         _ensure_can_send(data)
         _lib = self._lib
         _ffi = self._ffi
@@ -1158,12 +1190,17 @@ class Socket:
         check_err(err, lib=_lib, ffi=_ffi)
 
     async def arecv(self) -> bytes:
-        """Asynchronously receive data on the socket."""
+        """The asynchronous version of :meth:`~Socket.recv`"""
         msg = await self.arecv_msg()
         return msg.bytes
 
     async def asend(self, data: ReadableBuffer) -> None:
-        """Asynchronously send data on the socket."""
+        """Asynchronous version of :meth:`~Socket.send`.
+
+        Yields cooperatively to the event loop if the socket's send buffer
+        (:attr:`~Socket.send_buffer_size`) is full, resuming as soon as buffer
+        space becomes available without blocking other coroutines.
+        """
         _ensure_can_send(data)
         helper = self._acquire_send_helper()
         try:
@@ -1255,10 +1292,10 @@ class Socket:
             )
             raw_msg = cast("_NngMsg", msg_p[0])
         else:
-            recv_fn: Callable[[_NngSocket | _NngCtx, _NngAio], object]
+            recv_fn: Callable[[_NngSocket | _NngCtx, _NngAio], None]
             if self._aio_recv_fn is not None:
                 recv_fn = cast(
-                    "Callable[[_NngSocket | _NngCtx, _NngAio], object]",
+                    "Callable[[_NngSocket | _NngCtx, _NngAio], None]",
                     self._aio_recv_fn,
                 )
             else:
@@ -1910,7 +1947,11 @@ class Pipe:
         """
         from .exceptions import check_err
 
-        check_err(cast(_BaseLibProtocol, self._lib).nng_pipe_close(self.pipe))
+        check_err(
+            cast(_BaseLibProtocol, self._lib).nng_pipe_close(self.pipe),
+            lib=self._lib,
+            ffi=self._ffi,
+        )
         self._closed = True
 
     def send(self, data: ReadableBuffer) -> None:
@@ -1971,7 +2012,11 @@ class Context:
         from .exceptions import check_err
 
         self._context = _ffi.new("nng_ctx *")
-        check_err(base_lib.nng_ctx_open(self._context, socket.socket))
+        check_err(
+            base_lib.nng_ctx_open(self._context, socket.socket),
+            lib=socket._lib,
+            ffi=_ffi,
+        )
         self._recv_pool: list[_aio.AIOHelper] = []
         self._send_pool: list[_aio.AIOHelper] = []
 
@@ -2220,7 +2265,7 @@ class Context:
             if base_lib.nng_ctx_id(self.context) != -1:
                 ctx_err = base_lib.nng_ctx_close(self.context)
                 self._context = None
-                check_err(ctx_err)
+                check_err(ctx_err, lib=self._lib, ffi=self._ffi)
 
     def __enter__(self: _ContextSelfT) -> _ContextSelfT:
         return self
@@ -2374,10 +2419,12 @@ class Message:
             else:
                 c_buf = _ffi.from_buffer(m)
             msg_p = _ffi.new("nng_msg **")
-            check_err(base_lib.nng_msg_alloc(msg_p, 0))
+            check_err(base_lib.nng_msg_alloc(msg_p, 0), lib=_lib, ffi=_ffi)
             msg = cast("_NngMsg", msg_p[0])
             try:
-                check_err(base_lib.nng_msg_append(msg, c_buf, len(m)))
+                check_err(
+                    base_lib.nng_msg_append(msg, c_buf, len(m)), lib=_lib, ffi=_ffi
+                )
             except Exception:
                 base_lib.nng_msg_free(msg)
                 raise
@@ -2410,7 +2457,9 @@ class Message:
         check_err(
             cast(_BaseLibProtocol, self.__lib).nng_msg_set_pipe(
                 self._nng_msg, pipe.pipe
-            )
+            ),
+            lib=self.__lib,
+            ffi=self.__ffi,
         )
         self._pipe = pipe
 
@@ -2473,7 +2522,11 @@ class Message:
                 c_buf = data
             else:
                 c_buf = _ffi.from_buffer(m)
-            check_err(base_lib.nng_msg_header_append(self._nng_msg, c_buf, len(m)))
+            check_err(
+                base_lib.nng_msg_header_append(self._nng_msg, c_buf, len(m)),
+                lib=self.__lib,
+                ffi=_ffi,
+            )
 
     @property
     def bytes(self) -> bytes:
@@ -2490,7 +2543,11 @@ class Message:
 
         with self._mem_freed_lock:
             self._ensure_can_send()
-            check_err(base_lib.nng_msg_header_trim(self._nng_msg, sz))
+            check_err(
+                base_lib.nng_msg_header_trim(self._nng_msg, sz),
+                lib=self.__lib,
+                ffi=self.__ffi,
+            )
 
     def header_chop(self, sz: int) -> None:
         """Chop sz bytes from the end of the message header."""
@@ -2499,7 +2556,11 @@ class Message:
 
         with self._mem_freed_lock:
             self._ensure_can_send()
-            check_err(base_lib.nng_msg_header_chop(self._nng_msg, sz))
+            check_err(
+                base_lib.nng_msg_header_chop(self._nng_msg, sz),
+                lib=self.__lib,
+                ffi=self.__ffi,
+            )
 
     def header_clear(self) -> None:
         """Clear all data from the message header."""
@@ -2522,7 +2583,7 @@ class Message:
                     "Cannot copy a message that has already been sent."
                 )
             dup_p = _ffi.new("nng_msg **")
-            check_err(base_lib.nng_msg_dup(dup_p, self._nng_msg))
+            check_err(base_lib.nng_msg_dup(dup_p, self._nng_msg), lib=_lib, ffi=_ffi)
             msg_cls = type(self)
             return msg_cls(
                 cast("_NngMsg", dup_p[0]),

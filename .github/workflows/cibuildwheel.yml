@@ -8,19 +8,19 @@ on:
       - main
     paths:
       - 'pynng/**'
+      - 'src/**'
       - 'build_pynng.py'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'patches/**'
       - '.github/workflows/cibuildwheel.yml'
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
       - 'pynng/**'
+      - 'src/**'
       - 'build_pynng.py'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'patches/**'
       - '.github/workflows/cibuildwheel.yml'
   release:
     types: [published]
@@ -72,9 +72,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.os == 'Windows' && '~/AppData/Local/Mozilla/sccache' || '~/.cache/sccache' }}
-          key: ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-${{ github.sha }}
+          key: ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-${{ github.sha }}
           restore-keys: |
-            ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
+            ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-
             ${{ matrix.os }}-sccache-
 
       - name: Build wheels

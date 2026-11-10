@@ -82,6 +82,7 @@ class Request:
     """
 
     __slots__ = (
+        "_loop",
         "_replied",
         "_replied_event",
         "context",
@@ -92,17 +93,20 @@ class Request:
     context: _base.Context
     _replied: bool
     _replied_event: _EventLike | None
+    _loop: asyncio.AbstractEventLoop | None
 
     def __init__(
         self,
         data: bytes,
         context: _base.Context,
         _replied_event: _EventLike | None = None,
+        _loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self.data = data
         self.context = context
         self._replied = False
         self._replied_event = _replied_event
+        self._loop = _loop
 
     async def reply(self, data: _base.ReadableBuffer) -> None:
         """Send a response back to the requester.
@@ -149,7 +153,18 @@ class Request:
     def __del__(self) -> None:
         if not self._replied:
             if self._replied_event is not None:
-                self._replied_event.set()
+                loop = self._loop or getattr(self._replied_event, "_loop", None)
+                if isinstance(loop, asyncio.AbstractEventLoop):
+                    if not loop.is_closed():
+                        try:
+                            loop.call_soon_threadsafe(self._replied_event.set)
+                        except RuntimeError:
+                            pass
+                else:
+                    try:
+                        self._replied_event.set()
+                    except RuntimeError:
+                        pass
             warnings.warn(
                 f"Request with data {self.data[:64] if self.data else self.data!r} was never replied to",
                 ResourceWarning,
@@ -307,11 +322,14 @@ class Rep0Service(AsyncIterator[Request]):
     async def _asyncio_worker(self, ctx: _base.Context) -> None:
         """Receive loop for a single context under asyncio."""
         assert self._queue is not None
+        loop = asyncio.get_running_loop()
         while self._running:
             try:
                 data = await ctx.arecv()
                 replied_event = asyncio.Event()
-                await self._queue.put(Request(data, ctx, _replied_event=replied_event))
+                await self._queue.put(
+                    Request(data, ctx, _replied_event=replied_event, _loop=loop)
+                )
                 # REP protocol requires reply before next receive on this context.
                 await replied_event.wait()
             except Closed:
