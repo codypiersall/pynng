@@ -562,6 +562,32 @@ class Socket(_base.Socket):
 
         def new_context(self) -> Context: ...
 
+        def add_pre_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def add_post_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def add_post_pipe_remove_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def remove_pre_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def remove_post_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def remove_post_pipe_remove_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def pipe_events(self) -> _base.PipeEventStream[Pipe]: ...
+
 
 class Bus0(Socket):
     """A v2 bus0 socket.

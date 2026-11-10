@@ -427,6 +427,31 @@ def generate_pyi(
     return writer.write(header)
 
 
+def _load_cached_cdef(
+    module_name: str,
+    *,
+    tls_enabled: bool,
+    nng_include_dir: str | None,
+) -> tuple[str, list[str]]:
+    """Load pre-generated (cdef, existing_headers) from pynng._nng_cdef."""
+    if _SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, _SCRIPT_DIR)
+    if "pynng" in sys.modules:
+        _local_pkg = os.path.join(_SCRIPT_DIR, "pynng")
+        if _local_pkg not in sys.modules["pynng"].__path__:
+            sys.modules["pynng"].__path__.insert(0, _local_pkg)
+    from pynng._nng_cdef import get_cached_cdef
+
+    cdef_content, headers = get_cached_cdef(module_name, tls_enabled=tls_enabled)
+    if nng_include_dir is not None and os.path.isdir(nng_include_dir):
+        existing = [
+            h for h in headers if os.path.exists(os.path.join(nng_include_dir, h))
+        ]
+        if existing:
+            headers = existing
+    return cdef_content, headers
+
+
 def _build_ffi(
     module_name="pynng._nng",
     headers=None,
@@ -435,7 +460,7 @@ def _build_ffi(
     *,
     tls_enabled: bool | None = None,
 ):
-    """Set up the CFFI ffibuilder for use by cffi_buildtool.
+    """Set up the CFFI ffibuilder for generating the C extension source.
 
     Args:
         module_name: CFFI module name. "pynng._nng" for v1, "pynng._nng_v2" for v2.
@@ -445,8 +470,8 @@ def _build_ffi(
         include_dir: Override for nng include directory.
         tls_enabled: Whether TLS symbols are enabled. Defaults to PYNNG_TLS_ENABLED env var.
 
-    This is called at module level only during builds (cffi_buildtool or
-    direct execution), never when imported by tests.
+    This is called at module level only during builds (direct execution or
+    gen-cffi-src), never when imported by tests.
     """
     from cffi import FFI
 
@@ -469,39 +494,78 @@ def _build_ffi(
     if not tls_enabled:
         exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
-    nng_include_dir = include_dir if include_dir is not None else _get_nng_include_dir()
+    nng_include_dir = include_dir if include_dir is not None else find_nng_include_dir()
 
-    # Generate cdef content and get the list of existing headers
-    cdef_content, existing_headers = generate_cdef(
-        headers=headers,
-        include_dir=nng_include_dir,
-        exclude_patterns=exclude_patterns,
+    use_cached = (
+        not _HAS_HEADERKIT
+        or get_backend is None
+        or os.environ.get("PYNNG_USE_CACHED_CDEF") == "1"
+        or nng_include_dir is None
     )
+    used_live_headerkit = False
+    if not use_cached:
+        assert nng_include_dir is not None
+        try:
+            cdef_content, existing_headers = generate_cdef(
+                headers=headers,
+                include_dir=nng_include_dir,
+                exclude_patterns=exclude_patterns,
+            )
+            used_live_headerkit = True
+        except Exception as exc:
+            logger.info(
+                "Falling back to pre-generated pynng._nng_cdef (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+            cdef_content, existing_headers = _load_cached_cdef(
+                module_name,
+                tls_enabled=tls_enabled,
+                nng_include_dir=nng_include_dir,
+            )
+    else:
+        cdef_content, existing_headers = _load_cached_cdef(
+            module_name,
+            tls_enabled=tls_enabled,
+            nng_include_dir=nng_include_dir,
+        )
 
-    # Emit PEP 484 typing stub for the compiled CFFI extension module.
-    # Only overwrite an existing stub when TLS is enabled and the generated stub
-    # is Any-free (headerkit >= 0.51.0), so partial builds with PYNNG_TLS_ENGINE=none
-    # or older headerkit releases do not degrade the tracked stubs.
+    # Emit PEP 484 typing stub for the compiled CFFI extension module when live
+    # headerkit parsing succeeded. Only overwrite an existing stub when TLS is
+    # enabled and the generated stub is Any-free (headerkit >= 0.51.0), so partial
+    # builds with PYNNG_TLS_ENGINE=none or older headerkit releases do not degrade
+    # the tracked stubs.
     stub_rel = module_name.replace(".", os.sep) + ".pyi"
     stub_path = os.path.join(_SCRIPT_DIR, stub_rel)
-    if os.path.isdir(os.path.dirname(stub_path)) and (
-        tls_enabled or not os.path.exists(stub_path)
+    if (
+        used_live_headerkit
+        and nng_include_dir is not None
+        and os.path.isdir(os.path.dirname(stub_path))
+        and (tls_enabled or not os.path.exists(stub_path))
     ):
-        pyi_content = generate_pyi(
-            headers=headers,
-            include_dir=nng_include_dir,
-            exclude_patterns=exclude_patterns,
-        )
-        if not os.path.exists(stub_path) or "from typing import Any" not in pyi_content:
-            with open(stub_path, "w", encoding="utf-8") as f:
-                f.write(pyi_content)
+        try:
+            pyi_content = generate_pyi(
+                headers=headers,
+                include_dir=nng_include_dir,
+                exclude_patterns=exclude_patterns,
+            )
+            if (
+                not os.path.exists(stub_path)
+                or "from typing import Any" not in pyi_content
+            ):
+                with open(stub_path, "w", encoding="utf-8") as f:
+                    f.write(pyi_content)
+        except Exception as exc:
+            logger.debug("Skipping .pyi regeneration: %s", exc)
 
     ffi = FFI()
 
-    # Build set_source includes from the existing headers returned by generate_cdef()
+    # Build set_source includes from the existing headers
     source_includes = "\n".join(f"        #include <{h}>" for h in existing_headers)
 
-    include_dirs = [nng_include_dir]
+    include_dirs: list[str] = []
+    if nng_include_dir is not None:
+        include_dirs.append(nng_include_dir)
     if os.path.isdir(_SRC_DIR):
         include_dirs.append(_SRC_DIR)
 
@@ -530,4 +594,7 @@ if __name__ in ("gen-cffi-src", "__main__"):
     ffibuilder = _build_ffi(module_name=_module_name)
 
     if __name__ == "__main__":
-        ffibuilder.compile(verbose=True)
+        if len(sys.argv) > 1:
+            ffibuilder.emit_c_code(sys.argv[1])
+        else:
+            ffibuilder.compile(verbose=True)

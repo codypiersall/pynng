@@ -19,8 +19,13 @@ import pytest
 # This is necessary in cibuildwheel and other environments where pytest runs
 # from a directory that doesn't include the project root.
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
+if _PROJECT_ROOT in sys.path:
+    sys.path.remove(_PROJECT_ROOT)
+sys.path.insert(0, _PROJECT_ROOT)
+if "pynng" in sys.modules:
+    _strand_pkg = os.path.join(_PROJECT_ROOT, "pynng")
+    if _strand_pkg not in sys.modules["pynng"].__path__:
+        sys.modules["pynng"].__path__.insert(0, _strand_pkg)
 
 try:
     from pynng._nng import ffi, lib
@@ -741,7 +746,7 @@ class TestPyPyHeaderkitCompat:
             )
             if not path.endswith("_version.py")
         ]
-        assert len(py_files) == 14
+        assert len(py_files) == 15
 
         untyped: list[str] = []
         for path in py_files:
@@ -785,7 +790,7 @@ class TestPyPyHeaderkitCompat:
         pyi_files = sorted(
             glob.glob(os.path.join(pynng_dir, "**", "*.pyi"), recursive=True)
         )
-        assert len(py_files) == 14
+        assert len(py_files) == 15
         assert len(pyi_files) == 2
 
         any_violations: list[str] = []
@@ -1154,10 +1159,26 @@ class TestPyPyHeaderkitCompat:
                 desc_addr: SockAddrOption = pynng.Dialer.local_address
 
                 async def exercise_types(req: pynng.Request) -> None:
+                    def on_v1_pipe(p: pynng.Pipe) -> None:
+                        _ = p.protocol_name
+
+                    def on_v2_pipe(p: v2.Pipe) -> None:
+                        _ = p.scheme
+
                     with pynng.Pair0(listen="inproc://t1", name=b"bname") as s1:
                         proto: int = s1.protocol
                         s1.name = b"updated"
                         s1.name = "updated-str"
+                        s1.add_pre_pipe_connect_cb(on_v1_pipe)
+                        s1.add_post_pipe_connect_cb(on_v1_pipe)
+                        s1.add_post_pipe_remove_cb(on_v1_pipe)
+                        s1.remove_pre_pipe_connect_cb(on_v1_pipe)
+                        s1.remove_post_pipe_connect_cb(on_v1_pipe)
+                        s1.remove_post_pipe_remove_cb(on_v1_pipe)
+                        async with s1.pipe_events() as v1_events:
+                            async for ev in v1_events:
+                                v1_pipe: pynng.Pipe = ev.pipe
+                                _ = v1_pipe.protocol_name
                         with s1.listen("inproc://t2") as listener:
                             lsock: pynng.Socket = listener.socket
                             _ = lsock.protocol
@@ -1170,6 +1191,16 @@ class TestPyPyHeaderkitCompat:
                         _ = (proto, msg2, msg3)
 
                     with v2.Pair0(listen="inproc://v2_t1") as vs1:
+                        vs1.add_pre_pipe_connect_cb(on_v2_pipe)
+                        vs1.add_post_pipe_connect_cb(on_v2_pipe)
+                        vs1.add_post_pipe_remove_cb(on_v2_pipe)
+                        vs1.remove_pre_pipe_connect_cb(on_v2_pipe)
+                        vs1.remove_post_pipe_connect_cb(on_v2_pipe)
+                        vs1.remove_post_pipe_remove_cb(on_v2_pipe)
+                        async with vs1.pipe_events() as v2_events:
+                            async for vev in v2_events:
+                                v2_pipe: v2.Pipe = vev.pipe
+                                _ = v2_pipe.scheme
                         with vs1.listen("inproc://v2_t2") as vlistener:
                             vlsock: v2.Socket = vlistener.socket
                             _ = vlsock.protocol
@@ -1204,6 +1235,76 @@ class TestPyPyHeaderkitCompat:
         )
         assert valid_mypy.returncode == 0, (
             f"valid_consumer mypy failed:\n{valid_mypy.stdout}\n{valid_mypy.stderr}"
+        )
+
+        import json
+
+        pipe_cb_consumer = tmp_path / "pipe_cb_consumer.py"
+        pipe_cb_consumer.write_text(
+            textwrap.dedent(
+                """\
+                from __future__ import annotations
+                import pynng
+                import pynng.v2 as v2
+
+                async def exercise_pipe_callbacks() -> None:
+                    def on_v1_pipe(p: pynng.Pipe) -> None:
+                        _ = p.protocol_name
+
+                    def on_v2_pipe(p: v2.Pipe) -> None:
+                        _ = p.scheme
+
+                    with pynng.Pair0(listen="inproc://t1", name=b"bname") as s1:
+                        s1.add_pre_pipe_connect_cb(on_v1_pipe)
+                        s1.add_post_pipe_connect_cb(on_v1_pipe)
+                        s1.add_post_pipe_remove_cb(on_v1_pipe)
+                        s1.remove_pre_pipe_connect_cb(on_v1_pipe)
+                        s1.remove_post_pipe_connect_cb(on_v1_pipe)
+                        s1.remove_post_pipe_remove_cb(on_v1_pipe)
+                        async with s1.pipe_events() as v1_events:
+                            async for ev in v1_events:
+                                v1_pipe: pynng.Pipe = ev.pipe
+                                _ = v1_pipe.protocol_name
+
+                    with v2.Pair0(listen="inproc://v2_t1") as vs1:
+                        vs1.add_pre_pipe_connect_cb(on_v2_pipe)
+                        vs1.add_post_pipe_connect_cb(on_v2_pipe)
+                        vs1.add_post_pipe_remove_cb(on_v2_pipe)
+                        vs1.remove_pre_pipe_connect_cb(on_v2_pipe)
+                        vs1.remove_post_pipe_connect_cb(on_v2_pipe)
+                        vs1.remove_post_pipe_remove_cb(on_v2_pipe)
+                        async with vs1.pipe_events() as v2_events:
+                            async for vev in v2_events:
+                                v2_pipe: v2.Pipe = vev.pipe
+                                _ = v2_pipe.scheme
+                """
+            ),
+            encoding="utf-8",
+        )
+        pyright_config = tmp_path / "pyrightconfig.json"
+        pyright_config.write_text(
+            json.dumps({"extraPaths": [_PROJECT_ROOT]}),
+            encoding="utf-8",
+        )
+        valid_pyright = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pyright",
+                "-p",
+                str(pyright_config),
+                "--pythonpath",
+                sys.executable,
+                str(pipe_cb_consumer),
+            ],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert valid_pyright.returncode == 0, (
+            f"valid_consumer pyright failed:\n{valid_pyright.stdout}\n{valid_pyright.stderr}"
         )
 
         invalid_consumer = tmp_path / "invalid_consumer.py"
@@ -1344,6 +1445,124 @@ class TestPyPyHeaderkitCompat:
             assert v2.nng_fini_at_exit is False
         finally:
             v2_nng.nng_fini_at_exit = orig_flag
+
+    @_skip_no_headers
+    def test_cached_nng_cdef_parity_and_headerkit_free_fallback(
+        self, monkeypatch, tmp_path
+    ):
+        """Verify pynng._nng_cdef matches generate_cdef() 1:1 and _build_ffi succeeds without headerkit."""
+        import build_pynng
+        from pynng._nng_cdef import get_cached_cdef
+
+        assert _NNG_INCLUDE_DIR is not None
+        live_v1_tls, live_h1_tls = build_pynng.generate_cdef(
+            headers=build_pynng.NNG_V1_HEADERS,
+            include_dir=_NNG_INCLUDE_DIR,
+            exclude_patterns=build_pynng.EXCLUDE_PATTERNS,
+        )
+        live_v1_notls, live_h1_notls = build_pynng.generate_cdef(
+            headers=build_pynng.NNG_V1_HEADERS,
+            include_dir=_NNG_INCLUDE_DIR,
+            exclude_patterns=list(build_pynng.EXCLUDE_PATTERNS)
+            + build_pynng.EXCLUDE_PATTERNS_NO_TLS,
+        )
+        assert get_cached_cdef("pynng._nng", tls_enabled=True) == (
+            live_v1_tls,
+            live_h1_tls,
+        )
+        assert get_cached_cdef("pynng._nng", tls_enabled=False) == (
+            live_v1_notls,
+            live_h1_notls,
+        )
+
+        v2_candidates: list[str] = []
+        for root in _candidate_build_roots():
+            v2_candidates.extend(
+                glob.glob(os.path.join(root, "build", "*", "nng_v2_install", "include"))
+            )
+        if v2_candidates:
+            v2_candidates.sort(key=lambda p: (_PY_TAG not in p, p))
+            v2_inc = v2_candidates[0]
+            live_v2_tls, live_h2_tls = build_pynng.generate_cdef(
+                headers=build_pynng.NNG_V2_HEADERS,
+                include_dir=v2_inc,
+                exclude_patterns=build_pynng.EXCLUDE_PATTERNS_V2,
+            )
+            live_v2_notls, live_h2_notls = build_pynng.generate_cdef(
+                headers=build_pynng.NNG_V2_HEADERS,
+                include_dir=v2_inc,
+                exclude_patterns=list(build_pynng.EXCLUDE_PATTERNS_V2)
+                + build_pynng.EXCLUDE_PATTERNS_NO_TLS,
+            )
+            assert get_cached_cdef("pynng._nng_v2", tls_enabled=True) == (
+                live_v2_tls,
+                live_h2_tls,
+            )
+            assert get_cached_cdef("pynng._nng_v2", tls_enabled=False) == (
+                live_v2_notls,
+                live_h2_notls,
+            )
+
+        # Simulate building without headerkit / libclang installed (e.g. pkgsrc, nixpkgs, AUR)
+        monkeypatch.setattr(build_pynng, "_HAS_HEADERKIT", False)
+        monkeypatch.setattr(build_pynng, "get_backend", None)
+        ffi_v1 = build_pynng._build_ffi(
+            module_name="pynng._nng",
+            include_dir=_NNG_INCLUDE_DIR,
+            tls_enabled=True,
+        )
+        ffi_v2 = build_pynng._build_ffi(
+            module_name="pynng._nng_v2",
+            include_dir=_NNG_INCLUDE_DIR,
+            tls_enabled=True,
+        )
+        c_v1 = tmp_path / "_nng.c"
+        c_v2 = tmp_path / "_nng_v2.c"
+        ffi_v1.emit_c_code(str(c_v1))
+        ffi_v2.emit_c_code(str(c_v2))
+        assert c_v1.is_file() and c_v1.stat().st_size > 10000
+        assert c_v2.is_file() and c_v2.stat().st_size > 10000
+
+    def test_cmake_and_pyproject_offline_distro_packaging_contracts(self):
+        """Verify CMakeLists.txt auto-detects local dependency trees and omits cffi_buildtool."""
+        import tomllib
+
+        cmake_path = os.path.join(_PROJECT_ROOT, "CMakeLists.txt")
+        with open(cmake_path, encoding="utf-8") as f:
+            cmake_text = f.read()
+
+        assert "cffi_buildtool" not in cmake_text
+        assert (
+            "${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE}"
+            in cmake_text
+        )
+        assert (
+            "${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE}"
+            in cmake_text
+        )
+        for dep_dir, var_name in (
+            ("mbedtls", "FETCHCONTENT_SOURCE_DIR_MBEDTLS"),
+            ("wolfssl", "FETCHCONTENT_SOURCE_DIR_WOLFSSL"),
+            ("nng", "FETCHCONTENT_SOURCE_DIR_NNG"),
+            ("nng_v2", "FETCHCONTENT_SOURCE_DIR_NNG_V2"),
+        ):
+            assert (
+                f'if(EXISTS "${{CMAKE_CURRENT_SOURCE_DIR}}/{dep_dir}/CMakeLists.txt" AND NOT {var_name})'
+                in cmake_text
+            )
+            assert (
+                f'set({var_name} "${{CMAKE_CURRENT_SOURCE_DIR}}/{dep_dir}")'
+                in cmake_text
+            )
+
+        pyproject_path = os.path.join(_PROJECT_ROOT, "pyproject.toml")
+        with open(pyproject_path, "rb") as f:
+            pyproject_data = tomllib.load(f)
+        assert pyproject_data["build-system"]["requires"] == [
+            "scikit-build-core>=0.8.0",
+            "cffi",
+            "setuptools-scm",
+        ]
 
 
 class TestAioEngineHeader:

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Pre-generate and track `pynng/_nng_cdef.py` (`CDEF_V1_TLS`, `CDEF_V1_NO_TLS`, `CDEF_V2_TLS`, `CDEF_V2_NO_TLS`, and `get_cached_cdef()`) so `build_pynng.py` can emit CFFI C sources without requiring `headerkit` or `libclang` at build time
+- Auto-detect pre-populated in-tree `mbedtls/`, `wolfssl/`, `nng/`, and `nng_v2/` source directories in `CMakeLists.txt` (`FETCHCONTENT_SOURCE_DIR_*`) for offline distro builds (`pkgsrc`, `nixpkgs`, `AUR`)
+
+### Changed
+- Remove `cffi_buildtool` and `headerkit` from `[build-system].requires` in `pyproject.toml`, and invoke `build_pynng.py <output_c_file>` (`ffibuilder.emit_c_code()`) directly from `CMakeLists.txt`
+
+### Fixed
+- Make `PipeEvent` and `PipeEventStream` generic over covariant `_PipeT = TypeVar("_PipeT", bound="Pipe", covariant=True)` and narrow `Socket.add_pre_pipe_connect_cb()`, `add_post_pipe_connect_cb()`, `add_post_pipe_remove_cb()`, `remove_pre_pipe_connect_cb()`, `remove_post_pipe_connect_cb()`, `remove_post_pipe_remove_cb()`, and `pipe_events()` on `pynng.Socket` and `pynng.v2.Socket` so callbacks typed with `pynng.Pipe` or `pynng.v2.Pipe` pass `mypy --strict` and `pyright` without contravariance errors
+
 ## [1.0.0b3] - 2026-11-10
 
 ### Added

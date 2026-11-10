@@ -172,6 +172,10 @@ if(PYNNG_TLS_ENGINE STREQUAL "mbed")
   set(LINK_WITH_PTHREAD OFF CACHE BOOL "Don't link mbedtls with pthread" FORCE)
   set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "Don't treat warnings as errors in mbedTLS" FORCE)
 
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls/CMakeLists.txt" AND NOT FETCHCONTENT_SOURCE_DIR_MBEDTLS)
+    set(FETCHCONTENT_SOURCE_DIR_MBEDTLS "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls")
+  endif()
+
   FetchContent_Declare(
     mbedtls
     GIT_REPOSITORY ${MBEDTLS_REPO}
@@ -225,6 +229,10 @@ if(PYNNG_TLS_ENGINE STREQUAL "wolf")
   set(_SAVED_CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
   if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-error=stringop-overflow")
+  endif()
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl/CMakeLists.txt" AND NOT FETCHCONTENT_SOURCE_DIR_WOLFSSL)
+    set(FETCHCONTENT_SOURCE_DIR_WOLFSSL "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl")
   endif()
 
   FetchContent_Declare(
@@ -296,6 +304,10 @@ elseif(WIN32)
 endif()
 
 # Download NNG
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nng/CMakeLists.txt" AND NOT FETCHCONTENT_SOURCE_DIR_NNG)
+  set(FETCHCONTENT_SOURCE_DIR_NNG "${CMAKE_CURRENT_SOURCE_DIR}/nng")
+endif()
+
 FetchContent_Declare(
   nng
   GIT_REPOSITORY ${NNG_REPO}
@@ -353,9 +365,9 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E env
     "NNG_INCLUDE_DIR=${nng_SOURCE_DIR}/include"
     "PYNNG_TLS_ENABLED=${_V1_TLS_ENABLED_INT}"
-    ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE} --ffi-var=ffibuilder
+    ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng_cdef.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h
   COMMENT "Generating CFFI bindings for nng"
   VERBATIM
 )
@@ -432,6 +444,10 @@ if(BUILD_NNG_V2)
   # We use FetchContent_Populate instead of FetchContent_MakeAvailable because
   # MakeAvailable would call add_subdirectory, causing a CMake target collision
   # with v1's "nng" target. The v2 source is built separately via ExternalProject.
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nng_v2/CMakeLists.txt" AND NOT FETCHCONTENT_SOURCE_DIR_NNG_V2)
+    set(FETCHCONTENT_SOURCE_DIR_NNG_V2 "${CMAKE_CURRENT_SOURCE_DIR}/nng_v2")
+  endif()
+
   FetchContent_Declare(
     nng_v2
     GIT_REPOSITORY ${NNG_V2_REPO}
@@ -639,9 +655,9 @@ set(WOLFSSL_FOUND TRUE)
       "NNG_INCLUDE_DIR=${NNG_V2_INSTALL_DIR}/include"
       "NNG_MODULE_NAME=pynng._nng_v2"
       "PYNNG_TLS_ENABLED=${_V2_TLS_ENABLED_INT}"
-      ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE} --ffi-var=ffibuilder
+      ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h nng_v2_build
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng_cdef.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h nng_v2_build
     COMMENT "Generating CFFI bindings for nng v2"
     VERBATIM
   )

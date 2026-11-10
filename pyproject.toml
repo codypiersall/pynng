@@ -62,9 +62,6 @@ build-backend = "scikit_build_core.build"
 requires = [
     "scikit-build-core>=0.8.0",
     "cffi",
-    "cffi_buildtool",
-    # headerkit requires Python >= 3.11; Python 3.10 consumers install the cp310 abi3 wheel
-    "headerkit~=0.51.0 ; python_version >= '3.11'",
     "setuptools-scm",
 ]
 

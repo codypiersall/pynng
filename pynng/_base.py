@@ -83,12 +83,12 @@ else:
 
 
 class _PipeSendChannelLike(Protocol):
-    def send_nowait(self, value: PipeEvent) -> None: ...
+    def send_nowait(self, value: PipeEvent[Pipe]) -> None: ...
     def close(self) -> None: ...
 
 
 class _PipeReceiveChannelLike(Protocol):
-    async def receive(self) -> PipeEvent: ...
+    async def receive(self) -> PipeEvent[Pipe]: ...
 
 
 class _TrioTokenLike(Protocol):
@@ -208,7 +208,7 @@ logger = logging.getLogger(__name__)
 _GetT = TypeVar("_GetT")
 _SetT = TypeVar("_SetT")
 _DescSelfT = TypeVar("_DescSelfT")
-_StreamSelfT = TypeVar("_StreamSelfT", bound="PipeEventStream")
+_PipeT = TypeVar("_PipeT", bound="Pipe", covariant=True)
 _SocketSelfT = TypeVar("_SocketSelfT", bound="Socket")
 _DialerSelfT = TypeVar("_DialerSelfT", bound="Dialer")
 _ListenerSelfT = TypeVar("_ListenerSelfT", bound="Listener")
@@ -275,16 +275,38 @@ def _device_section() -> Iterator[None]:
         state.depth = depth
 
 
-class PipeEvent(NamedTuple):
-    """A pipe event with the pipe and the event type.
+if TYPE_CHECKING:
 
-    Attributes:
-        pipe: The :class:`Pipe` associated with the event.
-        event_type: One of ``"pre_add"``, ``"post_add"``, or ``"remove"``.
-    """
+    class PipeEvent(Generic[_PipeT]):
+        """A pipe event with the pipe and the event type.
 
-    pipe: Pipe
-    event_type: str
+        Attributes:
+            pipe: The :class:`Pipe` associated with the event.
+            event_type: One of ``"pre_add"``, ``"post_add"``, or ``"remove"``.
+        """
+
+        pipe: _PipeT
+        event_type: str
+
+        def __init__(self, pipe: _PipeT, event_type: str) -> None: ...
+        def __iter__(self) -> Iterator[_PipeT | str]: ...
+        def __len__(self) -> int: ...
+
+else:
+
+    class _PipeEventTuple(NamedTuple):
+        pipe: Pipe
+        event_type: str
+
+    class PipeEvent(_PipeEventTuple, Generic[_PipeT]):
+        """A pipe event with the pipe and the event type.
+
+        Attributes:
+            pipe: The :class:`Pipe` associated with the event.
+            event_type: One of ``"pre_add"``, ``"post_add"``, or ``"remove"``.
+        """
+
+        __slots__ = ()
 
 
 _SENTINEL = object()
@@ -549,7 +571,7 @@ def _handle_pipe_event(
             cond.notify_all()
 
 
-class PipeEventStream(AsyncIterator[PipeEvent]):
+class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
     """Async iterator that yields :class:`PipeEvent` objects.
 
     Returned by :meth:`Socket.pipe_events`.  Use it with ``async for``::
@@ -570,12 +592,12 @@ class PipeEventStream(AsyncIterator[PipeEvent]):
         self._backend = backend
 
         if self._backend == "asyncio":
-            self._queue: asyncio.Queue[PipeEvent | object] = asyncio.Queue()
+            self._queue: asyncio.Queue[PipeEvent[_PipeT] | object] = asyncio.Queue()
             self._loop = asyncio.get_running_loop()
         elif self._backend == "trio":
             import trio
 
-            send_ch, recv_ch = trio.open_memory_channel[PipeEvent](math.inf)
+            send_ch, recv_ch = trio.open_memory_channel[PipeEvent[Pipe]](math.inf)
             self._send_channel: _PipeSendChannelLike = send_ch
             self._receive_channel: _PipeReceiveChannelLike = recv_ch
             self._trio_token: _TrioTokenLike = trio.lowlevel.current_trio_token()
@@ -587,19 +609,21 @@ class PipeEventStream(AsyncIterator[PipeEvent]):
         self._socket.add_post_pipe_connect_cb(self._on_post_add)
         self._socket.add_post_pipe_remove_cb(self._on_remove)
 
-    def _put_event(self, event: PipeEvent) -> None:
+    def _put_event(self, event: PipeEvent[Pipe]) -> None:
         """Thread-safe put of an event into the async queue."""
         if self._closed:
             return
         if self._backend == "asyncio":
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
+            self._loop.call_soon_threadsafe(
+                self._queue.put_nowait, cast("PipeEvent[_PipeT]", event)
+            )
         elif self._backend == "trio":
             self._trio_token.run_sync_soon(
                 self._trio_send_nowait,
                 event,
             )
 
-    def _trio_send_nowait(self, event: PipeEvent) -> None:
+    def _trio_send_nowait(self, event: PipeEvent[Pipe]) -> None:
         """Wrapper for send_nowait that suppresses ClosedResourceError.
 
         Called via ``run_sync_soon`` from a foreign thread, so any exception
@@ -656,10 +680,10 @@ class PipeEventStream(AsyncIterator[PipeEvent]):
             except trio.ClosedResourceError:
                 pass
 
-    def __aiter__(self: _StreamSelfT) -> _StreamSelfT:
+    def __aiter__(self) -> PipeEventStream[_PipeT]:
         return self
 
-    async def __anext__(self) -> PipeEvent:
+    async def __anext__(self) -> PipeEvent[_PipeT]:
         if self._closed:
             raise StopAsyncIteration
         if self._backend == "asyncio":
@@ -667,17 +691,17 @@ class PipeEventStream(AsyncIterator[PipeEvent]):
             if item is _SENTINEL:
                 raise StopAsyncIteration
             assert isinstance(item, PipeEvent)
-            return item
+            return cast("PipeEvent[_PipeT]", item)
         elif self._backend == "trio":
             import trio
 
             try:
-                return await self._receive_channel.receive()
+                return cast("PipeEvent[_PipeT]", await self._receive_channel.receive())
             except trio.EndOfChannel:
                 raise StopAsyncIteration
         raise StopAsyncIteration
 
-    async def __aenter__(self: _StreamSelfT) -> _StreamSelfT:
+    async def __aenter__(self) -> PipeEventStream[_PipeT]:
         return self
 
     async def __aexit__(
@@ -1571,7 +1595,7 @@ class Socket:
         with self._pipe_notify_lock:
             self._on_post_pipe_remove.remove(callback)
 
-    def pipe_events(self) -> PipeEventStream:
+    def pipe_events(self) -> PipeEventStream[Pipe]:
         """Return an async iterator of :class:`PipeEvent` objects.
 
         Each event has a ``pipe`` attribute (the :class:`Pipe`) and an
