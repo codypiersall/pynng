@@ -440,10 +440,11 @@ def test_v2_abstract_sockaddr(monkeypatch):
                 return 0
             return s0.socket, fake_getter
 
-        monkeypatch.setattr(pynng.options, "_get_inst_and_func", fake_get_inst_and_func)
-        opt_addr = pynng.options._getopt_sockaddr(s0, "local-address")
-        assert type(opt_addr) is pynng.sockaddr.AbstractAddr
-        assert opt_addr.family_as_str == "abstract"
+        with monkeypatch.context() as mp:
+            mp.setattr(pynng.options, "_get_inst_and_func", fake_get_inst_and_func)
+            opt_addr = pynng.options._getopt_sockaddr(s0, "local-address")
+            assert type(opt_addr) is pynng.sockaddr.AbstractAddr
+            assert opt_addr.family_as_str == "abstract"
 
     if sys.platform.startswith("linux"):
         url = f"abstract://pynng-v2-test-{uuid.uuid4().hex}"
