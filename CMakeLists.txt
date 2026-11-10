@@ -723,6 +723,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pynng/
   FILES_MATCHING
   PATTERN "*.py"
   PATTERN "*.pyi"
+  PATTERN "py.typed"
   PATTERN "__pycache__" EXCLUDE)
 
 # Install the compiled `_nng` Python extension module

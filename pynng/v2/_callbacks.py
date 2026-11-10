@@ -12,19 +12,40 @@ The callbacks share the same Python-side dispatch data structures as v1:
   by ``(version_tag, socket_id)`` tuples, preventing v1/v2 collision).
 """
 
-import logging
+from __future__ import annotations
 
-from pynng._nng_v2 import ffi, lib
+from collections.abc import Callable
+import logging
+from typing import TYPE_CHECKING, Protocol, TypeAlias, TypeVar, cast
+
 from pynng._aio import _aio_map
-from pynng._base import (
-    _handle_pipe_event,
-)
+from pynng._base import _handle_pipe_event
+from pynng._nng_v2 import ffi, lib
+
+if TYPE_CHECKING:
+    import cffi
+
+    from pynng import _base, _nng_v2
+
+    _CallbackFn: TypeAlias = (
+        Callable[[cffi.FFI.CData], None]
+        | Callable[[_nng_v2.nng_pipe, int, cffi.FFI.CData], None]
+    )
 
 logger = logging.getLogger(__name__)
+_F = TypeVar("_F", bound="_CallbackFn")
 
 
-@ffi.def_extern()
-def _async_complete(void_p):
+class _ExternDecorator(Protocol):
+    def __call__(self, fn: _F, /) -> _F: ...
+
+
+_def_extern: Callable[[], _ExternDecorator] = getattr(ffi, "def_extern")
+_ffi_error: type[BaseException] = getattr(ffi, "error", RuntimeError)
+
+
+@_def_extern()
+def _async_complete(void_p: cffi.FFI.CData) -> None:
     """
     Callback provided to nng_aio_alloc for v2 async operations.
 
@@ -39,19 +60,19 @@ def _async_complete(void_p):
     rescheduler()
 
 
-@ffi.def_extern()
-def _nng_pipe_cb(lib_pipe, event, arg):
+@_def_extern()
+def _nng_pipe_cb(lib_pipe: _nng_v2.nng_pipe, event: int, arg: cffi.FFI.CData) -> None:
     """
     Pipe notification callback for v2 sockets.
 
     Dispatches to the Socket's pipe callback lists, identical to the v1
     version but using the v2 ffi for handle resolution.
     """
-    logger.debug("v2 pipe callback event {}".format(event))
+    logger.debug(f"v2 pipe callback event {event}")
 
     try:
-        sock = ffi.from_handle(arg)
-    except (RuntimeError, ValueError, ffi.error):
+        sock = cast("_base.Socket", ffi.from_handle(arg))
+    except (RuntimeError, ValueError, _ffi_error):
         logger.info(
             "v2 pipe callback fired with invalid handle (socket likely GC'd); ignoring"
         )

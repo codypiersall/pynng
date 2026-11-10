@@ -64,7 +64,20 @@ jobs:
       - name: Build wheel
         env:
           CMAKE_C_COMPILER_LAUNCHER: sccache
-        run: uv build --wheel -o dist/
+        run: uv build --wheel -C build-dir=build/wheel -o dist/
+      - name: Install wheel and dev dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          uv pip install --system dist/*.whl 'headerkit~=0.51.0' 'mypy>=1.0' 'pyright>=1.1' 'types-cffi>=1.16.0' pytest pytest-asyncio pytest-trio trio sniffio
+          python -c "import glob, zipfile; [zipfile.ZipFile(w).extract(m, '.') for w in glob.glob('dist/*.whl') for m in zipfile.ZipFile(w).namelist() if m.endswith(('.so', '_version.py'))]"
+      - name: Type check with mypy and pyright
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mypy --strict pynng
+          pyright pynng
+      - name: Run build and typing contract tests
+        if: matrix.os == 'ubuntu-latest'
+        run: pytest -v test/test_build.py
       - name: Upload wheel
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7

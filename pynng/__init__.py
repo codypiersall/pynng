@@ -1,95 +1,99 @@
 # provide the API
+from __future__ import annotations
+
+from importlib.metadata import PackageNotFoundError, version
 import sys as _sys
 import types as _types
-from importlib.metadata import version, PackageNotFoundError
 
+__version__: str
 try:
     __version__ = version("pynng")
 except PackageNotFoundError:
     try:
-        from ._version import __version__
+        from ._version import __version__ as _scm_version
+
+        __version__ = str(_scm_version)
     except ImportError:
         __version__ = "0.0.0"
 
-from ._nng import lib, ffi
+from ._nng import ffi, lib
+from . import nng as _nng_module
+from .exceptions import (
+    AddressInUse,
+    AddressInvalid,
+    AlreadyExists,
+    Ambiguous,
+    AuthenticationError,
+    BadState,
+    BadType,
+    Busy,
+    Canceled,
+    Closed,
+    ConnectionAborted,
+    ConnectionRefused,
+    ConnectionReset,
+    CryptoError,
+    DestinationUnreachable,
+    Internal,
+    Interrupted,
+    InvalidOperation,
+    MessageStateError,
+    MessageTooLarge,
+    NNGException,
+    NoArgument,
+    NoEntry,
+    NoMemory,
+    NotSupported,
+    OutOfFiles,
+    OutOfSpace,
+    PermissionDenied,
+    ProtocolError,
+    ReadOnly,
+    Stopped,
+    Timeout,
+    TryAgain,
+    WriteOnly,
+    check_err,
+)
 from .nng import (
     Bus0,
+    Context,
+    Dialer,
+    Listener,
+    Message,
     Pair0,
     Pair1,
-    Pull0,
-    Push0,
-    Pub0,
-    Sub0,
-    Req0,
-    Rep0,
-    Surveyor0,
-    Respondent0,
-    RawBus0,
-    RawPair0,
-    RawPair1,
-    RawPush0,
-    RawPull0,
-    RawPub0,
-    RawSub0,
-    RawReq0,
-    RawRep0,
-    RawSurveyor0,
-    RawRespondent0,
-    Context,
-    Socket,
-    Listener,
-    Dialer,
     Pipe,
     PipeEvent,
     PipeEventStream,
-    Message,
-    device,
+    Pub0,
+    Pull0,
+    Push0,
+    RawBus0,
+    RawPair0,
+    RawPair1,
+    RawPub0,
+    RawPull0,
+    RawPush0,
+    RawRep0,
+    RawReq0,
+    RawRespondent0,
+    RawSub0,
+    RawSurveyor0,
+    Rep0,
+    Req0,
+    Respondent0,
+    Socket,
+    Sub0,
+    Surveyor0,
     adevice,
+    device,
     nng_fini,
+    nng_fini_at_exit,
 )
-from . import nng as _nng_module
-
-from .stats import stats, socket_stats, Stat
 from .service import Rep0Service, Request
+from .stats import Stat, socket_stats, stats
 from .tls import TLSConfig
-
-from .exceptions import (
-    NNGException,
-    Interrupted,
-    NoMemory,
-    InvalidOperation,
-    Busy,
-    Timeout,
-    ConnectionRefused,
-    Closed,
-    TryAgain,
-    NotSupported,
-    AddressInUse,
-    BadState,
-    NoEntry,
-    ProtocolError,
-    DestinationUnreachable,
-    AddressInvalid,
-    PermissionDenied,
-    MessageTooLarge,
-    ConnectionReset,
-    ConnectionAborted,
-    Canceled,
-    OutOfFiles,
-    OutOfSpace,
-    AlreadyExists,
-    ReadOnly,
-    WriteOnly,
-    CryptoError,
-    AuthenticationError,
-    NoArgument,
-    Ambiguous,
-    BadType,
-    Internal,
-    Stopped,
-    check_err,
-    MessageStateError,
-)
 
 __all__ = [
     "AddressInUse",
@@ -177,11 +181,11 @@ class _PynngModule(_types.ModuleType):
     # The atexit handler reads pynng.nng.nng_fini_at_exit. A plain copy here
     # would make "pynng.nng_fini_at_exit = True" have no effect.
     @property
-    def nng_fini_at_exit(self):
+    def nng_fini_at_exit(self) -> bool:
         return _nng_module.nng_fini_at_exit
 
     @nng_fini_at_exit.setter
-    def nng_fini_at_exit(self, value):
+    def nng_fini_at_exit(self, value: bool) -> None:
         _nng_module.nng_fini_at_exit = value
 
 

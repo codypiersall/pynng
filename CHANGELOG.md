@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b3] - 2026-11-10
+
 ### Added
-- Generate and install PEP 484 `_nng.pyi` and `_nng_v2.pyi` type stubs into built wheels via `CMakeLists.txt`, and define explicit `__all__` exports on `pynng`, `pynng.nng`, `pynng.v2`, and `pynng.v2.nng`
+- Add inline PEP 484 type annotations across all `pynng` and `pynng.v2` Python modules, ship the PEP 561 `pynng/py.typed` marker in built wheels, and narrow v1/v2 `Socket`, `Context`, `Pipe`, and `Message` return types for `mypy --strict` consumers
+- Generate and install zero-`Any` PEP 484 `_nng.pyi` and `_nng_v2.pyi` type stubs into built wheels via `CMakeLists.txt`, and define explicit `__all__` exports on `pynng`, `pynng.nng`, `pynng.v2`, and `pynng.v2.nng`
 
 ### Changed
-- Migrate `build_pynng.py` to `headerkit~=0.50.0` (`CffiWriter` and `PyiWriter(mode="cffi")`), removing the runtime `headerkit._clang` monkey-patch loader, regex `cdef` post-processing, `_extract_defines()`, dummy enum tag workarounds, and `-Wno-incompatible-pointer-types` compiler flags in `CMakeLists.txt`
-- Parse `src/aio_engine.h` C declarations directly via `libclang` (`#define PYNNG_CFFI_CDEF`) in `_parse_nng_headers()` and memoize the parsed `Header` IR so `CffiWriter` and `PyiWriter(mode="cffi")` share a single `libclang` parse pass per target and emit 1:1 matching `_nng.pyi` / `_nng_v2.pyi` stubs natively (using `_BUILD_SCRIPT` so `cffi_buildtool exec-python` succeeds when `__file__` is absent from `globals()`)
+- Migrate `build_pynng.py` to `headerkit~=0.51.0` (`CffiWriter` and `PyiWriter(mode="cffi")`), removing the runtime `headerkit._clang` monkey-patch loader, regex `cdef` post-processing, `_extract_defines()`, dummy enum tag workarounds, and `-Wno-incompatible-pointer-types` compiler flags in `CMakeLists.txt`
+- Parse `src/aio_engine.h` C declarations (including `_async_complete` and `_nng_pipe_cb` callback prototypes) directly via `libclang` (`#define PYNNG_CFFI_CDEF`) in `_parse_nng_headers()` and memoize the parsed `Header` IR so `CffiWriter` and `PyiWriter(mode="cffi")` share a single `libclang` parse pass per target and emit 1:1 matching `_nng.pyi` / `_nng_v2.pyi` stubs natively (using `_BUILD_SCRIPT` so `cffi_buildtool exec-python` succeeds when `__file__` is absent from `globals()`)
 
 ## [1.0.0b2] - 2026-10-31
 
@@ -123,6 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `__del__` guards for `Socket`, `Context`, and `TlsConfig` to prevent tracebacks during interpreter shutdown
 - `TLS.set_server_name` validation allows empty string (valid for clearing) and rejects `None` with clear error
 
-[unreleased]: https://github.com/codypiersall/pynng/compare/v1.0.0b2...HEAD
+[unreleased]: https://github.com/codypiersall/pynng/compare/v1.0.0b3...HEAD
+[1.0.0b3]: https://github.com/codypiersall/pynng/compare/v1.0.0b2...v1.0.0b3
 [1.0.0b2]: https://github.com/codypiersall/pynng/compare/v1.0.0b1...v1.0.0b2
 [1.0.0b1]: https://github.com/codypiersall/pynng/compare/v0.9.0...v1.0.0b1

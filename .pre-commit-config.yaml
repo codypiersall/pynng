@@ -1,7 +1,7 @@
 default_language_version:
   python: python3.10
 
-exclude: ^(build/|nng/|mbedtls/|docs/_build/|patches/)
+exclude: ^(build/|nng/|mbedtls/|docs/_build/|patches/|pynng/_nng.*\.pyi$)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

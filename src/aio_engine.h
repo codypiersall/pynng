@@ -112,7 +112,12 @@ nng_aio *pynng_sync_recv_aio(pynng_sync_recv_t *r);
 int pynng_sync_recv_wait(pynng_sync_recv_t *r, int slice_ms);
 void pynng_sync_recv_free(pynng_sync_recv_t *r);
 
-#ifndef PYNNG_CFFI_CDEF
+#ifdef PYNNG_CFFI_CDEF
+
+void _async_complete(void *);
+void _nng_pipe_cb(nng_pipe, nng_pipe_ev, void *);
+
+#else
 
 pynng_mpsc_queue_t *pynng_mpsc_queue_new(int write_fd) {
     pynng_mpsc_queue_t *q = (pynng_mpsc_queue_t *)malloc(sizeof(pynng_mpsc_queue_t));
