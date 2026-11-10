@@ -277,7 +277,7 @@ def _device_section() -> Iterator[None]:
 
 if TYPE_CHECKING:
 
-    class PipeEvent(Generic[_PipeT]):
+    class PipeEvent(tuple[_PipeT, str], Generic[_PipeT]):
         """A pipe event with the pipe and the event type.
 
         Attributes:
@@ -288,9 +288,8 @@ if TYPE_CHECKING:
         pipe: _PipeT
         event_type: str
 
-        def __init__(self, pipe: _PipeT, event_type: str) -> None: ...
-        def __iter__(self) -> Iterator[_PipeT | str]: ...
-        def __len__(self) -> int: ...
+        def __new__(cls, pipe: _PipeT, event_type: str) -> PipeEvent[_PipeT]:
+            return super().__new__(cls, (pipe, event_type))
 
 else:
 
@@ -637,13 +636,16 @@ class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
             pass
 
     def _on_pre_add(self, pipe: Pipe) -> None:
-        self._put_event(PipeEvent(pipe=pipe, event_type="pre_add"))
+        ev_cls = self._socket._pipe_event_class or PipeEvent
+        self._put_event(ev_cls(pipe=pipe, event_type="pre_add"))
 
     def _on_post_add(self, pipe: Pipe) -> None:
-        self._put_event(PipeEvent(pipe=pipe, event_type="post_add"))
+        ev_cls = self._socket._pipe_event_class or PipeEvent
+        self._put_event(ev_cls(pipe=pipe, event_type="post_add"))
 
     def _on_remove(self, pipe: Pipe) -> None:
-        self._put_event(PipeEvent(pipe=pipe, event_type="remove"))
+        ev_cls = self._socket._pipe_event_class or PipeEvent
+        self._put_event(ev_cls(pipe=pipe, event_type="remove"))
 
     def close(self) -> None:
         """Stop receiving events and unregister callbacks."""
@@ -1526,6 +1528,8 @@ class Socket:
     _message_class: type[Message] | None = None
     _dialer_class: type[Dialer] | None = None
     _listener_class: type[Listener] | None = None
+    _pipe_event_class: type[PipeEvent[Pipe]] | None = None
+    _pipe_event_stream_class: type[PipeEventStream[Pipe]] | None = None
 
     def new_context(self) -> Context:
         """Return a new :class:`Context` for this socket."""
@@ -1617,7 +1621,8 @@ class Socket:
         Call ``close()`` on the stream (or exit the ``async with`` block) to
         stop receiving events and unregister the internal callbacks.
         """
-        return PipeEventStream(self)
+        stream_cls = self._pipe_event_stream_class or PipeEventStream
+        return stream_cls(self)
 
     def _try_associate_msg_with_pipe(self, msg: Message) -> None:
         """Looks up the nng_msg associated with the ``msg`` and attempts to

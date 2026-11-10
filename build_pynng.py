@@ -20,12 +20,20 @@ controlled by the NNG_MODULE_NAME environment variable:
   - "pynng._nng_v2": v2 bindings using NNG_V2_HEADERS
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 import glob
+import importlib.util
 import logging
 import os
 import subprocess
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from cffi import FFI
+    from headerkit.ir import Header
 
 try:
     from headerkit.backends import get_backend
@@ -286,7 +294,7 @@ EXTERN_PYTHON_CALLBACKS = [
 ]
 
 _PARSE_MEMO: dict[
-    tuple[tuple[tuple[str, float], ...], str], tuple[Any, list[str], str]
+    tuple[tuple[tuple[str, float], ...], str], tuple[Header, list[str], str]
 ] = {}
 
 _CDEF_MEMO: dict[
@@ -294,7 +302,10 @@ _CDEF_MEMO: dict[
 ] = {}
 
 
-def _parse_nng_headers(headers=None, include_dir=None):
+def _parse_nng_headers(
+    headers: Sequence[str] | None = None,
+    include_dir: str | None = None,
+) -> tuple[Header, list[str], str]:
     """Parse nng and aio_engine headers into a headerkit Header IR (memoized by mtimes)."""
     _require_headerkit()
     if headers is None:
@@ -327,6 +338,7 @@ def _parse_nng_headers(headers=None, include_dir=None):
 {includes}
 #include "aio_engine.h"
 """
+    assert get_backend is not None
     backend = get_backend("libclang")
     header = backend.parse(
         umbrella,
@@ -340,7 +352,9 @@ def _parse_nng_headers(headers=None, include_dir=None):
 
 
 def generate_cdef(
-    headers=None, include_dir=None, exclude_patterns=None
+    headers: Sequence[str] | None = None,
+    include_dir: str | None = None,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Parse nng headers and generate CFFI cdef declarations via headerkit.
 
@@ -387,6 +401,7 @@ def generate_cdef(
     cdef_exclude = list(exclude_patterns) + [
         f"^{name}$" for name in EXTERN_PYTHON_CALLBACKS
     ]
+    assert CffiWriter is not None
     writer = CffiWriter(
         exclude_patterns=cdef_exclude,
         define_patterns=DEFINE_PATTERNS,
@@ -399,9 +414,9 @@ def generate_cdef(
 
 
 def generate_pyi(
-    headers=None,
-    include_dir=None,
-    exclude_patterns=None,
+    headers: Sequence[str] | None = None,
+    include_dir: str | None = None,
+    exclude_patterns: Sequence[str] | None = None,
     *,
     tls_enabled: bool = True,
 ) -> str:
@@ -418,6 +433,7 @@ def generate_pyi(
         exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
     header, _, _ = _parse_nng_headers(headers=headers, include_dir=include_dir)
+    assert PyiWriter is not None
     writer = PyiWriter(
         mode="cffi",
         exclude_patterns=list(exclude_patterns),
@@ -433,16 +449,17 @@ def _load_cached_cdef(
     tls_enabled: bool,
     nng_include_dir: str | None,
 ) -> tuple[str, list[str]]:
-    """Load pre-generated (cdef, existing_headers) from pynng._nng_cdef."""
-    if _SCRIPT_DIR not in sys.path:
-        sys.path.insert(0, _SCRIPT_DIR)
-    if "pynng" in sys.modules:
-        _local_pkg = os.path.join(_SCRIPT_DIR, "pynng")
-        if _local_pkg not in sys.modules["pynng"].__path__:
-            sys.modules["pynng"].__path__.insert(0, _local_pkg)
-    from pynng._nng_cdef import get_cached_cdef
-
-    cdef_content, headers = get_cached_cdef(module_name, tls_enabled=tls_enabled)
+    """Load pre-generated (cdef, existing_headers) from pynng/_nng_cdef.py without importing pynng."""
+    cdef_path = os.path.join(_SCRIPT_DIR, "pynng", "_nng_cdef.py")
+    spec = importlib.util.spec_from_file_location("_nng_cdef", cdef_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load cached cdef module from {cdef_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    cdef_content, headers = cast(
+        "tuple[str, list[str]]",
+        mod.get_cached_cdef(module_name, tls_enabled=tls_enabled),
+    )
     if nng_include_dir is not None and os.path.isdir(nng_include_dir):
         existing = [
             h for h in headers if os.path.exists(os.path.join(nng_include_dir, h))
@@ -453,13 +470,13 @@ def _load_cached_cdef(
 
 
 def _build_ffi(
-    module_name="pynng._nng",
-    headers=None,
-    exclude_patterns=None,
-    include_dir=None,
+    module_name: str = "pynng._nng",
+    headers: Sequence[str] | None = None,
+    exclude_patterns: Sequence[str] | None = None,
+    include_dir: str | None = None,
     *,
     tls_enabled: bool | None = None,
-):
+) -> FFI:
     """Set up the CFFI ffibuilder for generating the C extension source.
 
     Args:

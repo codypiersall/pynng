@@ -18,8 +18,8 @@ from ._base import (  # noqa: F401
     IntOption,
     MsOption,
     NotImplementedOption,
-    PipeEvent,
-    PipeEventStream,
+    PipeEvent as _BasePipeEvent,
+    PipeEventStream as _BasePipeEventStream,
     PointerOption,
     ReadOnlyBooleanOption,
     ReadOnlyIntOption,
@@ -434,7 +434,7 @@ class Socket(_base.Socket):
             self, callback: Callable[[Pipe], object]
         ) -> None: ...
 
-        def pipe_events(self) -> _base.PipeEventStream[Pipe]: ...
+        def pipe_events(self) -> PipeEventStream: ...
 
 
 class Bus0(Socket):
@@ -1950,12 +1950,34 @@ class Pipe(_base.Pipe):
         def listener(self) -> Listener: ...
 
 
+class PipeEvent(_BasePipeEvent["Pipe"]):
+    """A v1 pipe event with a :class:`Pipe` and the event type."""
+
+    __slots__ = ()
+
+
+class PipeEventStream(_BasePipeEventStream["Pipe"]):
+    """Async iterator that yields v1 :class:`PipeEvent` objects."""
+
+    __slots__ = ()
+
+    if TYPE_CHECKING:
+
+        def __aiter__(self) -> PipeEventStream: ...
+
+        async def __anext__(self) -> PipeEvent: ...
+
+        async def __aenter__(self) -> PipeEventStream: ...
+
+
 # Wire up the v1-specific subclasses so base class factory methods
 # create v1 types (Context, Pipe, Dialer, Listener, Message) instead of _base types.
 Socket._context_class = Context
 Socket._pipe_class = Pipe
 Socket._dialer_class = Dialer
 Socket._listener_class = Listener
+Socket._pipe_event_class = PipeEvent
+Socket._pipe_event_stream_class = PipeEventStream
 
 
 class Message(_base.Message):

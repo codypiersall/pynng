@@ -745,8 +745,8 @@ class TestPyPyHeaderkitCompat:
                 glob.glob(os.path.join(pynng_dir, "**", "*.py"), recursive=True)
             )
             if not path.endswith("_version.py")
-        ]
-        assert len(py_files) == 15
+        ] + [os.path.join(_PROJECT_ROOT, "build_pynng.py")]
+        assert len(py_files) == 16
 
         untyped: list[str] = []
         for path in py_files:
@@ -1114,7 +1114,7 @@ class TestPyPyHeaderkitCompat:
         pytest.importorskip("pyright")
 
         mypy_res = subprocess.run(
-            [sys.executable, "-m", "mypy", "--strict", "pynng"],
+            [sys.executable, "-m", "mypy", "--strict", "pynng", "build_pynng.py"],
             cwd=_PROJECT_ROOT,
             capture_output=True,
             text=True,
@@ -1254,6 +1254,11 @@ class TestPyPyHeaderkitCompat:
                     def on_v2_pipe(p: v2.Pipe) -> None:
                         _ = p.scheme
 
+                    unparam_ev1: pynng.PipeEvent
+                    unparam_st1: pynng.PipeEventStream
+                    unparam_ev2: v2.PipeEvent
+                    unparam_st2: v2.PipeEventStream
+
                     with pynng.Pair0(listen="inproc://t1", name=b"bname") as s1:
                         s1.add_pre_pipe_connect_cb(on_v1_pipe)
                         s1.add_post_pipe_connect_cb(on_v1_pipe)
@@ -1261,10 +1266,16 @@ class TestPyPyHeaderkitCompat:
                         s1.remove_pre_pipe_connect_cb(on_v1_pipe)
                         s1.remove_post_pipe_connect_cb(on_v1_pipe)
                         s1.remove_post_pipe_remove_cb(on_v1_pipe)
-                        async with s1.pipe_events() as v1_events:
+                        unparam_st1 = s1.pipe_events()
+                        async with unparam_st1 as v1_events:
                             async for ev in v1_events:
+                                unparam_ev1 = ev
                                 v1_pipe: pynng.Pipe = ev.pipe
                                 _ = v1_pipe.protocol_name
+                                p1, et1 = ev
+                                p1.close()
+                                ev[0].close()
+                                _ = (et1, ev[1])
 
                     with v2.Pair0(listen="inproc://v2_t1") as vs1:
                         vs1.add_pre_pipe_connect_cb(on_v2_pipe)
@@ -1273,13 +1284,30 @@ class TestPyPyHeaderkitCompat:
                         vs1.remove_pre_pipe_connect_cb(on_v2_pipe)
                         vs1.remove_post_pipe_connect_cb(on_v2_pipe)
                         vs1.remove_post_pipe_remove_cb(on_v2_pipe)
-                        async with vs1.pipe_events() as v2_events:
+                        unparam_st2 = vs1.pipe_events()
+                        async with unparam_st2 as v2_events:
                             async for vev in v2_events:
+                                unparam_ev2 = vev
                                 v2_pipe: v2.Pipe = vev.pipe
                                 _ = v2_pipe.scheme
+                                p2, et2 = vev
+                                p2.close()
+                                vev[0].close()
+                                _ = (et2, vev[1])
                 """
             ),
             encoding="utf-8",
+        )
+        pipe_cb_mypy = subprocess.run(
+            [sys.executable, "-m", "mypy", "--strict", str(pipe_cb_consumer)],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert pipe_cb_mypy.returncode == 0, (
+            f"pipe_cb_consumer mypy failed:\n{pipe_cb_mypy.stdout}\n{pipe_cb_mypy.stderr}"
         )
         pyright_config = tmp_path / "pyrightconfig.json"
         pyright_config.write_text(
@@ -1503,9 +1531,15 @@ class TestPyPyHeaderkitCompat:
                 live_h2_notls,
             )
 
-        # Simulate building without headerkit / libclang installed (e.g. pkgsrc, nixpkgs, AUR)
+        # Simulate building without headerkit / libclang installed AND before
+        # pynng._nng / pynng._nng_v2 are compiled (clean PEP 517 build)
         monkeypatch.setattr(build_pynng, "_HAS_HEADERKIT", False)
         monkeypatch.setattr(build_pynng, "get_backend", None)
+        monkeypatch.delitem(sys.modules, "pynng", raising=False)
+        monkeypatch.delitem(sys.modules, "pynng.v2", raising=False)
+        monkeypatch.delitem(sys.modules, "pynng._nng_cdef", raising=False)
+        monkeypatch.setitem(sys.modules, "pynng._nng", None)
+        monkeypatch.setitem(sys.modules, "pynng._nng_v2", None)
         ffi_v1 = build_pynng._build_ffi(
             module_name="pynng._nng",
             include_dir=_NNG_INCLUDE_DIR,
@@ -1522,6 +1556,158 @@ class TestPyPyHeaderkitCompat:
         ffi_v2.emit_c_code(str(c_v2))
         assert c_v1.is_file() and c_v1.stat().st_size > 10000
         assert c_v2.is_file() and c_v2.stat().st_size > 10000
+
+        # Subprocess verification: prove build_pynng.py emits _nng.c and _nng_v2.c
+        # in a clean process where pynng._nng and headerkit are blocked from import
+        import subprocess
+
+        for mod_name, out_c in (
+            ("pynng._nng", tmp_path / "sub_nng.c"),
+            ("pynng._nng_v2", tmp_path / "sub_nng_v2.c"),
+        ):
+            sub_env = os.environ.copy()
+            sub_env["NNG_INCLUDE_DIR"] = _NNG_INCLUDE_DIR
+            sub_env["NNG_MODULE_NAME"] = mod_name
+            sub_env["PYNNG_USE_CACHED_CDEF"] = "1"
+            sub_res = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import sys, runpy; "
+                        "sys.modules['pynng._nng'] = None; "
+                        "sys.modules['pynng._nng_v2'] = None; "
+                        "sys.modules['headerkit'] = None; "
+                        "sys.modules['headerkit.backends'] = None; "
+                        "sys.argv = ['build_pynng.py', sys.argv[1]]; "
+                        "runpy.run_path('build_pynng.py', run_name='__main__')"
+                    ),
+                    str(out_c),
+                ],
+                cwd=_PROJECT_ROOT,
+                env=sub_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert sub_res.returncode == 0, (
+                f"build_pynng.py subprocess failed for {mod_name}:\n"
+                f"{sub_res.stdout}\n{sub_res.stderr}"
+            )
+            assert out_c.is_file() and out_c.stat().st_size > 10000
+
+    @_skip_no_compiled_nng
+    def test_pipe_callback_and_event_typing_narrowed(self, tmp_path):
+        """Verify PipeEvent runtime tuple unpacking/indexing and narrowedv1/v2 PipeEvent/PipeEventStream typing."""
+        import subprocess
+        import textwrap
+
+        import pynng
+        import pynng._base as _base
+
+        assert _base.Socket.pipe_events.__doc__ is not None
+        assert '"pre_add"' in _base.Socket.pipe_events.__doc__
+        assert '"post_add"' in _base.Socket.pipe_events.__doc__
+        assert '"remove"' in _base.Socket.pipe_events.__doc__
+
+        with (
+            pynng.Pair0(listen="inproc://pipe-ev-tuple-v1") as s1,
+            pynng.Pair0(dial="inproc://pipe-ev-tuple-v1") as c1,
+        ):
+            c1.send(b"ping")
+            assert s1.recv() == b"ping"
+            v1_pipe = s1.pipes[0]
+            ev1 = pynng.PipeEvent(v1_pipe, "post_add")
+            assert isinstance(ev1, tuple)
+            assert isinstance(ev1, pynng.PipeEvent)
+            assert isinstance(ev1, _base.PipeEvent)
+            assert len(ev1) == 2
+            p_unpacked, et_unpacked = ev1
+            assert p_unpacked is v1_pipe
+            assert et_unpacked == "post_add"
+            assert ev1[0] is v1_pipe
+            assert ev1[1] == "post_add"
+            assert ev1.pipe is v1_pipe
+            assert ev1.event_type == "post_add"
+
+        try:
+            import pynng.v2 as v2
+        except ImportError:
+            v2 = None  # type: ignore[assignment]
+
+        if v2 is not None:
+            with (
+                v2.Pair0(listen="inproc://pipe-ev-tuple-v2") as s2,
+                v2.Pair0(dial="inproc://pipe-ev-tuple-v2") as c2,
+            ):
+                c2.send(b"ping")
+                assert s2.recv() == b"ping"
+                v2_pipe = s2.pipes[0]
+                ev2 = v2.PipeEvent(v2_pipe, "remove")
+                assert isinstance(ev2, tuple)
+                assert isinstance(ev2, v2.PipeEvent)
+                assert isinstance(ev2, _base.PipeEvent)
+                assert len(ev2) == 2
+                p2_unpacked, et2_unpacked = ev2
+                assert p2_unpacked is v2_pipe
+                assert et2_unpacked == "remove"
+                assert ev2[0] is v2_pipe
+                assert ev2[1] == "remove"
+                assert ev2.pipe is v2_pipe
+                assert ev2.event_type == "remove"
+
+        pytest.importorskip("mypy")
+        snippet = tmp_path / "pipe_event_narrowing.py"
+        snippet.write_text(
+            textwrap.dedent(
+                """\
+                from __future__ import annotations
+                import pynng
+                import pynng.v2 as v2
+
+                async def check_pipe_events(
+                    s1: pynng.Pair0,
+                    s2: v2.Pair0,
+                    ev1: pynng.PipeEvent,
+                    ev2: v2.PipeEvent,
+                    st1: pynng.PipeEventStream,
+                    st2: v2.PipeEventStream,
+                ) -> None:
+                    s1.add_post_pipe_connect_cb(lambda p: p.url)
+                    s2.add_post_pipe_connect_cb(lambda p: p.scheme)
+                    p1_direct, et1_direct = ev1
+                    p1_direct.close()
+                    _ = (p1_direct.url, et1_direct, ev1[0].url, ev1[1])
+                    p2_direct, et2_direct = ev2
+                    p2_direct.close()
+                    _ = (p2_direct.scheme, et2_direct, ev2[0].scheme, ev2[1])
+                    async for e1 in s1.pipe_events():
+                        p1, et1 = e1
+                        p1.close()
+                        e1[0].close()
+                        _ = (p1.url, et1)
+                    async for e2 in s2.pipe_events():
+                        p2, et2 = e2
+                        p2.close()
+                        e2[0].close()
+                        _ = (p2.scheme, et2)
+                    _ = (st1, st2)
+                """
+            ),
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["MYPYPATH"] = _PROJECT_ROOT
+        env["PYTHONPATH"] = _PROJECT_ROOT
+        res = subprocess.run(
+            [sys.executable, "-m", "mypy", "--strict", str(snippet)],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, f"mypy failed:\n{res.stdout}\n{res.stderr}"
 
     def test_cmake_and_pyproject_offline_distro_packaging_contracts(self):
         """Verify CMakeLists.txt auto-detects local dependency trees and omits cffi_buildtool."""
@@ -1540,18 +1726,22 @@ class TestPyPyHeaderkitCompat:
             "${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE}"
             in cmake_text
         )
-        for dep_dir, var_name in (
-            ("mbedtls", "FETCHCONTENT_SOURCE_DIR_MBEDTLS"),
-            ("wolfssl", "FETCHCONTENT_SOURCE_DIR_WOLFSSL"),
-            ("nng", "FETCHCONTENT_SOURCE_DIR_NNG"),
-            ("nng_v2", "FETCHCONTENT_SOURCE_DIR_NNG_V2"),
+        for dep_dir, src_var, fc_var in (
+            ("mbedtls", "MBEDTLS_SOURCE_DIR", "FETCHCONTENT_SOURCE_DIR_MBEDTLS"),
+            ("wolfssl", "WOLFSSL_SOURCE_DIR", "FETCHCONTENT_SOURCE_DIR_WOLFSSL"),
+            ("nng", "NNG_SOURCE_DIR", "FETCHCONTENT_SOURCE_DIR_NNG"),
+            ("nng_v2", "NNG_V2_SOURCE_DIR", "FETCHCONTENT_SOURCE_DIR_NNG_V2"),
         ):
             assert (
-                f'if(EXISTS "${{CMAKE_CURRENT_SOURCE_DIR}}/{dep_dir}/CMakeLists.txt" AND NOT {var_name})'
+                f'if(NOT {src_var} AND NOT {fc_var} AND EXISTS "${{CMAKE_CURRENT_SOURCE_DIR}}/{dep_dir}/CMakeLists.txt")'
                 in cmake_text
             )
             assert (
-                f'set({var_name} "${{CMAKE_CURRENT_SOURCE_DIR}}/{dep_dir}")'
+                f'get_filename_component({src_var} "${{{src_var}}}" ABSOLUTE BASE_DIR "${{CMAKE_CURRENT_SOURCE_DIR}}")'
+                in cmake_text
+            )
+            assert (
+                f'set({fc_var} "${{{src_var}}}" CACHE PATH "Local source directory for {dep_dir}" FORCE)'
                 in cmake_text
             )
 
@@ -1563,6 +1753,16 @@ class TestPyPyHeaderkitCompat:
             "cffi",
             "setuptools-scm",
         ]
+        assert "before-build" not in pyproject_data["tool"]["cibuildwheel"].get(
+            "linux", {}
+        )
+        assert "before-build" not in pyproject_data["tool"]["cibuildwheel"].get(
+            "macos", {}
+        )
+        assert (
+            "headerkit"
+            not in pyproject_data["tool"]["cibuildwheel"]["windows"]["before-build"]
+        )
 
 
 class TestAioEngineHeader:

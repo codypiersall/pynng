@@ -92,6 +92,8 @@ from .nng import (  # noqa: E402
     Dialer,
     Listener,
     Pipe,
+    PipeEvent,
+    PipeEventStream,
     Message,
     TLSConfig,
     Rep0Service,
@@ -103,9 +105,6 @@ from .nng import (  # noqa: E402
     socket_stats,
     Stat,
 )
-
-# Import shared types from base
-from pynng._base import PipeEvent, PipeEventStream  # noqa: E402
 
 # Import shared exceptions (same for v1 and v2)
 from pynng.exceptions import (  # noqa: E402
