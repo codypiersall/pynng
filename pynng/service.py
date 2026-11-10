@@ -188,11 +188,11 @@ class Request:
                             pass
                 elif self._trio_token is not None:
                     try:
-                        self._replied_event.set()
-                    except RuntimeError:
+                        self._trio_token.run_sync_soon(self._replied_event.set)
+                    except Exception:
                         try:
-                            self._trio_token.run_sync_soon(self._replied_event.set)
-                        except Exception:
+                            self._replied_event.set()
+                        except RuntimeError:
                             pass
                 else:
                     try:
