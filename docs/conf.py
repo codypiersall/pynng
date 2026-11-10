@@ -189,3 +189,33 @@ epub_copyright = copyright
 epub_exclude_files = ["search.html"]
 
 # -- Extension configuration -------------------------------------------------
+
+from sphinx.addnodes import pending_xref
+
+
+def _qualify_unambiguous_py_xrefs(app, doctree, fromdocname):
+    """Qualify bare py:class pending_xrefs generated from PEP 563 type annotations."""
+    default_prefix = "pynng.v2" if fromdocname == "api/v2" else "pynng"
+    for node in doctree.findall(pending_xref):
+        if node.get("refdomain") != "py":
+            continue
+        target = node.get("reftarget", "")
+        if target in {"Socket", "Pipe", "TLSConfig"}:
+            modname = node.get("py:module") or ""
+            if modname.startswith("pynng.v2"):
+                prefix = "pynng.v2"
+            elif modname.startswith("pynng"):
+                prefix = "pynng"
+            else:
+                prefix = default_prefix
+            node["reftarget"] = f"{prefix}.{target}"
+
+
+def setup(app):
+    app.connect("doctree-read", lambda app, doctree: _qualify_unambiguous_py_xrefs(app, doctree, app.env.docname))
+
+
+
+
+
+

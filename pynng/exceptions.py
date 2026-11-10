@@ -193,9 +193,9 @@ EXCEPTION_MAP: dict[int, type[NNGException]] = {
     int(_default_lib.NNG_EINTERNAL): Internal,
 }
 
-# Add NNG_ESTOPPED (999) for v2 support. This code only exists in v2,
-# but we add it to the map unconditionally with its known numeric value.
-EXCEPTION_MAP[999] = Stopped
+# Add NNG_ESTOPPED for v2 support. This code only exists in v2 (default 999),
+# and check_err also checks active_lib.NNG_ESTOPPED dynamically.
+EXCEPTION_MAP[int(getattr(_default_lib, "NNG_ESTOPPED", 999))] = Stopped
 
 
 class MessageStateError(Exception):
@@ -230,4 +230,10 @@ def check_err(
     raw = active_ffi.string(cast("cffi.FFI.CData", msg))
     string = raw.decode() if isinstance(raw, bytes) else str(raw)
     exc = EXCEPTION_MAP.get(err, NNGException)
+    if (
+        exc is NNGException
+        and lib is not None
+        and err == getattr(lib, "NNG_ESTOPPED", None)
+    ):
+        exc = Stopped
     raise exc(string, err)

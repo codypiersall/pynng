@@ -1046,3 +1046,45 @@ def test_rep0_service_socket_must_be_a_cooked_rep0_of_its_version():
             v2.Rep0Service(socket=raw)
         assert v2.Rep0Service(socket=rep_v2)._socket is rep_v2
         assert pynng.Rep0Service(socket=rep_v1)._socket is rep_v1
+
+
+def test_v2_surveyor_post_expiry_recv_raises_timeout_then_badstate():
+    """Calling recv() on v2 Surveyor0 after survey_time has expired raises Timeout once, then BadState."""
+    addr = random_addr()
+    with (
+        v2.Surveyor0(listen=addr, survey_time=20, recv_timeout=200) as s,
+        v2.Respondent0(dial=addr) as _r,
+    ):
+        wait_pipe_len(s, 1)
+        with pytest.raises(pynng.BadState):
+            s.recv()
+        s.send(b"question")
+        time.sleep(0.08)
+        with pytest.raises(pynng.Timeout) as exc_info:
+            s.recv()
+        assert exc_info.value.errno == int(v2.lib.NNG_ETIMEDOUT)
+        with pytest.raises(pynng.BadState):
+            s.recv()
+
+
+@pytest.mark.asyncio
+async def test_v2_surveyor_post_expiry_arecv_raises_timeout_then_badstate():
+    """Calling arecv() on v2 Surveyor0 after survey_time has expired raises Timeout once, then BadState."""
+    import asyncio
+
+    addr = random_addr()
+    with (
+        v2.Surveyor0(listen=addr, survey_time=20, recv_timeout=200) as s,
+        v2.Respondent0(dial=addr) as _r,
+    ):
+        wait_pipe_len(s, 1)
+        with pytest.raises(pynng.BadState):
+            await s.arecv()
+        await s.asend(b"question")
+        await asyncio.sleep(0.08)
+        with pytest.raises(pynng.Timeout) as exc_info:
+            await s.arecv()
+        assert exc_info.value.errno == int(v2.lib.NNG_ETIMEDOUT)
+        with pytest.raises(pynng.BadState):
+            await s.arecv()
+

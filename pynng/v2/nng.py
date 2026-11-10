@@ -1075,8 +1075,77 @@ class Surveyor0(Socket):
             async_backend=async_backend,
             tls_config=tls_config,
         )
+        self._survey_active: bool = False
         if survey_time is not None:
             self.survey_time = survey_time
+
+    def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                super().send(data, block=block)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            super().send(data, block=block)
+
+    def send_msg(self, msg: _base.Message, block: bool = True) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                super().send_msg(msg, block=block)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            super().send_msg(msg, block=block)
+
+    async def asend(self, data: _base.ReadableBuffer) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                await super().asend(data)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            await super().asend(data)
+
+    async def asend_msg(self, msg: _base.Message) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                await super().asend_msg(msg)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            await super().asend_msg(msg)
+
+    def recv_msg(self, block: bool = True) -> Message:
+        try:
+            return super().recv_msg(block=block)
+        except Timeout:
+            self._survey_active = False
+            raise
+        except BadState as e:
+            if self._survey_active:
+                self._survey_active = False
+                raise Timeout("Timed out", int(lib.NNG_ETIMEDOUT)) from e
+            raise
+
+    async def arecv_msg(self) -> Message:
+        try:
+            return await super().arecv_msg()
+        except Timeout:
+            self._survey_active = False
+            raise
+        except BadState as e:
+            if self._survey_active:
+                self._survey_active = False
+                raise Timeout("Timed out", int(lib.NNG_ETIMEDOUT)) from e
+            raise
 
     async def asurvey(
         self,
@@ -1793,14 +1862,14 @@ class Pipe(_base.Pipe):
         """The local address for this pipe."""
         sa = _c_ffi.new("nng_sockaddr *")
         check_err(_c_lib.nng_pipe_self_addr(self.pipe, sa), lib=lib, ffi=ffi)
-        return _sockaddr._nng_sockaddr(sa, lib=lib)
+        return _sockaddr._nng_sockaddr(sa, lib=lib, ffi=ffi)
 
     @property
     def remote_address(self) -> SockAddr:
         """The remote address for this pipe."""
         sa = _c_ffi.new("nng_sockaddr *")
         check_err(_c_lib.nng_pipe_peer_addr(self.pipe, sa), lib=lib, ffi=ffi)
-        return _sockaddr._nng_sockaddr(sa, lib=lib)
+        return _sockaddr._nng_sockaddr(sa, lib=lib, ffi=ffi)
 
     @property
     def scheme(self) -> str:

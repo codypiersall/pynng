@@ -13,4 +13,3 @@ Request
 
 .. autoclass:: pynng.Request
    :members:
-   :undoc-members:
