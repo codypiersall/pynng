@@ -22,10 +22,8 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT in sys.path:
     sys.path.remove(_PROJECT_ROOT)
 sys.path.insert(0, _PROJECT_ROOT)
-if "pynng" in sys.modules:
-    _strand_pkg = os.path.join(_PROJECT_ROOT, "pynng")
-    if _strand_pkg not in sys.modules["pynng"].__path__:
-        sys.modules["pynng"].__path__.insert(0, _strand_pkg)
+
+import build_pynng
 
 try:
     from pynng._nng import ffi, lib
@@ -206,9 +204,14 @@ _skip_no_headers = pytest.mark.skipif(
     _NNG_INCLUDE_DIR is None,
     reason="nng headers not available (set NNG_INCLUDE_DIR or build first)",
 )
+_skip_no_headerkit = pytest.mark.skipif(
+    not build_pynng._HAS_HEADERKIT,
+    reason="headerkit not installed",
+)
 
 
 @_skip_no_headers
+@_skip_no_headerkit
 class TestHeaderkitWriters:
     """Test CffiWriter and PyiWriter integration in build_pynng against real nng headers."""
 
@@ -408,6 +411,7 @@ class TestHeaderkitWriters:
 
 
 @_skip_no_headers
+@_skip_no_headerkit
 class TestGenerateCdef:
     """Test generate_cdef() from build_pynng against real nng headers."""
 
@@ -487,6 +491,7 @@ class TestGenerateCdef:
 
 
 @_skip_no_headers
+@_skip_no_headerkit
 class TestUmbrellaHeader:
     """Test that the umbrella header logic includes expected components."""
 
@@ -672,14 +677,9 @@ class TestV2Differences:
 class TestPyPyHeaderkitCompat:
     """Verify headerkit integration, PEP 508 requirements, CMake rules, and public __all__ exports."""
 
-    @pytest.fixture(autouse=True)
-    def _require_headerkit(self):
-        pytest.importorskip("headerkit")
-
+    @_skip_no_headerkit
     def test_headerkit_clang_imports_cleanly_without_custom_meta_path_finder(self):
         import headerkit._clang
-
-        import build_pynng
 
         assert headerkit._clang is not None
         assert not hasattr(build_pynng, "_PyPyHeaderkitClangFinder")
@@ -1070,7 +1070,7 @@ class TestPyPyHeaderkitCompat:
         except ImportError:
             pass
 
-        if _NNG_INCLUDE_DIR is not None:
+        if _NNG_INCLUDE_DIR is not None and build_pynng._HAS_HEADERKIT:
             pyi_no_tls = build_pynng.generate_pyi(
                 include_dir=_NNG_INCLUDE_DIR,
                 tls_enabled=False,
@@ -1479,57 +1479,94 @@ class TestPyPyHeaderkitCompat:
         self, monkeypatch, tmp_path
     ):
         """Verify pynng._nng_cdef matches generate_cdef() 1:1 and _build_ffi succeeds without headerkit."""
-        import build_pynng
+        import re
+
         from pynng._nng_cdef import get_cached_cdef
 
         assert _NNG_INCLUDE_DIR is not None
-        live_v1_tls, live_h1_tls = build_pynng.generate_cdef(
-            headers=build_pynng.NNG_V1_HEADERS,
-            include_dir=_NNG_INCLUDE_DIR,
-            exclude_patterns=build_pynng.EXCLUDE_PATTERNS,
-        )
-        live_v1_notls, live_h1_notls = build_pynng.generate_cdef(
-            headers=build_pynng.NNG_V1_HEADERS,
-            include_dir=_NNG_INCLUDE_DIR,
-            exclude_patterns=list(build_pynng.EXCLUDE_PATTERNS)
-            + build_pynng.EXCLUDE_PATTERNS_NO_TLS,
-        )
-        assert get_cached_cdef("pynng._nng", tls_enabled=True) == (
-            live_v1_tls,
-            live_h1_tls,
-        )
-        assert get_cached_cdef("pynng._nng", tls_enabled=False) == (
-            live_v1_notls,
-            live_h1_notls,
-        )
 
-        v2_candidates: list[str] = []
-        for root in _candidate_build_roots():
-            v2_candidates.extend(
-                glob.glob(os.path.join(root, "build", "*", "nng_v2_install", "include"))
+        def _normalize_nng_version_defines(cdef_text: str) -> str:
+            return re.sub(
+                r"^#define NNG_(MAJOR|MINOR|PATCH)_VERSION\s+\d+$",
+                r"#define NNG_\1_VERSION <VER>",
+                cdef_text,
+                flags=re.MULTILINE,
             )
-        if v2_candidates:
-            v2_candidates.sort(key=lambda p: (_PY_TAG not in p, p))
-            v2_inc = v2_candidates[0]
-            live_v2_tls, live_h2_tls = build_pynng.generate_cdef(
-                headers=build_pynng.NNG_V2_HEADERS,
-                include_dir=v2_inc,
-                exclude_patterns=build_pynng.EXCLUDE_PATTERNS_V2,
+
+        if build_pynng._HAS_HEADERKIT:
+            live_v1_tls, live_h1_tls = build_pynng.generate_cdef(
+                headers=build_pynng.NNG_V1_HEADERS,
+                include_dir=_NNG_INCLUDE_DIR,
+                exclude_patterns=build_pynng.EXCLUDE_PATTERNS,
             )
-            live_v2_notls, live_h2_notls = build_pynng.generate_cdef(
-                headers=build_pynng.NNG_V2_HEADERS,
-                include_dir=v2_inc,
-                exclude_patterns=list(build_pynng.EXCLUDE_PATTERNS_V2)
+            live_v1_notls, live_h1_notls = build_pynng.generate_cdef(
+                headers=build_pynng.NNG_V1_HEADERS,
+                include_dir=_NNG_INCLUDE_DIR,
+                exclude_patterns=list(build_pynng.EXCLUDE_PATTERNS)
                 + build_pynng.EXCLUDE_PATTERNS_NO_TLS,
             )
-            assert get_cached_cdef("pynng._nng_v2", tls_enabled=True) == (
-                live_v2_tls,
-                live_h2_tls,
+            cached_v1_tls, cached_h1_tls = get_cached_cdef(
+                "pynng._nng", tls_enabled=True
             )
-            assert get_cached_cdef("pynng._nng_v2", tls_enabled=False) == (
-                live_v2_notls,
-                live_h2_notls,
+            cached_v1_notls, cached_h1_notls = get_cached_cdef(
+                "pynng._nng", tls_enabled=False
             )
+            assert (
+                _normalize_nng_version_defines(cached_v1_tls),
+                cached_h1_tls,
+            ) == (
+                _normalize_nng_version_defines(live_v1_tls),
+                live_h1_tls,
+            )
+            assert (
+                _normalize_nng_version_defines(cached_v1_notls),
+                cached_h1_notls,
+            ) == (
+                _normalize_nng_version_defines(live_v1_notls),
+                live_h1_notls,
+            )
+
+            v2_candidates: list[str] = []
+            for root in _candidate_build_roots():
+                v2_candidates.extend(
+                    glob.glob(
+                        os.path.join(root, "build", "*", "nng_v2_install", "include")
+                    )
+                )
+            if v2_candidates:
+                v2_candidates.sort(key=lambda p: (_PY_TAG not in p, p))
+                v2_inc = v2_candidates[0]
+                live_v2_tls, live_h2_tls = build_pynng.generate_cdef(
+                    headers=build_pynng.NNG_V2_HEADERS,
+                    include_dir=v2_inc,
+                    exclude_patterns=build_pynng.EXCLUDE_PATTERNS_V2,
+                )
+                live_v2_notls, live_h2_notls = build_pynng.generate_cdef(
+                    headers=build_pynng.NNG_V2_HEADERS,
+                    include_dir=v2_inc,
+                    exclude_patterns=list(build_pynng.EXCLUDE_PATTERNS_V2)
+                    + build_pynng.EXCLUDE_PATTERNS_NO_TLS,
+                )
+                cached_v2_tls, cached_h2_tls = get_cached_cdef(
+                    "pynng._nng_v2", tls_enabled=True
+                )
+                cached_v2_notls, cached_h2_notls = get_cached_cdef(
+                    "pynng._nng_v2", tls_enabled=False
+                )
+                assert (
+                    _normalize_nng_version_defines(cached_v2_tls),
+                    cached_h2_tls,
+                ) == (
+                    _normalize_nng_version_defines(live_v2_tls),
+                    live_h2_tls,
+                )
+                assert (
+                    _normalize_nng_version_defines(cached_v2_notls),
+                    cached_h2_notls,
+                ) == (
+                    _normalize_nng_version_defines(live_v2_notls),
+                    live_h2_notls,
+                )
 
         # Simulate building without headerkit / libclang installed AND before
         # pynng._nng / pynng._nng_v2 are compiled (clean PEP 517 build)
@@ -1598,7 +1635,8 @@ class TestPyPyHeaderkitCompat:
 
     @_skip_no_compiled_nng
     def test_pipe_callback_and_event_typing_narrowed(self, tmp_path):
-        """Verify PipeEvent runtime tuple unpacking/indexing and narrowedv1/v2 PipeEvent/PipeEventStream typing."""
+        """Verify PipeEvent runtime tuple/NamedTuple behavior and narrowed v1/v2 PipeEvent/PipeEventStream typing."""
+        import json
         import subprocess
         import textwrap
 
@@ -1609,6 +1647,9 @@ class TestPyPyHeaderkitCompat:
         assert '"pre_add"' in _base.Socket.pipe_events.__doc__
         assert '"post_add"' in _base.Socket.pipe_events.__doc__
         assert '"remove"' in _base.Socket.pipe_events.__doc__
+        assert pynng.PipeEvent is not _base.PipeEvent
+        assert pynng.PipeEvent._fields == ("pipe", "event_type")
+        assert pynng.PipeEvent._field_defaults == {}
 
         with (
             pynng.Pair0(listen="inproc://pipe-ev-tuple-v1") as s1,
@@ -1629,6 +1670,16 @@ class TestPyPyHeaderkitCompat:
             assert ev1[1] == "post_add"
             assert ev1.pipe is v1_pipe
             assert ev1.event_type == "post_add"
+            assert ev1._asdict() == {"pipe": v1_pipe, "event_type": "post_add"}
+            assert ev1._replace(event_type="remove") == pynng.PipeEvent(
+                v1_pipe, "remove"
+            )
+            match ev1:
+                case pynng.PipeEvent(mp1, met1):
+                    assert mp1 is v1_pipe
+                    assert met1 == "post_add"
+                case _:
+                    pytest.fail("PipeEvent positional pattern match failed")
 
         try:
             import pynng.v2 as v2
@@ -1636,6 +1687,10 @@ class TestPyPyHeaderkitCompat:
             v2 = None  # type: ignore[assignment]
 
         if v2 is not None:
+            assert v2.PipeEvent is not _base.PipeEvent
+            assert pynng.PipeEvent is not v2.PipeEvent
+            assert v2.PipeEvent._fields == ("pipe", "event_type")
+            assert v2.PipeEvent._field_defaults == {}
             with (
                 v2.Pair0(listen="inproc://pipe-ev-tuple-v2") as s2,
                 v2.Pair0(dial="inproc://pipe-ev-tuple-v2") as c2,
@@ -1647,6 +1702,7 @@ class TestPyPyHeaderkitCompat:
                 assert isinstance(ev2, tuple)
                 assert isinstance(ev2, v2.PipeEvent)
                 assert isinstance(ev2, _base.PipeEvent)
+                assert not isinstance(ev2, pynng.PipeEvent)
                 assert len(ev2) == 2
                 p2_unpacked, et2_unpacked = ev2
                 assert p2_unpacked is v2_pipe
@@ -1655,6 +1711,16 @@ class TestPyPyHeaderkitCompat:
                 assert ev2[1] == "remove"
                 assert ev2.pipe is v2_pipe
                 assert ev2.event_type == "remove"
+                assert ev2._asdict() == {"pipe": v2_pipe, "event_type": "remove"}
+                assert ev2._replace(event_type="post_add") == v2.PipeEvent(
+                    v2_pipe, "post_add"
+                )
+                match ev2:
+                    case v2.PipeEvent(mp2, met2):
+                        assert mp2 is v2_pipe
+                        assert met2 == "remove"
+                    case _:
+                        pytest.fail("v2.PipeEvent positional pattern match failed")
 
         pytest.importorskip("mypy")
         snippet = tmp_path / "pipe_event_narrowing.py"
@@ -1668,29 +1734,55 @@ class TestPyPyHeaderkitCompat:
                 async def check_pipe_events(
                     s1: pynng.Pair0,
                     s2: v2.Pair0,
-                    ev1: pynng.PipeEvent,
-                    ev2: v2.PipeEvent,
+                    p1_in: pynng.Pipe,
+                    p2_in: v2.Pipe,
                     st1: pynng.PipeEventStream,
                     st2: v2.PipeEventStream,
                 ) -> None:
                     s1.add_post_pipe_connect_cb(lambda p: p.url)
                     s2.add_post_pipe_connect_cb(lambda p: p.scheme)
+                    ev1: pynng.PipeEvent = pynng.PipeEvent(p1_in, "post_add")
+                    ev2: v2.PipeEvent = v2.PipeEvent(p2_in, "remove")
                     p1_direct, et1_direct = ev1
                     p1_direct.close()
-                    _ = (p1_direct.url, et1_direct, ev1[0].url, ev1[1])
+                    _ = (
+                        p1_direct.url,
+                        et1_direct,
+                        ev1[0].url,
+                        ev1[1],
+                        ev1._asdict(),
+                        ev1._replace(event_type="remove"),
+                        ev1._fields,
+                        ev1._field_defaults,
+                    )
+                    match ev1:
+                        case pynng.PipeEvent(mp1, met1):
+                            _ = (mp1.url, met1)
                     p2_direct, et2_direct = ev2
                     p2_direct.close()
-                    _ = (p2_direct.scheme, et2_direct, ev2[0].scheme, ev2[1])
+                    _ = (
+                        p2_direct.scheme,
+                        et2_direct,
+                        ev2[0].scheme,
+                        ev2[1],
+                        ev2._asdict(),
+                        ev2._replace(event_type="post_add"),
+                        ev2._fields,
+                        ev2._field_defaults,
+                    )
+                    match ev2:
+                        case v2.PipeEvent(mp2, met2):
+                            _ = (mp2.scheme, met2)
                     async for e1 in s1.pipe_events():
                         p1, et1 = e1
                         p1.close()
                         e1[0].close()
-                        _ = (p1.url, et1)
+                        _ = (p1.url, et1, e1._asdict(), e1._replace(event_type="remove"))
                     async for e2 in s2.pipe_events():
                         p2, et2 = e2
                         p2.close()
                         e2[0].close()
-                        _ = (p2.scheme, et2)
+                        _ = (p2.scheme, et2, e2._asdict(), e2._replace(event_type="post_add"))
                     _ = (st1, st2)
                 """
             ),
@@ -1708,6 +1800,33 @@ class TestPyPyHeaderkitCompat:
             check=False,
         )
         assert res.returncode == 0, f"mypy failed:\n{res.stdout}\n{res.stderr}"
+
+        pytest.importorskip("pyright")
+        pyright_config = tmp_path / "pyrightconfig_narrowing.json"
+        pyright_config.write_text(
+            json.dumps({"extraPaths": [_PROJECT_ROOT]}),
+            encoding="utf-8",
+        )
+        pyright_res = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pyright",
+                "-p",
+                str(pyright_config),
+                "--pythonpath",
+                sys.executable,
+                str(snippet),
+            ],
+            cwd=_PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert pyright_res.returncode == 0, (
+            f"pyright failed:\n{pyright_res.stdout}\n{pyright_res.stderr}"
+        )
 
     def test_cmake_and_pyproject_offline_distro_packaging_contracts(self):
         """Verify CMakeLists.txt auto-detects local dependency trees and omits cffi_buildtool."""

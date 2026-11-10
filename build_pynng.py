@@ -52,9 +52,9 @@ def _require_headerkit() -> None:
     """Ensure headerkit is importable before parsing headers or generating bindings."""
     if not _HAS_HEADERKIT or get_backend is None:
         raise RuntimeError(
-            "headerkit (requires Python >= 3.11) is required to parse nng "
-            "headers and generate CFFI bindings from source. On Python 3.10, "
-            "install a pre-built pynng wheel instead of building from source."
+            "headerkit (requires Python >= 3.11) is required only when calling "
+            "generate_cdef() or generate_pyi() directly to regenerate CFFI "
+            "bindings or .pyi stubs from C headers."
         )
 
 
@@ -530,7 +530,7 @@ def _build_ffi(
             )
             used_live_headerkit = True
         except Exception as exc:
-            logger.info(
+            logger.warning(
                 "Falling back to pre-generated pynng._nng_cdef (%s: %s)",
                 type(exc).__name__,
                 exc,

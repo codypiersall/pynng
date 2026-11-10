@@ -13,7 +13,7 @@ This is an internal module. Users should import from ``pynng`` (v1) or
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 import contextlib
 import logging
 import math
@@ -209,6 +209,8 @@ _GetT = TypeVar("_GetT")
 _SetT = TypeVar("_SetT")
 _DescSelfT = TypeVar("_DescSelfT")
 _PipeT = TypeVar("_PipeT", bound="Pipe", covariant=True)
+_PipeEventT = TypeVar("_PipeEventT", bound="PipeEvent[Pipe]", covariant=True)
+_StreamSelfT = TypeVar("_StreamSelfT", bound="PipeEventStream[Pipe, PipeEvent[Pipe]]")
 _SocketSelfT = TypeVar("_SocketSelfT", bound="Socket")
 _DialerSelfT = TypeVar("_DialerSelfT", bound="Dialer")
 _ListenerSelfT = TypeVar("_ListenerSelfT", bound="Listener")
@@ -277,7 +279,7 @@ def _device_section() -> Iterator[None]:
 
 if TYPE_CHECKING:
 
-    class PipeEvent(tuple[_PipeT, str], Generic[_PipeT]):
+    class PipeEvent(NamedTuple, Generic[_PipeT]):
         """A pipe event with the pipe and the event type.
 
         Attributes:
@@ -287,9 +289,6 @@ if TYPE_CHECKING:
 
         pipe: _PipeT
         event_type: str
-
-        def __new__(cls, pipe: _PipeT, event_type: str) -> PipeEvent[_PipeT]:
-            return super().__new__(cls, (pipe, event_type))
 
 else:
 
@@ -570,7 +569,7 @@ def _handle_pipe_event(
             cond.notify_all()
 
 
-class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
+class PipeEventStream(Generic[_PipeT, _PipeEventT]):
     """Async iterator that yields :class:`PipeEvent` objects.
 
     Returned by :meth:`Socket.pipe_events`.  Use it with ``async for``::
@@ -591,7 +590,7 @@ class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
         self._backend = backend
 
         if self._backend == "asyncio":
-            self._queue: asyncio.Queue[PipeEvent[_PipeT] | object] = asyncio.Queue()
+            self._queue: asyncio.Queue[_PipeEventT | object] = asyncio.Queue()
             self._loop = asyncio.get_running_loop()
         elif self._backend == "trio":
             import trio
@@ -614,7 +613,7 @@ class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
             return
         if self._backend == "asyncio":
             self._loop.call_soon_threadsafe(
-                self._queue.put_nowait, cast("PipeEvent[_PipeT]", event)
+                self._queue.put_nowait, cast("_PipeEventT", event)
             )
         elif self._backend == "trio":
             self._trio_token.run_sync_soon(
@@ -682,10 +681,10 @@ class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
             except trio.ClosedResourceError:
                 pass
 
-    def __aiter__(self) -> PipeEventStream[_PipeT]:
+    def __aiter__(self: _StreamSelfT) -> _StreamSelfT:
         return self
 
-    async def __anext__(self) -> PipeEvent[_PipeT]:
+    async def __anext__(self) -> _PipeEventT:
         if self._closed:
             raise StopAsyncIteration
         if self._backend == "asyncio":
@@ -693,17 +692,17 @@ class PipeEventStream(AsyncIterator[PipeEvent[_PipeT]], Generic[_PipeT]):
             if item is _SENTINEL:
                 raise StopAsyncIteration
             assert isinstance(item, PipeEvent)
-            return cast("PipeEvent[_PipeT]", item)
+            return cast("_PipeEventT", item)
         elif self._backend == "trio":
             import trio
 
             try:
-                return cast("PipeEvent[_PipeT]", await self._receive_channel.receive())
+                return cast("_PipeEventT", await self._receive_channel.receive())
             except trio.EndOfChannel:
                 raise StopAsyncIteration
         raise StopAsyncIteration
 
-    async def __aenter__(self) -> PipeEventStream[_PipeT]:
+    async def __aenter__(self: _StreamSelfT) -> _StreamSelfT:
         return self
 
     async def __aexit__(
@@ -1529,7 +1528,7 @@ class Socket:
     _dialer_class: type[Dialer] | None = None
     _listener_class: type[Listener] | None = None
     _pipe_event_class: type[PipeEvent[Pipe]] | None = None
-    _pipe_event_stream_class: type[PipeEventStream[Pipe]] | None = None
+    _pipe_event_stream_class: type[PipeEventStream[Pipe, PipeEvent[Pipe]]] | None = None
 
     def new_context(self) -> Context:
         """Return a new :class:`Context` for this socket."""
@@ -1599,7 +1598,7 @@ class Socket:
         with self._pipe_notify_lock:
             self._on_post_pipe_remove.remove(callback)
 
-    def pipe_events(self) -> PipeEventStream[Pipe]:
+    def pipe_events(self) -> PipeEventStream[Pipe, PipeEvent[Pipe]]:
         """Return an async iterator of :class:`PipeEvent` objects.
 
         Each event has a ``pipe`` attribute (the :class:`Pipe`) and an

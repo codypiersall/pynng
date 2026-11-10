@@ -1864,19 +1864,15 @@ class PipeEvent(_BasePipeEvent["Pipe"]):
 
     __slots__ = ()
 
+    if TYPE_CHECKING:
 
-class PipeEventStream(_BasePipeEventStream["Pipe"]):
+        def __new__(cls, pipe: Pipe, event_type: str) -> PipeEvent: ...
+
+
+class PipeEventStream(_BasePipeEventStream["Pipe", "PipeEvent"]):
     """Async iterator that yields v2 :class:`PipeEvent` objects."""
 
     __slots__ = ()
-
-    if TYPE_CHECKING:
-
-        def __aiter__(self) -> PipeEventStream: ...
-
-        async def __anext__(self) -> PipeEvent: ...
-
-        async def __aenter__(self) -> PipeEventStream: ...
 
 
 class Message(_base.Message):
