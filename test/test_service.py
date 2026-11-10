@@ -408,6 +408,7 @@ async def test_unreplied_request_cross_thread_gc_trio():
             warnings.simplefilter("ignore", ResourceWarning)
             req_holder.clear()
             gc.collect()
+            gc.collect()
 
     t = threading.Thread(target=drop_in_thread)
     t.start()
@@ -432,6 +433,7 @@ async def test_unreplied_request_cross_thread_gc_standalone_asyncio_event():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ResourceWarning)
             req_holder.clear()
+            gc.collect()
             gc.collect()
 
     t = threading.Thread(target=drop_in_thread)
