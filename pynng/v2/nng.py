@@ -410,14 +410,14 @@ class Socket(_base.Socket):
     def protocol(self) -> int:
         """The 16-bit protocol number for this socket (read-only)."""
         proto_id = _c_ffi.new("uint16_t *")
-        check_err(_c_lib.nng_socket_proto_id(self.socket, proto_id))
+        check_err(_c_lib.nng_socket_proto_id(self.socket, proto_id), lib=lib, ffi=ffi)
         return int(proto_id[0])
 
     @property
     def protocol_name(self) -> str:
         """The protocol name for this socket (read-only)."""
         name_p = _c_ffi.new("char **")
-        check_err(_c_lib.nng_socket_proto_name(self.socket, name_p))
+        check_err(_c_lib.nng_socket_proto_name(self.socket, name_p), lib=lib, ffi=ffi)
         raw = _c_ffi.string(name_p[0])
         return raw.decode() if isinstance(raw, bytes) else str(raw)
 
@@ -425,14 +425,14 @@ class Socket(_base.Socket):
     def peer(self) -> int:
         """The peer protocol id for this socket (read-only)."""
         peer_id = _c_ffi.new("uint16_t *")
-        check_err(_c_lib.nng_socket_peer_id(self.socket, peer_id))
+        check_err(_c_lib.nng_socket_peer_id(self.socket, peer_id), lib=lib, ffi=ffi)
         return int(peer_id[0])
 
     @property
     def peer_name(self) -> str:
         """The peer protocol name for this socket (read-only)."""
         name_p = _c_ffi.new("char **")
-        check_err(_c_lib.nng_socket_peer_name(self.socket, name_p))
+        check_err(_c_lib.nng_socket_peer_name(self.socket, name_p), lib=lib, ffi=ffi)
         raw = _c_ffi.string(name_p[0])
         return raw.decode() if isinstance(raw, bytes) else str(raw)
 
@@ -440,21 +440,25 @@ class Socket(_base.Socket):
     def raw(self) -> bool:
         """Whether this socket is in raw mode (read-only)."""
         raw_p = _c_ffi.new("bool *")
-        check_err(_c_lib.nng_socket_raw(self.socket, raw_p))
+        check_err(_c_lib.nng_socket_raw(self.socket, raw_p), lib=lib, ffi=ffi)
         return bool(raw_p[0])
 
     @property
     def recv_fd(self) -> int:
         """The receive poll file descriptor for this socket (read-only)."""
         fd_p = _c_ffi.new("int *")
-        check_err(_c_lib.nng_socket_get_recv_poll_fd(self.socket, fd_p))
+        check_err(
+            _c_lib.nng_socket_get_recv_poll_fd(self.socket, fd_p), lib=lib, ffi=ffi
+        )
         return int(fd_p[0])
 
     @property
     def send_fd(self) -> int:
         """The send poll file descriptor for this socket (read-only)."""
         fd_p = _c_ffi.new("int *")
-        check_err(_c_lib.nng_socket_get_send_poll_fd(self.socket, fd_p))
+        check_err(
+            _c_lib.nng_socket_get_send_poll_fd(self.socket, fd_p), lib=lib, ffi=ffi
+        )
         return int(fd_p[0])
 
     def close(self) -> None:
@@ -467,66 +471,6 @@ class Socket(_base.Socket):
         closing on another thread after the running pipe callbacks return.
         """
         self._do_close(lib.nng_socket_close)
-
-    def recv(self, block: bool = True) -> bytes:
-        """Receive data on the socket.
-
-        In v2, recv uses ``nng_recvmsg()`` since ``NNG_FLAG_ALLOC`` does not
-        exist.
-
-        Args:
-            block: If True (default), blocks until data arrives or timeout.
-                If False, returns immediately or raises ``pynng.TryAgain``.
-        """
-        msg = self.recv_msg(block=block)
-        return msg.bytes
-
-    def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
-        """Send data on the socket.
-
-        Args:
-            data: bytes, bytearray, memoryview, or buffer-protocol object to send.
-            block: If True (default), blocks until sent or timeout.
-                If False, raises ``pynng.TryAgain`` if cannot send immediately
-                (such as when the send buffer is full).
-
-        .. note::
-
-            In asynchronous code (asyncio/Trio), avoid calling synchronous
-            ``send(data, block=True)`` when the send queue might fill, as it blocks
-            the event loop thread. Use :meth:`~Socket.asend` or non-blocking
-            ``send(data, block=False)`` instead.
-        """
-        _ensure_can_send(data)
-        flags = 0
-        if not block:
-            flags |= lib.NNG_FLAG_NONBLOCK
-        c_buf: bytes | cffi.FFI.CData
-        if isinstance(data, bytes):
-            c_buf = data
-        else:
-            c_buf = ffi.from_buffer(data)
-        err = _c_lib.nng_send(self.socket, c_buf, len(data), flags)
-        check_err(err)
-
-    async def arecv(self) -> bytes:
-        """Asynchronous version of :meth:`recv`."""
-        msg = await self.arecv_msg()
-        return msg.bytes
-
-    async def asend(self, data: _base.ReadableBuffer) -> None:
-        """Asynchronous version of :meth:`send`.
-
-        Yields cooperatively to the event loop if the socket's send buffer
-        (:attr:`~Socket.send_buffer_size`) is full, resuming as soon as buffer
-        space becomes available without blocking other coroutines.
-        """
-        _ensure_can_send(data)
-        helper = self._acquire_send_helper()
-        try:
-            return await helper.asend(data)
-        finally:
-            self._release_send_helper(helper)
 
     def stats(self) -> Stat | None:
         """Get snapshot of statistics for this socket."""
@@ -947,7 +891,11 @@ class Sub0(Socket):
         """
         if isinstance(topic, str):
             topic = topic.encode()
-        check_err(_c_lib.nng_sub0_socket_subscribe(self.socket, topic, len(topic)))
+        check_err(
+            _c_lib.nng_sub0_socket_subscribe(self.socket, topic, len(topic)),
+            lib=lib,
+            ffi=ffi,
+        )
         with self._sub_lock:
             self._subscriptions.add(topic)
 
@@ -962,7 +910,11 @@ class Sub0(Socket):
         """
         if isinstance(topic, str):
             topic = topic.encode()
-        check_err(_c_lib.nng_sub0_socket_unsubscribe(self.socket, topic, len(topic)))
+        check_err(
+            _c_lib.nng_sub0_socket_unsubscribe(self.socket, topic, len(topic)),
+            lib=lib,
+            ffi=ffi,
+        )
         with self._sub_lock:
             self._subscriptions.discard(topic)
 
@@ -1123,8 +1075,77 @@ class Surveyor0(Socket):
             async_backend=async_backend,
             tls_config=tls_config,
         )
+        self._survey_active: bool = False
         if survey_time is not None:
             self.survey_time = survey_time
+
+    def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                super().send(data, block=block)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            super().send(data, block=block)
+
+    def send_msg(self, msg: _base.Message, block: bool = True) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                super().send_msg(msg, block=block)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            super().send_msg(msg, block=block)
+
+    async def asend(self, data: _base.ReadableBuffer) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                await super().asend(data)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            await super().asend(data)
+
+    async def asend_msg(self, msg: _base.Message) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                await super().asend_msg(msg)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            await super().asend_msg(msg)
+
+    def recv_msg(self, block: bool = True) -> Message:
+        try:
+            return super().recv_msg(block=block)
+        except Timeout:
+            self._survey_active = False
+            raise
+        except BadState as e:
+            if self._survey_active:
+                self._survey_active = False
+                raise Timeout("Timed out", int(lib.NNG_ETIMEDOUT)) from e
+            raise
+
+    async def arecv_msg(self) -> Message:
+        try:
+            return await super().arecv_msg()
+        except Timeout:
+            self._survey_active = False
+            raise
+        except BadState as e:
+            if self._survey_active:
+                self._survey_active = False
+                raise Timeout("Timed out", int(lib.NNG_ETIMEDOUT)) from e
+            raise
 
     async def asurvey(
         self,
@@ -1840,21 +1861,21 @@ class Pipe(_base.Pipe):
     def local_address(self) -> SockAddr:
         """The local address for this pipe."""
         sa = _c_ffi.new("nng_sockaddr *")
-        check_err(_c_lib.nng_pipe_self_addr(self.pipe, sa))
-        return _sockaddr._nng_sockaddr(sa, lib=lib)
+        check_err(_c_lib.nng_pipe_self_addr(self.pipe, sa), lib=lib, ffi=ffi)
+        return _sockaddr._nng_sockaddr(sa, lib=lib, ffi=ffi)
 
     @property
     def remote_address(self) -> SockAddr:
         """The remote address for this pipe."""
         sa = _c_ffi.new("nng_sockaddr *")
-        check_err(_c_lib.nng_pipe_peer_addr(self.pipe, sa))
-        return _sockaddr._nng_sockaddr(sa, lib=lib)
+        check_err(_c_lib.nng_pipe_peer_addr(self.pipe, sa), lib=lib, ffi=ffi)
+        return _sockaddr._nng_sockaddr(sa, lib=lib, ffi=ffi)
 
     @property
     def scheme(self) -> str:
         """The transport scheme for this pipe (e.g. 'tcp', 'ipc')."""
         scheme_p = _c_ffi.new("char **")
-        check_err(_c_lib.nng_pipe_get_scheme(self.pipe, scheme_p))
+        check_err(_c_lib.nng_pipe_get_scheme(self.pipe, scheme_p), lib=lib, ffi=ffi)
         raw = _c_ffi.string(scheme_p[0])
         return raw.decode() if isinstance(raw, bytes) else str(raw)
 

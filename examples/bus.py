@@ -6,8 +6,6 @@ In this pattern, messages are sent to every directly connected peer.
 import pynng
 import trio
 
-trio = trio
-
 
 async def node(name, listen_address, contacts):
     with pynng.Bus0(listen=listen_address, recv_timeout=300) as sock:

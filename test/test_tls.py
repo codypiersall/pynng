@@ -9,8 +9,8 @@ from pynng import Pair0, TLSConfig
 
 from conftest import FAST_TIMEOUT
 
-# All TLS tests are v1-only because v2 uses endpoint-level TLS configuration
-# (different API). v2 TLS tests should be added when the v2 TLS API is finalized.
+# All TLS tests in this module target the NNG v1 API; NNG v2 TLS and DTLS
+# endpoint tests live in test/test_v2_protocols.py.
 pytestmark = [pytest.mark.nng_v1]
 
 

@@ -418,15 +418,68 @@ def test_v2_raw_pair0_message_flow():
         assert cooked.recv() == b"to-cooked"
 
 
-def test_v2_abstract_sockaddr():
+def test_v2_abstract_sockaddr(monkeypatch):
     """Verify a v2 abstract address maps to AbstractAddr, not v1's ZTAddr."""
     from pynng._nng_v2 import ffi as ffi2, lib as lib2
+    import sys
+    import uuid
 
     sa = ffi2.new("nng_sockaddr *")
     sa[0].s_family = lib2.NNG_AF_ABSTRACT
     addr = pynng.sockaddr._nng_sockaddr(sa, lib=lib2)
     assert type(addr) is pynng.sockaddr.AbstractAddr
     assert addr.family_as_str == "abstract"
+
+    # Also test pynng.options._getopt_sockaddr directly with a v2 Socket on all OSes
+    with v2.Pair0() as s0:
+        def fake_get_inst_and_func(py_obj, option_type, get_or_set):
+            assert py_obj is s0
+            assert (option_type, get_or_set) == ("addr", "get")
+            def fake_getter(_obj, _opt, out_addr):
+                out_addr[0].s_family = lib2.NNG_AF_ABSTRACT
+                return 0
+            return s0.socket, fake_getter
+
+        with monkeypatch.context() as mp:
+            mp.setattr(pynng.options, "_get_inst_and_func", fake_get_inst_and_func)
+            opt_addr = pynng.options._getopt_sockaddr(s0, "local-address")
+            assert type(opt_addr) is pynng.sockaddr.AbstractAddr
+            assert opt_addr.family_as_str == "abstract"
+
+    if sys.platform.startswith("linux"):
+        url = f"abstract://pynng-v2-test-{uuid.uuid4().hex}"
+        with v2.Pair0(recv_timeout=FAST_TIMEOUT) as s0, v2.Pair0(
+            recv_timeout=FAST_TIMEOUT
+        ) as s1:
+            listener = s0.listen(url)
+            s1.dial(url, block=True)
+            s0.send(b"ping")
+            assert s1.recv() == b"ping"
+            assert type(listener.local_address) is pynng.sockaddr.AbstractAddr
+            assert listener.local_address.family_as_str == "abstract"
+            assert type(s0.pipes[0].local_address) is pynng.sockaddr.AbstractAddr
+            assert s0.pipes[0].local_address.family_as_str == "abstract"
+
+
+@pytest.mark.parametrize("mod", [pynng, v2], ids=["v1", "v2"])
+def test_surveyor0_recv_without_survey_raises_bad_state(mod):
+    """Surveyor0.recv() without an active survey raises BadState, while expired survey raises Timeout."""
+    addr = random_addr()
+    with mod.Surveyor0(listen=addr, survey_time=30, recv_timeout=200) as surv:
+        # No active survey -> BadState
+        with pytest.raises(pynng.BadState):
+            surv.recv()
+        with pytest.raises(pynng.BadState):
+            surv.recv_msg()
+
+        # Start a survey with no respondents -> expires with Timeout
+        surv.send(b"hello?")
+        with pytest.raises(pynng.Timeout):
+            surv.recv()
+
+        # After survey expiration, another recv without sending raises BadState
+        with pytest.raises(pynng.BadState):
+            surv.recv()
 
 
 @pytest.mark.parametrize("mod", [pynng, v2], ids=["v1", "v2"])
@@ -993,3 +1046,45 @@ def test_rep0_service_socket_must_be_a_cooked_rep0_of_its_version():
             v2.Rep0Service(socket=raw)
         assert v2.Rep0Service(socket=rep_v2)._socket is rep_v2
         assert pynng.Rep0Service(socket=rep_v1)._socket is rep_v1
+
+
+def test_v2_surveyor_post_expiry_recv_raises_timeout_then_badstate():
+    """Calling recv() on v2 Surveyor0 after survey_time has expired raises Timeout once, then BadState."""
+    addr = random_addr()
+    with (
+        v2.Surveyor0(listen=addr, survey_time=20, recv_timeout=200) as s,
+        v2.Respondent0(dial=addr) as _r,
+    ):
+        wait_pipe_len(s, 1)
+        with pytest.raises(pynng.BadState):
+            s.recv()
+        s.send(b"question")
+        time.sleep(0.08)
+        with pytest.raises(pynng.Timeout) as exc_info:
+            s.recv()
+        assert exc_info.value.errno == int(v2.lib.NNG_ETIMEDOUT)
+        with pytest.raises(pynng.BadState):
+            s.recv()
+
+
+@pytest.mark.asyncio
+async def test_v2_surveyor_post_expiry_arecv_raises_timeout_then_badstate():
+    """Calling arecv() on v2 Surveyor0 after survey_time has expired raises Timeout once, then BadState."""
+    import asyncio
+
+    addr = random_addr()
+    with (
+        v2.Surveyor0(listen=addr, survey_time=20, recv_timeout=200) as s,
+        v2.Respondent0(dial=addr) as _r,
+    ):
+        wait_pipe_len(s, 1)
+        with pytest.raises(pynng.BadState):
+            await s.arecv()
+        await s.asend(b"question")
+        await asyncio.sleep(0.08)
+        with pytest.raises(pynng.Timeout) as exc_info:
+            await s.arecv()
+        assert exc_info.value.errno == int(v2.lib.NNG_ETIMEDOUT)
+        with pytest.raises(pynng.BadState):
+            await s.arecv()
+

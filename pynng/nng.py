@@ -180,9 +180,6 @@ class Socket(_base.Socket):
           is read-only.  Corresponds to library option ``NNG_OPT_RAW``.  For
           more information see `nng's documentation.
           <https://nanomsg.github.io/nng/man/v1.0.1/nng.7.html#raw_mode>`_
-          Note that currently, pynng does not support ``raw`` mode sockets, but
-          we intend to `in the future
-          <https://github.com/codypiersall/pynng/issues/35>`_:
         * **protocol** (int): Read-only option which returns the 16-bit number
           of the socket's protocol.
         * **protocol_name** (str): Read-only option which returns the name of the
@@ -301,74 +298,6 @@ class Socket(_base.Socket):
         closing on another thread after the running pipe callbacks return.
         """
         self._do_close(lib.nng_close)
-
-    def recv(self, block: bool = True) -> bytes:
-        """Receive data on the socket.  If the request times out the exception
-        :class:`pynng.Timeout` is raised.  If the socket cannot perform that
-        operation (e.g., a :class:`Pub0`, which can only
-        :meth:`~Socket.send`), the exception :class:`pynng.NotSupported`
-        is raised.
-
-        Args:
-
-          block: If block is True (the default), the function will not return
-            until the operation is completed or times out.  If block is False,
-            the function will return data immediately.  If no data is ready on
-            the socket, the function will raise ``pynng.TryAgain``.
-
-        """
-        msg = self.recv_msg(block=block)
-        return msg.bytes
-
-    def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
-        """Sends ``data`` on socket.
-
-        Args:
-
-          data: bytes, bytearray, memoryview, or any buffer-protocol object.
-
-          block: If block is True (the default), the function will
-            not return until the operation is completed or times out.
-            If block is False, the function will raise ``pynng.TryAgain``
-            immediately if no data was sent (such as when the send buffer is full).
-
-        .. note::
-
-            In asynchronous code (asyncio/Trio), avoid calling synchronous
-            ``send(data, block=True)`` when the send queue might fill, as it blocks
-            the event loop thread. Use :meth:`~Socket.asend` or non-blocking
-            ``send(data, block=False)`` instead.
-        """
-        _ensure_can_send(data)
-        flags = 0
-        if not block:
-            flags |= lib.NNG_FLAG_NONBLOCK
-        c_buf: bytes | cffi.FFI.CData
-        if isinstance(data, bytes):
-            c_buf = data
-        else:
-            c_buf = ffi.from_buffer(data)
-        err = lib.nng_send(self.socket, c_buf, len(data), flags)
-        check_err(err)
-
-    async def arecv(self) -> bytes:
-        """The asynchronous version of :meth:`~Socket.recv`"""
-        msg = await self.arecv_msg()
-        return msg.bytes
-
-    async def asend(self, data: _base.ReadableBuffer) -> None:
-        """Asynchronous version of :meth:`~Socket.send`.
-
-        Yields cooperatively to the event loop if the socket's send buffer
-        (:attr:`~Socket.send_buffer_size`) is full, resuming as soon as buffer
-        space becomes available without blocking other coroutines.
-        """
-        _ensure_can_send(data)
-        helper = self._acquire_send_helper()
-        try:
-            return await helper.asend(data)
-        finally:
-            self._release_send_helper(helper)
 
     def stats(self) -> Stat | None:
         """Get snapshot of statistics for this socket."""
@@ -510,13 +439,6 @@ class Pair0(Socket):
     .. literalinclude:: /snippets/pair0_sync.py
         :language: python3
 
-    This demonstrates the asynchronous API using `Trio`_.  Remember that
-    :mod:`asyncio` is also supported.
-
-    .. literalinclude:: /snippets/pair0_async.py
-        :language: python3
-
-
     """
 
     _opener: _base._OpenerFn | None = lib.nng_pair0_open
@@ -594,10 +516,6 @@ class Pair1(Socket):
     interfaces.
 
     .. literalinclude:: /snippets/pair1_sync.py
-
-    And here is an example using the async API, using `Trio`_.
-
-    .. literalinclude:: /snippets/pair1_async.py
 
     """
 
@@ -1197,8 +1115,77 @@ class Surveyor0(Socket):
             name=name,
             tls_config=tls_config,
         )
+        self._survey_active: bool = False
         if survey_time is not None:
             self.survey_time = survey_time
+
+    def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                super().send(data, block=block)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            super().send(data, block=block)
+
+    def send_msg(self, msg: _base.Message, block: bool = True) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                super().send_msg(msg, block=block)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            super().send_msg(msg, block=block)
+
+    async def asend(self, data: _base.ReadableBuffer) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                await super().asend(data)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            await super().asend(data)
+
+    async def asend_msg(self, msg: _base.Message) -> None:
+        if not self.raw:
+            self._survey_active = True
+            try:
+                await super().asend_msg(msg)
+            except BaseException:
+                self._survey_active = False
+                raise
+        else:
+            await super().asend_msg(msg)
+
+    def recv_msg(self, block: bool = True) -> Message:
+        try:
+            return super().recv_msg(block=block)
+        except Timeout:
+            self._survey_active = False
+            raise
+        except BadState as e:
+            if self._survey_active:
+                self._survey_active = False
+                raise Timeout("Timed out", int(lib.NNG_ETIMEDOUT)) from e
+            raise
+
+    async def arecv_msg(self) -> Message:
+        try:
+            return await super().arecv_msg()
+        except Timeout:
+            self._survey_active = False
+            raise
+        except BadState as e:
+            if self._survey_active:
+                self._survey_active = False
+                raise Timeout("Timed out", int(lib.NNG_ETIMEDOUT)) from e
+            raise
 
     async def asurvey(
         self,
@@ -1255,15 +1242,6 @@ class Surveyor0(Socket):
                     self.survey_time = old_survey_time
             except Closed:
                 pass
-
-    def recv_msg(self, block: bool = True) -> Message:
-        """Receive a message on the surveyor socket, translating survey expiration to Timeout."""
-        try:
-            msg = super().recv_msg(block=block)
-            assert isinstance(msg, Message)
-            return msg
-        except BadState:
-            raise Timeout("Timed out", 5)
 
 
 class Respondent0(Socket):

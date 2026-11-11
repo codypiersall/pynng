@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - 'pynng/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
       - 'build_pynng.py'
       - 'benchmarks/**'
       - '.github/workflows/benchmarks.yml'
   pull_request:
     paths:
       - 'pynng/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
       - 'build_pynng.py'
       - 'benchmarks/**'
       - '.github/workflows/benchmarks.yml'

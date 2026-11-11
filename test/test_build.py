@@ -903,7 +903,7 @@ class TestPyPyHeaderkitCompat:
 
     @_skip_no_headers
     def test_build_pynng_executes_without_dunder_file_in_globals(self, monkeypatch):
-        """Verify build_pynng.py runs cleanly via exec() when __file__ is absent (as in cffi_buildtool)."""
+        """Verify build_pynng.py runs cleanly via exec() when __file__ is absent from globals()."""
         assert _NNG_INCLUDE_DIR is not None
         monkeypatch.setenv("NNG_INCLUDE_DIR", _NNG_INCLUDE_DIR)
         monkeypatch.chdir(_PROJECT_ROOT)
@@ -1479,19 +1479,82 @@ class TestPyPyHeaderkitCompat:
         self, monkeypatch, tmp_path
     ):
         """Verify pynng._nng_cdef matches generate_cdef() 1:1 and _build_ffi succeeds without headerkit."""
+        import pathlib
         import re
 
-        from pynng._nng_cdef import get_cached_cdef
+        from pynng._nng_cdef import (
+            CDEF_V1_NO_TLS,
+            CDEF_V1_TLS,
+            CDEF_V2_NO_TLS,
+            CDEF_V2_TLS,
+            get_cached_cdef,
+        )
 
         assert _NNG_INCLUDE_DIR is not None
 
-        def _normalize_nng_version_defines(cdef_text: str) -> str:
-            return re.sub(
-                r"^#define NNG_(MAJOR|MINOR|PATCH)_VERSION\s+\d+$",
-                r"#define NNG_\1_VERSION <VER>",
-                cdef_text,
-                flags=re.MULTILINE,
+        def _extract_cdef_version(cdef_text: str) -> tuple[int, int, int]:
+            m_maj = re.search(
+                r"^#define NNG_MAJOR_VERSION\s+(\d+)$", cdef_text, re.MULTILINE
             )
+            m_min = re.search(
+                r"^#define NNG_MINOR_VERSION\s+(\d+)$", cdef_text, re.MULTILINE
+            )
+            m_pat = re.search(
+                r"^#define NNG_PATCH_VERSION\s+(\d+)$", cdef_text, re.MULTILINE
+            )
+            assert m_maj is not None and m_min is not None and m_pat is not None
+            return (int(m_maj.group(1)), int(m_min.group(1)), int(m_pat.group(1)))
+
+        def _extract_pyi_version(pyi_text: str) -> tuple[int, int, int]:
+            m_maj = re.search(
+                r"^\s*NNG_MAJOR_VERSION:\s*int\s*=\s*(\d+)$", pyi_text, re.MULTILINE
+            )
+            m_min = re.search(
+                r"^\s*NNG_MINOR_VERSION:\s*int\s*=\s*(\d+)$", pyi_text, re.MULTILINE
+            )
+            m_pat = re.search(
+                r"^\s*NNG_PATCH_VERSION:\s*int\s*=\s*(\d+)$", pyi_text, re.MULTILINE
+            )
+            assert m_maj is not None and m_min is not None and m_pat is not None
+            return (int(m_maj.group(1)), int(m_min.group(1)), int(m_pat.group(1)))
+
+        cmake_text = pathlib.Path(_PROJECT_ROOT, "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        m_v2_rev = re.search(
+            r'set\(NNG_V2_REV\s+"v(\d+)\.(\d+)\.(\d+)"', cmake_text
+        )
+        assert m_v2_rev is not None
+        expected_v2_ver = (
+            int(m_v2_rev.group(1)),
+            int(m_v2_rev.group(2)),
+            int(m_v2_rev.group(3)),
+        )
+
+        v1_pyi_text = pathlib.Path(_PROJECT_ROOT, "pynng", "_nng.pyi").read_text(
+            encoding="utf-8"
+        )
+        v2_pyi_text = pathlib.Path(_PROJECT_ROOT, "pynng", "_nng_v2.pyi").read_text(
+            encoding="utf-8"
+        )
+        # Note: upstream nanomsg/nng v1.12.5 defines NNG_PATCH_VERSION 4 in include/nng/nng.h;
+        # CFFI verifies cdef #define integers against the C preprocessor value in nng.h.
+        nng_h_path = pathlib.Path(_NNG_INCLUDE_DIR, "nng", "nng.h")
+        expected_v1_ver = _extract_cdef_version(
+            nng_h_path.read_text(encoding="utf-8")
+        )
+        assert _extract_cdef_version(CDEF_V1_TLS) == expected_v1_ver
+        assert _extract_cdef_version(CDEF_V1_NO_TLS) == expected_v1_ver
+        assert _extract_pyi_version(v1_pyi_text) == expected_v1_ver
+        if _has_compiled_nng and lib is not None:
+            assert (
+                lib.NNG_MAJOR_VERSION,
+                lib.NNG_MINOR_VERSION,
+                lib.NNG_PATCH_VERSION,
+            ) == expected_v1_ver
+        assert _extract_cdef_version(CDEF_V2_TLS) == expected_v2_ver
+        assert _extract_cdef_version(CDEF_V2_NO_TLS) == expected_v2_ver
+        assert _extract_pyi_version(v2_pyi_text) == expected_v2_ver
 
         if build_pynng._HAS_HEADERKIT:
             live_v1_tls, live_h1_tls = build_pynng.generate_cdef(
@@ -1511,18 +1574,9 @@ class TestPyPyHeaderkitCompat:
             cached_v1_notls, cached_h1_notls = get_cached_cdef(
                 "pynng._nng", tls_enabled=False
             )
-            assert (
-                _normalize_nng_version_defines(cached_v1_tls),
-                cached_h1_tls,
-            ) == (
-                _normalize_nng_version_defines(live_v1_tls),
-                live_h1_tls,
-            )
-            assert (
-                _normalize_nng_version_defines(cached_v1_notls),
-                cached_h1_notls,
-            ) == (
-                _normalize_nng_version_defines(live_v1_notls),
+            assert (cached_v1_tls, cached_h1_tls) == (live_v1_tls, live_h1_tls)
+            assert (cached_v1_notls, cached_h1_notls) == (
+                live_v1_notls,
                 live_h1_notls,
             )
 
@@ -1553,18 +1607,12 @@ class TestPyPyHeaderkitCompat:
                 cached_v2_notls, cached_h2_notls = get_cached_cdef(
                     "pynng._nng_v2", tls_enabled=False
                 )
-                assert (
-                    _normalize_nng_version_defines(cached_v2_tls),
-                    cached_h2_tls,
-                ) == (
-                    _normalize_nng_version_defines(live_v2_tls),
+                assert (cached_v2_tls, cached_h2_tls) == (
+                    live_v2_tls,
                     live_h2_tls,
                 )
-                assert (
-                    _normalize_nng_version_defines(cached_v2_notls),
-                    cached_h2_notls,
-                ) == (
-                    _normalize_nng_version_defines(live_v2_notls),
+                assert (cached_v2_notls, cached_h2_notls) == (
+                    live_v2_notls,
                     live_h2_notls,
                 )
 

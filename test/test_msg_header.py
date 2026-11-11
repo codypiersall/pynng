@@ -77,7 +77,7 @@ def test_message_header_and_copy_after_send():
             msg.copy()
 
         recvd = s2.recv_msg()
-        assert b"hello" in recvd.bytes
+        assert recvd.bytes == b"hdrhello"
 
 
 def test_message_init_buffer_protocol():

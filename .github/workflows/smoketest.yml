@@ -7,20 +7,20 @@ on:
     # workflow since they don't affect runtime behavior.
     paths:
       - 'pynng/**'
+      - 'src/**'
       - 'build_pynng.py'
       - 'test/**'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'patches/**'
       - '.github/workflows/smoketest.yml'
   pull_request:
     paths:
       - 'pynng/**'
+      - 'src/**'
       - 'build_pynng.py'
       - 'test/**'
       - 'pyproject.toml'
       - 'CMakeLists.txt'
-      - 'patches/**'
       - '.github/workflows/smoketest.yml'
 
 concurrency:
@@ -56,9 +56,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/sccache
-          key: ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-${{ github.sha }}
+          key: ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-${{ github.sha }}
           restore-keys: |
-            ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
+            ${{ matrix.os }}-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-
             ${{ matrix.os }}-sccache-
       - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build libclang-dev)
       - name: Build wheel
@@ -137,9 +137,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/sccache
-          key: ubuntu-latest-pypy-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-${{ github.sha }}
+          key: ubuntu-latest-pypy-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-${{ github.sha }}
           restore-keys: |
-            ubuntu-latest-pypy-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'patches/**') }}-
+            ubuntu-latest-pypy-sccache-${{ hashFiles('CMakeLists.txt', 'pyproject.toml', 'build_pynng.py', 'src/**') }}-
             ubuntu-latest-pypy-sccache-
       - run: sudo apt-get install -y --no-install-recommends ninja-build libclang-dev || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build libclang-dev)
       - name: Build and install with test deps

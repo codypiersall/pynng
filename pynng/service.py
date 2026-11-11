@@ -35,6 +35,12 @@ class _EventLike(Protocol):
     async def wait(self) -> object: ...
 
 
+class _TrioTokenLike(Protocol):
+    def run_sync_soon(
+        self, sync_fn: Callable[..., object], *args: object
+    ) -> None: ...
+
+
 class _SendChannelLike(Protocol):
     async def send(self, value: Request) -> None: ...
     async def aclose(self) -> None: ...
@@ -82,8 +88,10 @@ class Request:
     """
 
     __slots__ = (
+        "_loop",
         "_replied",
         "_replied_event",
+        "_trio_token",
         "context",
         "data",
     )
@@ -92,17 +100,39 @@ class Request:
     context: _base.Context
     _replied: bool
     _replied_event: _EventLike | None
+    _loop: asyncio.AbstractEventLoop | None
+    _trio_token: _TrioTokenLike | None
 
     def __init__(
         self,
         data: bytes,
         context: _base.Context,
         _replied_event: _EventLike | None = None,
+        _loop: asyncio.AbstractEventLoop | None = None,
+        _trio_token: _TrioTokenLike | None = None,
     ) -> None:
         self.data = data
         self.context = context
         self._replied = False
         self._replied_event = _replied_event
+        self._loop = _loop
+        self._trio_token = _trio_token
+        if _replied_event is not None:
+            if self._loop is None and isinstance(_replied_event, asyncio.Event):
+                try:
+                    self._loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+            if self._trio_token is None and type(
+                _replied_event
+            ).__module__.startswith("trio"):
+                try:
+                    import trio
+
+                    trio_tok: _TrioTokenLike = trio.lowlevel.current_trio_token()
+                    self._trio_token = trio_tok
+                except (RuntimeError, ImportError):
+                    pass
 
     async def reply(self, data: _base.ReadableBuffer) -> None:
         """Send a response back to the requester.
@@ -147,11 +177,31 @@ class Request:
             self._replied_event.set()
 
     def __del__(self) -> None:
-        if not self._replied:
+        if not getattr(self, "_replied", True):
             if self._replied_event is not None:
-                self._replied_event.set()
+                loop = self._loop or getattr(self._replied_event, "_loop", None)
+                if isinstance(loop, asyncio.AbstractEventLoop):
+                    if not loop.is_closed():
+                        try:
+                            loop.call_soon_threadsafe(self._replied_event.set)
+                        except RuntimeError:
+                            pass
+                elif self._trio_token is not None:
+                    try:
+                        self._trio_token.run_sync_soon(self._replied_event.set)
+                    except Exception:
+                        try:
+                            self._replied_event.set()
+                        except RuntimeError:
+                            pass
+                else:
+                    try:
+                        self._replied_event.set()
+                    except RuntimeError:
+                        pass
+            data_preview = getattr(self, "data", b"")
             warnings.warn(
-                f"Request with data {self.data[:64] if self.data else self.data!r} was never replied to",
+                f"Request with data {data_preview[:64] if data_preview else data_preview!r} was never replied to",
                 ResourceWarning,
                 stacklevel=1,
             )
@@ -307,11 +357,14 @@ class Rep0Service(AsyncIterator[Request]):
     async def _asyncio_worker(self, ctx: _base.Context) -> None:
         """Receive loop for a single context under asyncio."""
         assert self._queue is not None
+        loop = asyncio.get_running_loop()
         while self._running:
             try:
                 data = await ctx.arecv()
                 replied_event = asyncio.Event()
-                await self._queue.put(Request(data, ctx, _replied_event=replied_event))
+                await self._queue.put(
+                    Request(data, ctx, _replied_event=replied_event, _loop=loop)
+                )
                 # REP protocol requires reply before next receive on this context.
                 await replied_event.wait()
             except Closed:
@@ -346,12 +399,18 @@ class Rep0Service(AsyncIterator[Request]):
         import trio
 
         assert self._trio_send_channel is not None
+        trio_tok: _TrioTokenLike = trio.lowlevel.current_trio_token()
         while self._running:
             try:
                 data = await ctx.arecv()
                 replied_event: _EventLike = trio.Event()
                 await self._trio_send_channel.send(
-                    Request(data, ctx, _replied_event=replied_event)
+                    Request(
+                        data,
+                        ctx,
+                        _replied_event=replied_event,
+                        _trio_token=trio_tok,
+                    )
                 )
                 await replied_event.wait()
             except Closed:

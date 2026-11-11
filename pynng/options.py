@@ -120,7 +120,7 @@ def _getopt_int(obj: _OptionTarget, option: str | bytes) -> int:
     nng_obj, lib_func = _get_inst_and_func(obj, "int", "get")
     # attempt to accept floats that are exactly int
     ret = lib_func(nng_obj, opt_as_char, i)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
     return int(i[0])
 
 
@@ -137,7 +137,7 @@ def _setopt_int(py_obj: _OptionTarget, option: str | bytes, value: int) -> None:
     obj, lib_func = _get_inst_and_func(py_obj, "int", "set")
     value = int(value)
     err = lib_func(obj, opt_as_char, value)
-    pynng.check_err(err)
+    pynng.check_err(err, lib=_lib, ffi=_ffi)
 
 
 def _getopt_size(py_obj: _OptionTarget, option: str | bytes) -> int:
@@ -150,7 +150,7 @@ def _getopt_size(py_obj: _OptionTarget, option: str | bytes) -> int:
     # attempt to accept floats that are exactly int
     obj, lib_func = _get_inst_and_func(py_obj, "size", "get")
     ret = lib_func(obj, opt_as_char, i)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
     return int(i[0])
 
 
@@ -167,7 +167,7 @@ def _setopt_size(py_obj: _OptionTarget, option: str | bytes, value: int) -> None
     value = int(value)
     obj, lib_func = _get_inst_and_func(py_obj, "size", "set")
     err = lib_func(obj, opt_as_char, value)
-    pynng.check_err(err)
+    pynng.check_err(err, lib=_lib, ffi=_ffi)
 
 
 def _getopt_ms(py_obj: _OptionTarget, option: str | bytes) -> int:
@@ -179,7 +179,7 @@ def _getopt_ms(py_obj: _OptionTarget, option: str | bytes) -> int:
     opt_as_char = to_char(option, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "ms", "get")
     ret = lib_func(obj, opt_as_char, ms)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
     return int(ms[0])
 
 
@@ -197,7 +197,7 @@ def _setopt_ms(py_obj: _OptionTarget, option: str | bytes, value: int) -> None:
     value = int(value)
     obj, lib_func = _get_inst_and_func(py_obj, "ms", "set")
     err = lib_func(obj, opt_as_char, value)
-    pynng.check_err(err)
+    pynng.check_err(err, lib=_lib, ffi=_ffi)
 
 
 def _getopt_string(py_obj: _OptionTarget, option: str | bytes) -> str:
@@ -209,7 +209,7 @@ def _getopt_string(py_obj: _OptionTarget, option: str | bytes) -> str:
     opt_as_char = to_char(option, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "string", "get")
     ret = lib_func(obj, opt_as_char, opt)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
     opt_ptr = cast("cffi.FFI.CData", opt[0])
     raw = _ffi.string(opt_ptr)
     py_string = raw.decode() if isinstance(raw, bytes) else str(raw)
@@ -228,7 +228,7 @@ def _setopt_string(
     val_as_char = to_char(value, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "string", "set")
     ret = lib_func(obj, opt_as_char, val_as_char)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
 
 
 def _setopt_string_nonnull(
@@ -241,7 +241,7 @@ def _setopt_string_nonnull(
     val_as_char = to_char(value, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "", "set")
     ret = lib_func(obj, opt_as_char, val_as_char, len(value))
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
 
 
 def _getopt_bool(py_obj: _OptionTarget, option: str | bytes) -> bool:
@@ -253,7 +253,7 @@ def _getopt_bool(py_obj: _OptionTarget, option: str | bytes) -> bool:
     b = _ffi.new("bool []", 1)
     obj, lib_func = _get_inst_and_func(py_obj, "bool", "get")
     ret = lib_func(obj, opt_as_char, b)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
     return bool(b[0])
 
 
@@ -265,7 +265,7 @@ def _setopt_bool(py_obj: _OptionTarget, option: str | bytes, value: bool) -> Non
     opt_as_char = to_char(option, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "bool", "set")
     ret = lib_func(obj, opt_as_char, value)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
 
 
 def _getopt_sockaddr(
@@ -278,8 +278,8 @@ def _getopt_sockaddr(
     sock_addr = _ffi.new("nng_sockaddr []", 1)
     obj, lib_func = _get_inst_and_func(py_obj, "addr", "get")
     ret = lib_func(obj, opt_as_char, sock_addr)
-    pynng.check_err(ret)
-    return pynng.sockaddr._nng_sockaddr(sock_addr)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)
+    return pynng.sockaddr._nng_sockaddr(sock_addr, lib=_lib, ffi=_ffi)
 
 
 def _setopt_ptr(
@@ -297,4 +297,4 @@ def _setopt_ptr(
     option_char = to_char(option, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "ptr", "set")
     ret = lib_func(obj, option_char, value_ptr)
-    pynng.check_err(ret)
+    pynng.check_err(ret, lib=_lib, ffi=_ffi)

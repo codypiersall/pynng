@@ -26,22 +26,25 @@ StatValue: TypeAlias = "int | str | bool | None | Stat | list[Stat]"
 StatDict: TypeAlias = "dict[str, int | str | bool | None | list[StatDict]]"
 
 
-_STAT_TYPE_NAMES: dict[int, str] = {
-    lib.NNG_STAT_SCOPE: "scope",
-    lib.NNG_STAT_LEVEL: "level",
-    lib.NNG_STAT_COUNTER: "counter",
-    lib.NNG_STAT_STRING: "string",
-    lib.NNG_STAT_BOOLEAN: "boolean",
-    lib.NNG_STAT_ID: "id",
-}
+def _stat_type_name(st_type: int, _lib: _nng._Lib | _nng_v2._Lib = lib) -> str:
+    return {
+        int(_lib.NNG_STAT_SCOPE): "scope",
+        int(_lib.NNG_STAT_LEVEL): "level",
+        int(_lib.NNG_STAT_COUNTER): "counter",
+        int(_lib.NNG_STAT_STRING): "string",
+        int(_lib.NNG_STAT_BOOLEAN): "boolean",
+        int(_lib.NNG_STAT_ID): "id",
+    }.get(st_type, "unknown")
 
-_STAT_UNIT_NAMES: dict[int, str] = {
-    lib.NNG_UNIT_NONE: "none",
-    lib.NNG_UNIT_BYTES: "bytes",
-    lib.NNG_UNIT_MESSAGES: "messages",
-    lib.NNG_UNIT_MILLIS: "millis",
-    lib.NNG_UNIT_EVENTS: "events",
-}
+
+def _stat_unit_name(st_unit: int, _lib: _nng._Lib | _nng_v2._Lib = lib) -> str:
+    return {
+        int(_lib.NNG_UNIT_NONE): "none",
+        int(_lib.NNG_UNIT_BYTES): "bytes",
+        int(_lib.NNG_UNIT_MESSAGES): "messages",
+        int(_lib.NNG_UNIT_MILLIS): "millis",
+        int(_lib.NNG_UNIT_EVENTS): "events",
+    }.get(st_unit, "unknown")
 
 
 @dataclass(slots=True)
@@ -189,8 +192,8 @@ def _build_stat_node(
         unit=st_unit,
         value=val,
         timestamp=ts,
-        type_name=_STAT_TYPE_NAMES.get(st_type, "unknown"),
-        unit_name=_STAT_UNIT_NAMES.get(st_unit, "unknown"),
+        type_name=_stat_type_name(st_type, _lib),
+        unit_name=_stat_unit_name(st_unit, _lib),
         children=children,
     )
 

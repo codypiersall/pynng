@@ -36,6 +36,7 @@ pynng supports both synchronous and asynchronous usage with ``asyncio`` and
    api/sockaddr
    api/exceptions
    api/options
+   api/v2
 
 .. toctree::
    :maxdepth: 1

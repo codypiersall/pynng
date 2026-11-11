@@ -21,15 +21,19 @@ Build Requirements
 ------------------
 
 pynng uses `scikit-build-core <https://scikit-build-core.readthedocs.io>`_ and
-`headerkit <https://github.com/axiomantic/headerkit>`_ for building. The build
-process parses NNG C headers to auto-generate CFFI bindings, which requires
-``libclang`` at build time.
+`cffi <https://cffi.readthedocs.io/>`_ for building. Standard builds use the
+pre-generated CFFI declarations in ``pynng/_nng_cdef.py`` and only require a C
+compiler and CMake/Ninja. Regenerating the CFFI declarations or ``.pyi`` stubs
+from NNG's C headers (``PYNNG_USE_CACHED_CDEF=0``) additionally requires
+`headerkit <https://github.com/axiomantic/headerkit>`_ and ``libclang``.
 
 On Ubuntu/Debian:
 
 .. code-block:: bash
 
-   sudo apt install ninja-build libclang-dev
+   sudo apt install ninja-build
+   # Optional: required only when regenerating cdef/.pyi stubs with headerkit
+   sudo apt install libclang-dev
 
 On macOS, Xcode's bundled ``libclang`` is usually sufficient. If you encounter
 issues with ``llvm-ranlib``, see the troubleshooting section below.
@@ -121,14 +125,17 @@ Available options:
    * - ``CMAKE_BUILD_TYPE``
      - ``Release``
      - CMake build configuration (``Release`` or ``Debug``; can also be set via ``-Ccmake.build-type=Debug``)
-   * - ``FETCHCONTENT_SOURCE_DIR_NNG``
-     - *(unset)*
+   * - ``NNG_SOURCE_DIR`` / ``FETCHCONTENT_SOURCE_DIR_NNG``
+     - *(auto-detected if ``./nng`` exists)*
      - Point NNG v1 ``FetchContent`` to an existing local checkout instead of cloning from ``NNG_REPO``
-   * - ``FETCHCONTENT_SOURCE_DIR_MBEDTLS``
-     - *(unset)*
+   * - ``NNG_V2_SOURCE_DIR`` / ``FETCHCONTENT_SOURCE_DIR_NNG_V2``
+     - *(auto-detected if ``./nng_v2`` exists)*
+     - Point NNG v2 ``FetchContent`` to an existing local checkout instead of cloning from ``NNG_V2_REPO``
+   * - ``MBEDTLS_SOURCE_DIR`` / ``FETCHCONTENT_SOURCE_DIR_MBEDTLS``
+     - *(auto-detected if ``./mbedtls`` exists)*
      - Point mbedTLS ``FetchContent`` to an existing local checkout instead of cloning from ``MBEDTLS_REPO``
-   * - ``FETCHCONTENT_SOURCE_DIR_WOLFSSL``
-     - *(unset)*
+   * - ``WOLFSSL_SOURCE_DIR`` / ``FETCHCONTENT_SOURCE_DIR_WOLFSSL``
+     - *(auto-detected if ``./wolfssl`` exists)*
      - Point wolfSSL ``FetchContent`` to an existing local checkout instead of cloning from ``WOLFSSL_REPO``
 
 Multiple options can be combined:

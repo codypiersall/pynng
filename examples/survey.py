@@ -17,9 +17,9 @@ def get_current_date():
     return str(datetime.datetime.now())
 
 
-async def server(sock, max_survey_request=10):
+async def server(sock, max_survey_request=4):
     while max_survey_request:
-        print(f"SERVER: SENDING DATE SURVEY REQUEST")
+        print("SERVER: SENDING DATE SURVEY REQUEST")
         await sock.asend(DATE.encode())
         while True:
             try:
@@ -36,7 +36,7 @@ async def client(name, max_survey=3):
         sock.dial(address)
         while max_survey:
             await sock.arecv_msg()
-            print(f'CLIENT ({name}): RECEIVED SURVEY REQUEST"')
+            print(f"CLIENT ({name}): RECEIVED SURVEY REQUEST")
             print(f"CLIENT ({name}): SENDING DATE SURVEY RESPONSE")
             await sock.asend(get_current_date().encode())
             max_survey -= 1
@@ -45,7 +45,7 @@ async def client(name, max_survey=3):
 async def main():
     with pynng.Surveyor0(listen=address) as surveyor:
         async with trio.open_nursery() as nursery:
-            nursery.start_soon(server, surveyor)
+            nursery.start_soon(server, surveyor, 4)
             nursery.start_soon(client, "client0", 3)
             nursery.start_soon(client, "client1", 3)
             nursery.start_soon(client, "client2", 4)

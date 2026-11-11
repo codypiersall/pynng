@@ -1,0 +1,157 @@
+NNG v2 Namespace (``pynng.v2``)
+===============================
+
+.. automodule:: pynng.v2
+
+Base Socket
+-----------
+
+.. autoclass:: pynng.v2.Socket
+   :members:
+   :show-inheritance:
+
+Protocol Sockets
+----------------
+
+.. autoclass:: pynng.v2.Pair0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Pair1
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Pub0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Sub0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Req0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Rep0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Push0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Pull0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Bus0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Surveyor0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Respondent0
+   :members:
+   :show-inheritance:
+
+Raw Protocol Sockets
+--------------------
+
+.. autoclass:: pynng.v2.RawPair0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawPair1
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawPub0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawSub0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawReq0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawRep0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawPush0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawPull0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawBus0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawSurveyor0
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.RawRespondent0
+   :members:
+   :show-inheritance:
+
+Networking, Contexts, and Messages
+----------------------------------
+
+.. autoclass:: pynng.v2.Context
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Dialer
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Listener
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Pipe
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.PipeEvent
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.PipeEventStream
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Message
+   :members:
+   :show-inheritance:
+
+TLS, Services, Devices, and Statistics
+--------------------------------------
+
+.. autoclass:: pynng.v2.TLSConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pynng.v2.Rep0Service
+   :members:
+   :show-inheritance:
+
+.. autofunction:: pynng.v2.device
+
+.. autofunction:: pynng.v2.adevice
+
+.. autofunction:: pynng.v2.nng_fini
+
+.. autofunction:: pynng.v2.stats
+
+.. autofunction:: pynng.v2.socket_stats
