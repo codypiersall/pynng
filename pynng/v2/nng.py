@@ -28,8 +28,8 @@ from pynng._base import (  # noqa: F401
     IntOption,
     MsOption,
     NotImplementedOption,
-    PipeEvent,
-    PipeEventStream,
+    PipeEvent as _BasePipeEvent,
+    PipeEventStream as _BasePipeEventStream,
     PointerOption,
     ReadOnlyBooleanOption,
     ReadOnlyIntOption,
@@ -561,6 +561,32 @@ class Socket(_base.Socket):
         def pipes(self) -> tuple[Pipe, ...]: ...
 
         def new_context(self) -> Context: ...
+
+        def add_pre_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def add_post_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def add_post_pipe_remove_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def remove_pre_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def remove_post_pipe_connect_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def remove_post_pipe_remove_cb(
+            self, callback: Callable[[Pipe], object]
+        ) -> None: ...
+
+        def pipe_events(self) -> PipeEventStream: ...
 
 
 class Bus0(Socket):
@@ -1833,6 +1859,22 @@ class Pipe(_base.Pipe):
         return raw.decode() if isinstance(raw, bytes) else str(raw)
 
 
+class PipeEvent(_BasePipeEvent["Pipe"]):
+    """A v2 pipe event with a :class:`Pipe` and the event type."""
+
+    __slots__ = ()
+
+    if TYPE_CHECKING:
+
+        def __new__(cls, pipe: Pipe, event_type: str) -> PipeEvent: ...
+
+
+class PipeEventStream(_BasePipeEventStream["Pipe", "PipeEvent"]):
+    """Async iterator that yields v2 :class:`PipeEvent` objects."""
+
+    __slots__ = ()
+
+
 class Message(_base.Message):
     """v2 message.
 
@@ -1918,3 +1960,5 @@ Socket._pipe_class = Pipe
 Socket._dialer_class = Dialer
 Socket._listener_class = Listener
 Socket._message_class = Message
+Socket._pipe_event_class = PipeEvent
+Socket._pipe_event_stream_class = PipeEventStream

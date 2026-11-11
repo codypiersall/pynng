@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Pre-generate and track `pynng/_nng_cdef.py` (`CDEF_V1_TLS`, `CDEF_V1_NO_TLS`, `CDEF_V2_TLS`, `CDEF_V2_NO_TLS`, and `get_cached_cdef()`, loaded directly via `importlib.util.spec_from_file_location` in `build_pynng.py`) so clean PEP 517 builds can emit CFFI C sources without requiring `headerkit`, `libclang`, or pre-compiled `pynng._nng`
+- Auto-detect pre-populated in-tree `mbedtls/`, `wolfssl/`, `nng/`, and `nng_v2/` source directories and support `MBEDTLS_SOURCE_DIR`, `WOLFSSL_SOURCE_DIR`, `NNG_SOURCE_DIR`, and `NNG_V2_SOURCE_DIR` in `CMakeLists.txt` (normalized to absolute paths and cached in `FETCHCONTENT_SOURCE_DIR_*` with `CACHE PATH ... FORCE`) for offline distro builds (`pkgsrc`, `nixpkgs`, `AUR`)
+
+### Changed
+- Remove `cffi_buildtool` and `headerkit` from `[build-system].requires` and `cibuildwheel` `before-build` hooks in `pyproject.toml`, add full PEP 484 type annotations to `build_pynng.py`, and invoke `build_pynng.py <output_c_file>` (`ffibuilder.emit_c_code()`) directly from `CMakeLists.txt`
+
+### Fixed
+- Make `PipeEvent` (`NamedTuple, Generic[_PipeT]`) and `PipeEventStream` (`Generic[_PipeT, _PipeEventT]`) generic over covariant `_PipeT` and `_PipeEventT` (preserving full `NamedTuple` methods `_asdict()`, `_replace()`, `_fields`, `_field_defaults`, positional pattern matching, tuple unpacking, and indexing on `PipeEvent`), provide module-narrowed `PipeEvent` and `PipeEventStream` subclasses in `pynng` and `pynng.v2` without `TYPE_CHECKING` stream method overrides, and narrow `Socket.add_pre_pipe_connect_cb()`, `add_post_pipe_connect_cb()`, `add_post_pipe_remove_cb()`, `remove_pre_pipe_connect_cb()`, `remove_post_pipe_connect_cb()`, `remove_post_pipe_remove_cb()`, and `pipe_events()` on `pynng.Socket` and `pynng.v2.Socket` so both unparameterized annotations and callbacks typed with `pynng.Pipe` or `pynng.v2.Pipe` pass `mypy --strict` and `pyright` without errors
+
 ## [1.0.0b3] - 2026-11-10
 
 ### Added

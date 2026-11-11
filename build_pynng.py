@@ -20,12 +20,20 @@ controlled by the NNG_MODULE_NAME environment variable:
   - "pynng._nng_v2": v2 bindings using NNG_V2_HEADERS
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 import glob
+import importlib.util
 import logging
 import os
 import subprocess
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from cffi import FFI
+    from headerkit.ir import Header
 
 try:
     from headerkit.backends import get_backend
@@ -44,9 +52,9 @@ def _require_headerkit() -> None:
     """Ensure headerkit is importable before parsing headers or generating bindings."""
     if not _HAS_HEADERKIT or get_backend is None:
         raise RuntimeError(
-            "headerkit (requires Python >= 3.11) is required to parse nng "
-            "headers and generate CFFI bindings from source. On Python 3.10, "
-            "install a pre-built pynng wheel instead of building from source."
+            "headerkit (requires Python >= 3.11) is required only when calling "
+            "generate_cdef() or generate_pyi() directly to regenerate CFFI "
+            "bindings or .pyi stubs from C headers."
         )
 
 
@@ -286,7 +294,7 @@ EXTERN_PYTHON_CALLBACKS = [
 ]
 
 _PARSE_MEMO: dict[
-    tuple[tuple[tuple[str, float], ...], str], tuple[Any, list[str], str]
+    tuple[tuple[tuple[str, float], ...], str], tuple[Header, list[str], str]
 ] = {}
 
 _CDEF_MEMO: dict[
@@ -294,7 +302,10 @@ _CDEF_MEMO: dict[
 ] = {}
 
 
-def _parse_nng_headers(headers=None, include_dir=None):
+def _parse_nng_headers(
+    headers: Sequence[str] | None = None,
+    include_dir: str | None = None,
+) -> tuple[Header, list[str], str]:
     """Parse nng and aio_engine headers into a headerkit Header IR (memoized by mtimes)."""
     _require_headerkit()
     if headers is None:
@@ -327,6 +338,7 @@ def _parse_nng_headers(headers=None, include_dir=None):
 {includes}
 #include "aio_engine.h"
 """
+    assert get_backend is not None
     backend = get_backend("libclang")
     header = backend.parse(
         umbrella,
@@ -340,7 +352,9 @@ def _parse_nng_headers(headers=None, include_dir=None):
 
 
 def generate_cdef(
-    headers=None, include_dir=None, exclude_patterns=None
+    headers: Sequence[str] | None = None,
+    include_dir: str | None = None,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Parse nng headers and generate CFFI cdef declarations via headerkit.
 
@@ -387,6 +401,7 @@ def generate_cdef(
     cdef_exclude = list(exclude_patterns) + [
         f"^{name}$" for name in EXTERN_PYTHON_CALLBACKS
     ]
+    assert CffiWriter is not None
     writer = CffiWriter(
         exclude_patterns=cdef_exclude,
         define_patterns=DEFINE_PATTERNS,
@@ -399,9 +414,9 @@ def generate_cdef(
 
 
 def generate_pyi(
-    headers=None,
-    include_dir=None,
-    exclude_patterns=None,
+    headers: Sequence[str] | None = None,
+    include_dir: str | None = None,
+    exclude_patterns: Sequence[str] | None = None,
     *,
     tls_enabled: bool = True,
 ) -> str:
@@ -418,6 +433,7 @@ def generate_pyi(
         exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
     header, _, _ = _parse_nng_headers(headers=headers, include_dir=include_dir)
+    assert PyiWriter is not None
     writer = PyiWriter(
         mode="cffi",
         exclude_patterns=list(exclude_patterns),
@@ -427,15 +443,41 @@ def generate_pyi(
     return writer.write(header)
 
 
+def _load_cached_cdef(
+    module_name: str,
+    *,
+    tls_enabled: bool,
+    nng_include_dir: str | None,
+) -> tuple[str, list[str]]:
+    """Load pre-generated (cdef, existing_headers) from pynng/_nng_cdef.py without importing pynng."""
+    cdef_path = os.path.join(_SCRIPT_DIR, "pynng", "_nng_cdef.py")
+    spec = importlib.util.spec_from_file_location("_nng_cdef", cdef_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load cached cdef module from {cdef_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    cdef_content, headers = cast(
+        "tuple[str, list[str]]",
+        mod.get_cached_cdef(module_name, tls_enabled=tls_enabled),
+    )
+    if nng_include_dir is not None and os.path.isdir(nng_include_dir):
+        existing = [
+            h for h in headers if os.path.exists(os.path.join(nng_include_dir, h))
+        ]
+        if existing:
+            headers = existing
+    return cdef_content, headers
+
+
 def _build_ffi(
-    module_name="pynng._nng",
-    headers=None,
-    exclude_patterns=None,
-    include_dir=None,
+    module_name: str = "pynng._nng",
+    headers: Sequence[str] | None = None,
+    exclude_patterns: Sequence[str] | None = None,
+    include_dir: str | None = None,
     *,
     tls_enabled: bool | None = None,
-):
-    """Set up the CFFI ffibuilder for use by cffi_buildtool.
+) -> FFI:
+    """Set up the CFFI ffibuilder for generating the C extension source.
 
     Args:
         module_name: CFFI module name. "pynng._nng" for v1, "pynng._nng_v2" for v2.
@@ -445,8 +487,8 @@ def _build_ffi(
         include_dir: Override for nng include directory.
         tls_enabled: Whether TLS symbols are enabled. Defaults to PYNNG_TLS_ENABLED env var.
 
-    This is called at module level only during builds (cffi_buildtool or
-    direct execution), never when imported by tests.
+    This is called at module level only during builds (direct execution or
+    gen-cffi-src), never when imported by tests.
     """
     from cffi import FFI
 
@@ -469,39 +511,78 @@ def _build_ffi(
     if not tls_enabled:
         exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
 
-    nng_include_dir = include_dir if include_dir is not None else _get_nng_include_dir()
+    nng_include_dir = include_dir if include_dir is not None else find_nng_include_dir()
 
-    # Generate cdef content and get the list of existing headers
-    cdef_content, existing_headers = generate_cdef(
-        headers=headers,
-        include_dir=nng_include_dir,
-        exclude_patterns=exclude_patterns,
+    use_cached = (
+        not _HAS_HEADERKIT
+        or get_backend is None
+        or os.environ.get("PYNNG_USE_CACHED_CDEF") == "1"
+        or nng_include_dir is None
     )
+    used_live_headerkit = False
+    if not use_cached:
+        assert nng_include_dir is not None
+        try:
+            cdef_content, existing_headers = generate_cdef(
+                headers=headers,
+                include_dir=nng_include_dir,
+                exclude_patterns=exclude_patterns,
+            )
+            used_live_headerkit = True
+        except Exception as exc:
+            logger.warning(
+                "Falling back to pre-generated pynng._nng_cdef (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+            cdef_content, existing_headers = _load_cached_cdef(
+                module_name,
+                tls_enabled=tls_enabled,
+                nng_include_dir=nng_include_dir,
+            )
+    else:
+        cdef_content, existing_headers = _load_cached_cdef(
+            module_name,
+            tls_enabled=tls_enabled,
+            nng_include_dir=nng_include_dir,
+        )
 
-    # Emit PEP 484 typing stub for the compiled CFFI extension module.
-    # Only overwrite an existing stub when TLS is enabled and the generated stub
-    # is Any-free (headerkit >= 0.51.0), so partial builds with PYNNG_TLS_ENGINE=none
-    # or older headerkit releases do not degrade the tracked stubs.
+    # Emit PEP 484 typing stub for the compiled CFFI extension module when live
+    # headerkit parsing succeeded. Only overwrite an existing stub when TLS is
+    # enabled and the generated stub is Any-free (headerkit >= 0.51.0), so partial
+    # builds with PYNNG_TLS_ENGINE=none or older headerkit releases do not degrade
+    # the tracked stubs.
     stub_rel = module_name.replace(".", os.sep) + ".pyi"
     stub_path = os.path.join(_SCRIPT_DIR, stub_rel)
-    if os.path.isdir(os.path.dirname(stub_path)) and (
-        tls_enabled or not os.path.exists(stub_path)
+    if (
+        used_live_headerkit
+        and nng_include_dir is not None
+        and os.path.isdir(os.path.dirname(stub_path))
+        and (tls_enabled or not os.path.exists(stub_path))
     ):
-        pyi_content = generate_pyi(
-            headers=headers,
-            include_dir=nng_include_dir,
-            exclude_patterns=exclude_patterns,
-        )
-        if not os.path.exists(stub_path) or "from typing import Any" not in pyi_content:
-            with open(stub_path, "w", encoding="utf-8") as f:
-                f.write(pyi_content)
+        try:
+            pyi_content = generate_pyi(
+                headers=headers,
+                include_dir=nng_include_dir,
+                exclude_patterns=exclude_patterns,
+            )
+            if (
+                not os.path.exists(stub_path)
+                or "from typing import Any" not in pyi_content
+            ):
+                with open(stub_path, "w", encoding="utf-8") as f:
+                    f.write(pyi_content)
+        except Exception as exc:
+            logger.debug("Skipping .pyi regeneration: %s", exc)
 
     ffi = FFI()
 
-    # Build set_source includes from the existing headers returned by generate_cdef()
+    # Build set_source includes from the existing headers
     source_includes = "\n".join(f"        #include <{h}>" for h in existing_headers)
 
-    include_dirs = [nng_include_dir]
+    include_dirs: list[str] = []
+    if nng_include_dir is not None:
+        include_dirs.append(nng_include_dir)
     if os.path.isdir(_SRC_DIR):
         include_dirs.append(_SRC_DIR)
 
@@ -530,4 +611,7 @@ if __name__ in ("gen-cffi-src", "__main__"):
     ffibuilder = _build_ffi(module_name=_module_name)
 
     if __name__ == "__main__":
-        ffibuilder.compile(verbose=True)
+        if len(sys.argv) > 1:
+            ffibuilder.emit_c_code(sys.argv[1])
+        else:
+            ffibuilder.compile(verbose=True)

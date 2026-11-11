@@ -172,6 +172,14 @@ if(PYNNG_TLS_ENGINE STREQUAL "mbed")
   set(LINK_WITH_PTHREAD OFF CACHE BOOL "Don't link mbedtls with pthread" FORCE)
   set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "Don't treat warnings as errors in mbedTLS" FORCE)
 
+  if(NOT MBEDTLS_SOURCE_DIR AND NOT FETCHCONTENT_SOURCE_DIR_MBEDTLS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls/CMakeLists.txt")
+    set(MBEDTLS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls")
+  endif()
+  if(MBEDTLS_SOURCE_DIR)
+    get_filename_component(MBEDTLS_SOURCE_DIR "${MBEDTLS_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(FETCHCONTENT_SOURCE_DIR_MBEDTLS "${MBEDTLS_SOURCE_DIR}" CACHE PATH "Local source directory for mbedtls" FORCE)
+  endif()
+
   FetchContent_Declare(
     mbedtls
     GIT_REPOSITORY ${MBEDTLS_REPO}
@@ -225,6 +233,14 @@ if(PYNNG_TLS_ENGINE STREQUAL "wolf")
   set(_SAVED_CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
   if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-error=stringop-overflow")
+  endif()
+
+  if(NOT WOLFSSL_SOURCE_DIR AND NOT FETCHCONTENT_SOURCE_DIR_WOLFSSL AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl/CMakeLists.txt")
+    set(WOLFSSL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl")
+  endif()
+  if(WOLFSSL_SOURCE_DIR)
+    get_filename_component(WOLFSSL_SOURCE_DIR "${WOLFSSL_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(FETCHCONTENT_SOURCE_DIR_WOLFSSL "${WOLFSSL_SOURCE_DIR}" CACHE PATH "Local source directory for wolfssl" FORCE)
   endif()
 
   FetchContent_Declare(
@@ -296,6 +312,14 @@ elseif(WIN32)
 endif()
 
 # Download NNG
+if(NOT NNG_SOURCE_DIR AND NOT FETCHCONTENT_SOURCE_DIR_NNG AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nng/CMakeLists.txt")
+  set(NNG_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/nng")
+endif()
+if(NNG_SOURCE_DIR)
+  get_filename_component(NNG_SOURCE_DIR "${NNG_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  set(FETCHCONTENT_SOURCE_DIR_NNG "${NNG_SOURCE_DIR}" CACHE PATH "Local source directory for nng" FORCE)
+endif()
+
 FetchContent_Declare(
   nng
   GIT_REPOSITORY ${NNG_REPO}
@@ -353,9 +377,9 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E env
     "NNG_INCLUDE_DIR=${nng_SOURCE_DIR}/include"
     "PYNNG_TLS_ENABLED=${_V1_TLS_ENABLED_INT}"
-    ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE} --ffi-var=ffibuilder
+    ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_OUTPUT_FILE}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng_cdef.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h
   COMMENT "Generating CFFI bindings for nng"
   VERBATIM
 )
@@ -432,6 +456,14 @@ if(BUILD_NNG_V2)
   # We use FetchContent_Populate instead of FetchContent_MakeAvailable because
   # MakeAvailable would call add_subdirectory, causing a CMake target collision
   # with v1's "nng" target. The v2 source is built separately via ExternalProject.
+  if(NOT NNG_V2_SOURCE_DIR AND NOT FETCHCONTENT_SOURCE_DIR_NNG_V2 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nng_v2/CMakeLists.txt")
+    set(NNG_V2_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/nng_v2")
+  endif()
+  if(NNG_V2_SOURCE_DIR)
+    get_filename_component(NNG_V2_SOURCE_DIR "${NNG_V2_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(FETCHCONTENT_SOURCE_DIR_NNG_V2 "${NNG_V2_SOURCE_DIR}" CACHE PATH "Local source directory for nng_v2" FORCE)
+  endif()
+
   FetchContent_Declare(
     nng_v2
     GIT_REPOSITORY ${NNG_V2_REPO}
@@ -639,9 +671,9 @@ set(WOLFSSL_FOUND TRUE)
       "NNG_INCLUDE_DIR=${NNG_V2_INSTALL_DIR}/include"
       "NNG_MODULE_NAME=pynng._nng_v2"
       "PYNNG_TLS_ENABLED=${_V2_TLS_ENABLED_INT}"
-      ${Python_EXECUTABLE} -m cffi_buildtool exec-python ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE} --ffi-var=ffibuilder
+      ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CFFI_V2_OUTPUT_FILE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h nng_v2_build
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build_pynng.py ${CMAKE_CURRENT_SOURCE_DIR}/pynng/_nng_cdef.py ${CMAKE_CURRENT_SOURCE_DIR}/src/aio_engine.h nng_v2_build
     COMMENT "Generating CFFI bindings for nng v2"
     VERBATIM
   )
