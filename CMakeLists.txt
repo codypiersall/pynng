@@ -16,8 +16,13 @@ endif()
 # Define build types
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release")
 
-# Enable position independent code
+# Enable position independent code and default hidden symbol visibility so
+# statically linked NNG, mbedTLS, and wolfSSL symbols do not leak out of
+# _nng and _nng_v2.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 # Work around a bug in llvm-ranlib (all known versions as of LLVM 21.x) where
 # it produces GNU ar format symbol tables when adding a symbol table to an
@@ -403,6 +408,11 @@ if(MSVC)
   target_compile_options(_nng PRIVATE /std:c11 /experimental:c11atomics)
 else()
   target_compile_options(_nng PRIVATE -fvisibility=hidden)
+  if(APPLE)
+    target_link_options(_nng PRIVATE "LINKER:-exported_symbol,_PyInit__nng")
+  elseif(UNIX)
+    target_link_options(_nng PRIVATE "LINKER:--exclude-libs,ALL")
+  endif()
 endif()
 
 # Include directories for Python and NNG headers
@@ -496,6 +506,9 @@ if(BUILD_NNG_V2)
     -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
     -DCMAKE_INSTALL_LIBDIR=lib
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+    -DCMAKE_C_VISIBILITY_PRESET=hidden
+    -DCMAKE_CXX_VISIBILITY_PRESET=hidden
+    -DCMAKE_VISIBILITY_INLINES_HIDDEN=ON
     -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
     -DNNG_TESTS=OFF
     -DNNG_TOOLS=OFF
@@ -508,6 +521,19 @@ if(BUILD_NNG_V2)
     -DCMAKE_RANLIB=${CMAKE_RANLIB}
   )
   set(_NNG_V2_CMAKE_CACHE_ARGS "")
+  foreach(_fwd_var
+    CMAKE_OSX_ARCHITECTURES
+    CMAKE_OSX_DEPLOYMENT_TARGET
+    CMAKE_OSX_SYSROOT
+    CMAKE_C_COMPILER_LAUNCHER
+    CMAKE_C_FLAGS
+    CMAKE_AR
+    CMAKE_RANLIB
+  )
+    if(DEFINED ${_fwd_var} AND NOT "${${_fwd_var}}" STREQUAL "")
+      list(APPEND _NNG_V2_CMAKE_CACHE_ARGS "-D${_fwd_var}:STRING=${${_fwd_var}}")
+    endif()
+  endforeach()
   set(_NNG_V2_DEPENDS "")
 
   # --- TLS engine staging for v2 ExternalProject ---
@@ -535,7 +561,10 @@ if(BUILD_NNG_V2)
       COMMENT "Staging mbedTLS libraries for nng v2 build"
     )
 
-    list(APPEND _NNG_V2_CMAKE_ARGS -DMBEDTLS_ROOT=${MBEDTLS_STAGE_DIR})
+    list(APPEND _NNG_V2_CMAKE_ARGS
+      -DMBEDTLS_ROOT=${MBEDTLS_STAGE_DIR}
+      -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=FALSE
+    )
     # Pre-cache _MBEDTLS_V2_OR_NEWER to bypass FindMbedTLS.cmake's
     # check_symbol_exists(mbedtls_ssl_init) which fails when linking static
     # mbedTLS without -lpthread. We know mbedTLS 3.x has this symbol.
@@ -696,6 +725,11 @@ set(WOLFSSL_FOUND TRUE)
     target_compile_options(_nng_v2 PRIVATE /std:c11 /experimental:c11atomics)
   else()
     target_compile_options(_nng_v2 PRIVATE -fvisibility=hidden)
+    if(APPLE)
+      target_link_options(_nng_v2 PRIVATE "LINKER:-exported_symbol,_PyInit__nng_v2")
+    elseif(UNIX)
+      target_link_options(_nng_v2 PRIVATE "LINKER:--exclude-libs,ALL")
+    endif()
   endif()
 
   # Include directories

@@ -35,6 +35,10 @@ def get_git_info() -> Dict[str, str]:
         info["commit"] = sha[:8]
     except Exception:
         pass
+    env_branch = os.environ.get("BENCH_BRANCH_NAME", "").strip()
+    if env_branch:
+        info["branch"] = env_branch
+        return info
     try:
         branch = subprocess.check_output(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],

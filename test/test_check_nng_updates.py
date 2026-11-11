@@ -251,3 +251,43 @@ def test_cmake_resolve_latest_patch_crlf_and_no_downgrade(tmp_path):
     assert "RESULT_TWO_PART=v1.11.4" in out
     assert "RESULT_BRANCH=main" in out
     assert "Skipping REV_BRANCH (main)" in out
+
+
+def test_check_nng_workflow_regenerates_and_stages_cached_cdef():
+    """Verify check-nng.yml runs with PYNNG_USE_CACHED_CDEF=0 + headerkit and stages _nng_cdef.py."""
+    repo_root = Path(__file__).resolve().parent.parent
+    workflow_path = repo_root / ".github" / "workflows" / "check-nng.yml"
+    lines = [
+        line.strip() for line in workflow_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    preinstall_lines = [
+        line
+        for line in lines
+        if line.startswith("uv pip install --python /tmp/build-venv ")
+    ]
+    build_lines = [line for line in lines if line.startswith("PYNNG_USE_CACHED_CDEF=")]
+    git_add_lines = [line for line in lines if line.startswith("git add ")]
+
+    assert preinstall_lines == [
+        'uv pip install --python /tmp/build-venv "scikit-build-core>=0.8.0" cffi setuptools-scm "headerkit~=0.51.0" && \\'
+    ]
+    assert build_lines == [
+        "PYNNG_USE_CACHED_CDEF=0 uv pip install --python /tmp/build-venv --no-build-isolation -v -e '.[dev]' 2>&1 | tail -50"
+    ]
+    assert git_add_lines == [
+        "git add CMakeLists.txt pynng/_nng_cdef.py pynng/_nng.pyi pynng/_nng_v2.pyi"
+    ]
+
+    smoketest_path = repo_root / ".github" / "workflows" / "smoketest.yml"
+    smoketest_lines = [
+        line.strip() for line in smoketest_path.read_text(encoding="utf-8").splitlines()
+    ]
+    build_test_lines = [
+        line
+        for line in smoketest_lines
+        if line.startswith("run: pytest -v test/test_build.py")
+    ]
+    assert build_test_lines == [
+        "run: pytest -v test/test_build.py test/test_check_nng_updates.py"
+    ]

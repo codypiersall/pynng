@@ -23,16 +23,19 @@ controlled by the NNG_MODULE_NAME environment variable:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import contextlib
 import glob
 import importlib.util
 import logging
 import os
 import subprocess
 import sys
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    import types
+
     from cffi import FFI
     from headerkit.ir import Header
 
@@ -444,6 +447,18 @@ def generate_pyi(
     return writer.write(header)
 
 
+def _exec_cdef_module(cdef_path: str) -> types.ModuleType:
+    """Load pynng/_nng_cdef.py directly from source without stale .pyc caching."""
+    with contextlib.suppress(OSError, ValueError, NotImplementedError):
+        os.remove(importlib.util.cache_from_source(cdef_path))
+    spec = importlib.util.spec_from_file_location("_nng_cdef", cdef_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load cached cdef module from {cdef_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _load_cached_cdef(
     module_name: str,
     *,
@@ -452,11 +467,7 @@ def _load_cached_cdef(
 ) -> tuple[str, list[str]]:
     """Load pre-generated (cdef, existing_headers) from pynng/_nng_cdef.py without importing pynng."""
     cdef_path = os.path.join(_SCRIPT_DIR, "pynng", "_nng_cdef.py")
-    spec = importlib.util.spec_from_file_location("_nng_cdef", cdef_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load cached cdef module from {cdef_path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _exec_cdef_module(cdef_path)
     cdef_content, headers = cast(
         "tuple[str, list[str]]",
         mod.get_cached_cdef(module_name, tls_enabled=tls_enabled),
@@ -468,6 +479,174 @@ def _load_cached_cdef(
         if existing:
             headers = existing
     return cdef_content, headers
+
+
+def _format_headers_list(headers: Sequence[str]) -> str:
+    """Format a header list in ruff format style."""
+    items = list(headers)
+    if not items:
+        return "[]"
+    if len(items) == 1:
+        return f'["{items[0]}"]'
+    joined = "\n".join(f'    "{item}",' for item in items)
+    return f"[\n{joined}\n]"
+
+
+def _render_cached_cdef_module(
+    *,
+    headers_v1_tls: Sequence[str],
+    headers_v1_no_tls: Sequence[str],
+    headers_v2_tls: Sequence[str],
+    headers_v2_no_tls: Sequence[str],
+    cdef_v1_tls: str,
+    cdef_v1_no_tls: str,
+    cdef_v2_tls: str,
+    cdef_v2_no_tls: str,
+) -> str:
+    """Render the complete source of pynng/_nng_cdef.py."""
+    return (
+        '"""Pre-generated CFFI cdef declarations and header lists for NNG v1 and v2.\n'
+        "\n"
+        "Provides a zero-libclang fallback when building pynng from source in offline or\n"
+        "system-packaged environments (e.g. pkgsrc, nixpkgs, AUR, or Python 3.10) where\n"
+        "headerkit or libclang is not installed.\n"
+        '"""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        f"HEADERS_V1_TLS: list[str] = {_format_headers_list(headers_v1_tls)}\n"
+        "\n"
+        f"HEADERS_V1_NO_TLS: list[str] = {_format_headers_list(headers_v1_no_tls)}\n"
+        "\n"
+        f"HEADERS_V2_TLS: list[str] = {_format_headers_list(headers_v2_tls)}\n"
+        "\n"
+        f"HEADERS_V2_NO_TLS: list[str] = {_format_headers_list(headers_v2_no_tls)}\n"
+        "\n"
+        f"CDEF_V1_TLS: str = {cdef_v1_tls!r}\n"
+        "\n"
+        f"CDEF_V1_NO_TLS: str = {cdef_v1_no_tls!r}\n"
+        "\n"
+        f"CDEF_V2_TLS: str = {cdef_v2_tls!r}\n"
+        "\n"
+        f"CDEF_V2_NO_TLS: str = {cdef_v2_no_tls!r}\n"
+        "\n"
+        "\n"
+        "def get_cached_cdef(\n"
+        '    module_name: str = "pynng._nng",\n'
+        "    *,\n"
+        "    tls_enabled: bool = True,\n"
+        ") -> tuple[str, list[str]]:\n"
+        '    """Return pre-generated (cdef_string, headers_list) for the target CFFI module."""\n'
+        '    if module_name == "pynng._nng_v2":\n'
+        "        if tls_enabled:\n"
+        "            return CDEF_V2_TLS, list(HEADERS_V2_TLS)\n"
+        "        return CDEF_V2_NO_TLS, list(HEADERS_V2_NO_TLS)\n"
+        "    if tls_enabled:\n"
+        "        return CDEF_V1_TLS, list(HEADERS_V1_TLS)\n"
+        "    return CDEF_V1_NO_TLS, list(HEADERS_V1_NO_TLS)\n"
+    )
+
+
+@contextlib.contextmanager
+def _locked_cdef_update(cdef_path: str) -> Iterator[None]:
+    """Acquire an exclusive cross-process file lock for updating _nng_cdef.py."""
+    lock_path = f"{cdef_path}.lock"
+    with open(lock_path, "a", encoding="utf-8") as lock_file:
+        if sys.platform == "win32":
+            import msvcrt
+
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _update_cached_cdef_file(
+    module_name: str,
+    *,
+    tls_enabled: bool,
+    cdef_content: str,
+    existing_headers: Sequence[str],
+    no_tls_cdef: str | None = None,
+    no_tls_headers: Sequence[str] | None = None,
+    cdef_path: str | None = None,
+) -> None:
+    """Update pre-generated CDEF_* and HEADERS_* entries in pynng/_nng_cdef.py."""
+    if cdef_path is None:
+        cdef_path = os.path.join(_SCRIPT_DIR, "pynng", "_nng_cdef.py")
+    with _locked_cdef_update(cdef_path):
+        mod = _exec_cdef_module(cdef_path)
+
+        cdef_v1_tls, headers_v1_tls = cast(
+            "tuple[str, list[str]]",
+            mod.get_cached_cdef("pynng._nng", tls_enabled=True),
+        )
+        cdef_v1_no_tls, headers_v1_no_tls = cast(
+            "tuple[str, list[str]]",
+            mod.get_cached_cdef("pynng._nng", tls_enabled=False),
+        )
+        cdef_v2_tls, headers_v2_tls = cast(
+            "tuple[str, list[str]]",
+            mod.get_cached_cdef("pynng._nng_v2", tls_enabled=True),
+        )
+        cdef_v2_no_tls, headers_v2_no_tls = cast(
+            "tuple[str, list[str]]",
+            mod.get_cached_cdef("pynng._nng_v2", tls_enabled=False),
+        )
+
+        if module_name == "pynng._nng_v2":
+            if no_tls_cdef is not None and no_tls_headers is not None:
+                cdef_v2_tls = cdef_content
+                headers_v2_tls = list(existing_headers)
+                cdef_v2_no_tls = no_tls_cdef
+                headers_v2_no_tls = list(no_tls_headers)
+            elif tls_enabled:
+                cdef_v2_tls = cdef_content
+                headers_v2_tls = list(existing_headers)
+            else:
+                cdef_v2_no_tls = cdef_content
+                headers_v2_no_tls = list(existing_headers)
+        else:
+            if no_tls_cdef is not None and no_tls_headers is not None:
+                cdef_v1_tls = cdef_content
+                headers_v1_tls = list(existing_headers)
+                cdef_v1_no_tls = no_tls_cdef
+                headers_v1_no_tls = list(no_tls_headers)
+            elif tls_enabled:
+                cdef_v1_tls = cdef_content
+                headers_v1_tls = list(existing_headers)
+            else:
+                cdef_v1_no_tls = cdef_content
+                headers_v1_no_tls = list(existing_headers)
+
+        rendered = _render_cached_cdef_module(
+            headers_v1_tls=headers_v1_tls,
+            headers_v1_no_tls=headers_v1_no_tls,
+            headers_v2_tls=headers_v2_tls,
+            headers_v2_no_tls=headers_v2_no_tls,
+            cdef_v1_tls=cdef_v1_tls,
+            cdef_v1_no_tls=cdef_v1_no_tls,
+            cdef_v2_tls=cdef_v2_tls,
+            cdef_v2_no_tls=cdef_v2_no_tls,
+        )
+        with open(cdef_path, encoding="utf-8") as f:
+            current = f.read()
+        if rendered != current:
+            tmp_path = f"{cdef_path}.tmp.{os.getpid()}"
+            with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(rendered)
+            os.replace(tmp_path, cdef_path)
 
 
 def _build_ffi(
@@ -505,19 +684,24 @@ def _build_ffi(
         else:
             exclude_patterns = list(EXCLUDE_PATTERNS)
 
+    base_exclude_patterns = [
+        p for p in exclude_patterns if p not in EXCLUDE_PATTERNS_NO_TLS
+    ]
+    no_tls_exclude_patterns = list(base_exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
+
     # When TLS is disabled, exclude additional symbols that only exist
     # when a TLS engine is compiled in.
     if tls_enabled is None:
         tls_enabled = os.environ.get("PYNNG_TLS_ENABLED") != "0"
     if not tls_enabled:
-        exclude_patterns = list(exclude_patterns) + EXCLUDE_PATTERNS_NO_TLS
+        exclude_patterns = no_tls_exclude_patterns
 
     nng_include_dir = include_dir if include_dir is not None else find_nng_include_dir()
 
     use_cached = (
         not _HAS_HEADERKIT
         or get_backend is None
-        or os.environ.get("PYNNG_USE_CACHED_CDEF") == "1"
+        or os.environ.get("PYNNG_USE_CACHED_CDEF", "1") != "0"
         or nng_include_dir is None
     )
     used_live_headerkit = False
@@ -530,7 +714,7 @@ def _build_ffi(
                 exclude_patterns=exclude_patterns,
             )
             used_live_headerkit = True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Falling back to pre-generated pynng._nng_cdef (%s: %s)",
                 type(exc).__name__,
@@ -547,6 +731,45 @@ def _build_ffi(
             tls_enabled=tls_enabled,
             nng_include_dir=nng_include_dir,
         )
+
+    # Refresh pynng/_nng_cdef.py when explicitly requested via PYNNG_USE_CACHED_CDEF=0
+    # and live headerkit parsing succeeded. Always compute both TLS and NO_TLS variants
+    # so both constants for module_name stay in lockstep regardless of tls_enabled.
+    cdef_cache_path = os.path.join(_SCRIPT_DIR, "pynng", "_nng_cdef.py")
+    if (
+        used_live_headerkit
+        and nng_include_dir is not None
+        and os.environ.get("PYNNG_USE_CACHED_CDEF") == "0"
+        and os.path.isfile(cdef_cache_path)
+    ):
+        try:
+            if tls_enabled:
+                tls_cdef = cdef_content
+                tls_headers: Sequence[str] = existing_headers
+                no_tls_cdef, no_tls_headers = generate_cdef(
+                    headers=headers,
+                    include_dir=nng_include_dir,
+                    exclude_patterns=no_tls_exclude_patterns,
+                )
+            else:
+                tls_cdef, tls_headers = generate_cdef(
+                    headers=headers,
+                    include_dir=nng_include_dir,
+                    exclude_patterns=base_exclude_patterns,
+                )
+                no_tls_cdef = cdef_content
+                no_tls_headers = list(existing_headers)
+            _update_cached_cdef_file(
+                module_name,
+                tls_enabled=tls_enabled,
+                cdef_content=tls_cdef,
+                existing_headers=tls_headers,
+                no_tls_cdef=no_tls_cdef,
+                no_tls_headers=no_tls_headers,
+                cdef_path=cdef_cache_path,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Skipping _nng_cdef.py regeneration: %s", exc)
 
     # Emit PEP 484 typing stub for the compiled CFFI extension module when live
     # headerkit parsing succeeded. Only overwrite an existing stub when TLS is
@@ -571,9 +794,17 @@ def _build_ffi(
                 not os.path.exists(stub_path)
                 or "from typing import Any" not in pyi_content
             ):
-                with open(stub_path, "w", encoding="utf-8") as f:
-                    f.write(pyi_content)
-        except Exception as exc:
+                with _locked_cdef_update(stub_path):
+                    existing_pyi = ""
+                    if os.path.exists(stub_path):
+                        with open(stub_path, encoding="utf-8") as f:
+                            existing_pyi = f.read()
+                    if pyi_content != existing_pyi:
+                        tmp_stub = f"{stub_path}.tmp.{os.getpid()}"
+                        with open(tmp_stub, "w", encoding="utf-8", newline="\n") as f:
+                            f.write(pyi_content)
+                        os.replace(tmp_stub, stub_path)
+        except Exception as exc:  # noqa: BLE001
             logger.debug("Skipping .pyi regeneration: %s", exc)
 
     ffi = FFI()

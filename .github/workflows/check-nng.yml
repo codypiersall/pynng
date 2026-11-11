@@ -82,7 +82,8 @@ jobs:
 
             set +e
             set -o pipefail
-            uv pip install --python /tmp/build-venv -v -e '.[dev]' 2>&1 | tail -50
+            uv pip install --python /tmp/build-venv "scikit-build-core>=0.8.0" cffi setuptools-scm "headerkit~=0.51.0" && \
+              PYNNG_USE_CACHED_CDEF=0 uv pip install --python /tmp/build-venv --no-build-isolation -v -e '.[dev]' 2>&1 | tail -50
             build_result=$?
 
             if [ $build_result -eq 0 ]; then
@@ -104,7 +105,7 @@ jobs:
             if [ "$is_patch" = "true" ] && [ "$build_status" = "success" ] && [ "$test_status" = "success" ]; then
               branch_name="chore/bump-nng-${latest_tag}"
               git checkout -B "$branch_name"
-              git add CMakeLists.txt pynng/_nng.pyi pynng/_nng_v2.pyi
+              git add CMakeLists.txt pynng/_nng_cdef.py pynng/_nng.pyi pynng/_nng_v2.pyi
               git commit -m "build(deps): bump ${target_var} from ${current_rev} to ${latest_tag}"
               if git push -u origin "$branch_name" --force; then
                 pr_title="build(deps): bump ${target_var} from ${current_rev} to ${latest_tag}"

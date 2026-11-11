@@ -3,6 +3,9 @@ name: sanitizers
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
+      - main
     paths:
       - 'pynng/**'
       - 'src/**'

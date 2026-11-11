@@ -77,7 +77,7 @@ jobs:
           pyright pynng
       - name: Run build and typing contract tests
         if: matrix.os == 'ubuntu-latest'
-        run: pytest -v test/test_build.py
+        run: pytest -v test/test_build.py test/test_check_nng_updates.py
       - name: Upload wheel
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7

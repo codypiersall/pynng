@@ -404,10 +404,10 @@ class TestHeaderkitWriters:
         assert "_async_complete" in v2_pyi_members
         try:
             import pynng._nng_v2 as nng_v2
-
-            assert v2_pyi_members == set(dir(nng_v2.lib))
         except ImportError:
             pass
+        else:
+            assert v2_pyi_members == set(dir(nng_v2.lib))
 
 
 @_skip_no_headers
@@ -920,7 +920,7 @@ class TestPyPyHeaderkitCompat:
         globs: dict[str, object] = {"__name__": "gen-cffi-src"}
         compiled = compile(source, build_script, "exec")
         try:
-            exec(compiled, globs, globs)
+            exec(compiled, globs, globs)  # noqa: S102
         finally:
             if prev_pyi is not None:
                 with open(pyi_path, "wb") as f:
@@ -1084,26 +1084,28 @@ class TestPyPyHeaderkitCompat:
             fake_stub = fake_pkg_dir / "_nng.pyi"
             sentinel = "# existing full stub\n"
             fake_stub.write_text(sentinel, encoding="utf-8")
-            monkeypatch.setattr(build_pynng, "_SCRIPT_DIR", str(tmp_path))
-            build_pynng._build_ffi(
-                module_name="pynng._nng",
-                include_dir=_NNG_INCLUDE_DIR,
-                tls_enabled=False,
-            )
-            assert fake_stub.read_text(encoding="utf-8") == sentinel
+            with pytest.MonkeyPatch.context() as mp_stub:
+                mp_stub.setattr(build_pynng, "_SCRIPT_DIR", str(tmp_path))
+                mp_stub.setenv("PYNNG_USE_CACHED_CDEF", "0")
+                build_pynng._build_ffi(
+                    module_name="pynng._nng",
+                    include_dir=_NNG_INCLUDE_DIR,
+                    tls_enabled=False,
+                )
+                assert fake_stub.read_text(encoding="utf-8") == sentinel
 
-            # Verify older headerkit output containing Any does not overwrite an existing .pyi stub
-            monkeypatch.setattr(
-                build_pynng,
-                "generate_pyi",
-                lambda *args, **kwargs: "from typing import Any\nffi: Any\n",
-            )
-            build_pynng._build_ffi(
-                module_name="pynng._nng",
-                include_dir=_NNG_INCLUDE_DIR,
-                tls_enabled=True,
-            )
-            assert fake_stub.read_text(encoding="utf-8") == sentinel
+                # Verify older headerkit output containing Any does not overwrite an existing .pyi stub
+                mp_stub.setattr(
+                    build_pynng,
+                    "generate_pyi",
+                    lambda *args, **kwargs: "from typing import Any\nffi: Any\n",
+                )
+                build_pynng._build_ffi(
+                    module_name="pynng._nng",
+                    include_dir=_NNG_INCLUDE_DIR,
+                    tls_enabled=True,
+                )
+                assert fake_stub.read_text(encoding="utf-8") == sentinel
 
     def test_mypy_strict_and_pyright_pass_with_zero_issues(self, tmp_path):
         """Verify mypy --strict and pyright pass with zero errors on pynng and consumer code."""
@@ -1431,8 +1433,8 @@ class TestPyPyHeaderkitCompat:
             assert dup_msg.bytes == b"abc"
 
         try:
-            import pynng.v2 as v2
             import pynng.v2.nng as v2_nng
+            from pynng import v2
         except ImportError:
             return
 
@@ -1521,15 +1523,29 @@ class TestPyPyHeaderkitCompat:
         cmake_text = pathlib.Path(_PROJECT_ROOT, "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
-        m_v2_rev = re.search(
-            r'set\(NNG_V2_REV\s+"v(\d+)\.(\d+)\.(\d+)"', cmake_text
-        )
-        assert m_v2_rev is not None
-        expected_v2_ver = (
-            int(m_v2_rev.group(1)),
-            int(m_v2_rev.group(2)),
-            int(m_v2_rev.group(3)),
-        )
+        v2_candidates: list[str] = []
+        for root in _candidate_build_roots():
+            v2_candidates.extend(
+                glob.glob(os.path.join(root, "build", "*", "nng_v2_install", "include"))
+            )
+        if v2_candidates:
+            v2_candidates.sort(key=lambda p: (_PY_TAG not in p, p))
+            v2_inc: str | None = v2_candidates[0]
+            v2_nng_h_path = pathlib.Path(v2_inc, "nng", "nng.h")
+            expected_v2_ver = _extract_cdef_version(
+                v2_nng_h_path.read_text(encoding="utf-8")
+            )
+        else:
+            v2_inc = None
+            m_v2_rev = re.search(
+                r'set\(NNG_V2_REV\s+"v(\d+)\.(\d+)\.(\d+)"', cmake_text
+            )
+            assert m_v2_rev is not None
+            expected_v2_ver = (
+                int(m_v2_rev.group(1)),
+                int(m_v2_rev.group(2)),
+                int(m_v2_rev.group(3)),
+            )
 
         v1_pyi_text = pathlib.Path(_PROJECT_ROOT, "pynng", "_nng.pyi").read_text(
             encoding="utf-8"
@@ -1540,9 +1556,7 @@ class TestPyPyHeaderkitCompat:
         # Note: upstream nanomsg/nng v1.12.5 defines NNG_PATCH_VERSION 4 in include/nng/nng.h;
         # CFFI verifies cdef #define integers against the C preprocessor value in nng.h.
         nng_h_path = pathlib.Path(_NNG_INCLUDE_DIR, "nng", "nng.h")
-        expected_v1_ver = _extract_cdef_version(
-            nng_h_path.read_text(encoding="utf-8")
-        )
+        expected_v1_ver = _extract_cdef_version(nng_h_path.read_text(encoding="utf-8"))
         assert _extract_cdef_version(CDEF_V1_TLS) == expected_v1_ver
         assert _extract_cdef_version(CDEF_V1_NO_TLS) == expected_v1_ver
         assert _extract_pyi_version(v1_pyi_text) == expected_v1_ver
@@ -1580,16 +1594,66 @@ class TestPyPyHeaderkitCompat:
                 live_h1_notls,
             )
 
-            v2_candidates: list[str] = []
-            for root in _candidate_build_roots():
-                v2_candidates.extend(
-                    glob.glob(
-                        os.path.join(root, "build", "*", "nng_v2_install", "include")
-                    )
+            # Verify _build_ffi refreshes pynng/_nng_cdef.py when PYNNG_USE_CACHED_CDEF=0
+            # (both when tls_enabled=True and tls_enabled=False), and does NOT overwrite it
+            # when PYNNG_USE_CACHED_CDEF is unset or "1" (negative controls).
+            canonical_cdef_path = pathlib.Path(_PROJECT_ROOT, "pynng", "_nng_cdef.py")
+            canonical_cdef_text = canonical_cdef_path.read_text(encoding="utf-8")
+            stale_cdef_text = canonical_cdef_text.replace(
+                "CDEF_V1_TLS: str = "
+                f"'#define NNG_MAJOR_VERSION {expected_v1_ver[0]}\\n"
+                f"#define NNG_MINOR_VERSION {expected_v1_ver[1]}\\n"
+                f"#define NNG_PATCH_VERSION {expected_v1_ver[2]}",
+                "CDEF_V1_TLS: str = "
+                f"'#define NNG_MAJOR_VERSION {expected_v1_ver[0]}\\n"
+                f"#define NNG_MINOR_VERSION {expected_v1_ver[1]}\\n"
+                "#define NNG_PATCH_VERSION 99999",
+                1,
+            ).replace(
+                "CDEF_V1_NO_TLS: str = "
+                f"'#define NNG_MAJOR_VERSION {expected_v1_ver[0]}\\n"
+                f"#define NNG_MINOR_VERSION {expected_v1_ver[1]}\\n"
+                f"#define NNG_PATCH_VERSION {expected_v1_ver[2]}",
+                "CDEF_V1_NO_TLS: str = "
+                f"'#define NNG_MAJOR_VERSION {expected_v1_ver[0]}\\n"
+                f"#define NNG_MINOR_VERSION {expected_v1_ver[1]}\\n"
+                "#define NNG_PATCH_VERSION 99999",
+                1,
+            )
+            assert stale_cdef_text != canonical_cdef_text
+
+            temp_pkg_dir = tmp_path / "refresh_pkg" / "pynng"
+            temp_pkg_dir.mkdir(parents=True)
+            temp_cdef_path = temp_pkg_dir / "_nng_cdef.py"
+            temp_cdef_path.write_text(stale_cdef_text, encoding="utf-8")
+
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(build_pynng, "_SCRIPT_DIR", str(tmp_path / "refresh_pkg"))
+                mp.delenv("PYNNG_USE_CACHED_CDEF", raising=False)
+                build_pynng._build_ffi(
+                    module_name="pynng._nng",
+                    include_dir=_NNG_INCLUDE_DIR,
+                    tls_enabled=True,
                 )
-            if v2_candidates:
-                v2_candidates.sort(key=lambda p: (_PY_TAG not in p, p))
-                v2_inc = v2_candidates[0]
+                assert temp_cdef_path.read_text(encoding="utf-8") == stale_cdef_text
+
+                mp.setenv("PYNNG_USE_CACHED_CDEF", "1")
+                build_pynng._build_ffi(
+                    module_name="pynng._nng",
+                    include_dir=_NNG_INCLUDE_DIR,
+                    tls_enabled=True,
+                )
+                assert temp_cdef_path.read_text(encoding="utf-8") == stale_cdef_text
+
+                mp.setenv("PYNNG_USE_CACHED_CDEF", "0")
+                build_pynng._build_ffi(
+                    module_name="pynng._nng",
+                    include_dir=_NNG_INCLUDE_DIR,
+                    tls_enabled=False,
+                )
+                assert temp_cdef_path.read_text(encoding="utf-8") == canonical_cdef_text
+
+            if v2_inc is not None:
                 live_v2_tls, live_h2_tls = build_pynng.generate_cdef(
                     headers=build_pynng.NNG_V2_HEADERS,
                     include_dir=v2_inc,
@@ -1615,6 +1679,44 @@ class TestPyPyHeaderkitCompat:
                     live_v2_notls,
                     live_h2_notls,
                 )
+
+                stale_v2_cdef_text = canonical_cdef_text.replace(
+                    "CDEF_V2_TLS: str = "
+                    f"'#define NNG_MAJOR_VERSION {expected_v2_ver[0]}\\n"
+                    f"#define NNG_MINOR_VERSION {expected_v2_ver[1]}\\n"
+                    f"#define NNG_PATCH_VERSION {expected_v2_ver[2]}",
+                    "CDEF_V2_TLS: str = "
+                    f"'#define NNG_MAJOR_VERSION {expected_v2_ver[0]}\\n"
+                    f"#define NNG_MINOR_VERSION {expected_v2_ver[1]}\\n"
+                    "#define NNG_PATCH_VERSION 99999",
+                    1,
+                ).replace(
+                    "CDEF_V2_NO_TLS: str = "
+                    f"'#define NNG_MAJOR_VERSION {expected_v2_ver[0]}\\n"
+                    f"#define NNG_MINOR_VERSION {expected_v2_ver[1]}\\n"
+                    f"#define NNG_PATCH_VERSION {expected_v2_ver[2]}",
+                    "CDEF_V2_NO_TLS: str = "
+                    f"'#define NNG_MAJOR_VERSION {expected_v2_ver[0]}\\n"
+                    f"#define NNG_MINOR_VERSION {expected_v2_ver[1]}\\n"
+                    "#define NNG_PATCH_VERSION 99999",
+                    1,
+                )
+                assert stale_v2_cdef_text != canonical_cdef_text
+                temp_cdef_path.write_text(stale_v2_cdef_text, encoding="utf-8")
+                with pytest.MonkeyPatch.context() as mp:
+                    mp.setattr(
+                        build_pynng, "_SCRIPT_DIR", str(tmp_path / "refresh_pkg")
+                    )
+                    mp.setenv("PYNNG_USE_CACHED_CDEF", "0")
+                    build_pynng._build_ffi(
+                        module_name="pynng._nng_v2",
+                        include_dir=v2_inc,
+                        tls_enabled=True,
+                    )
+                    assert (
+                        temp_cdef_path.read_text(encoding="utf-8")
+                        == canonical_cdef_text
+                    )
 
         # Simulate building without headerkit / libclang installed AND before
         # pynng._nng / pynng._nng_v2 are compiled (clean PEP 517 build)
@@ -1689,7 +1791,7 @@ class TestPyPyHeaderkitCompat:
         import textwrap
 
         import pynng
-        import pynng._base as _base
+        from pynng import _base
 
         assert _base.Socket.pipe_events.__doc__ is not None
         assert '"pre_add"' in _base.Socket.pipe_events.__doc__
@@ -1730,7 +1832,7 @@ class TestPyPyHeaderkitCompat:
                     pytest.fail("PipeEvent positional pattern match failed")
 
         try:
-            import pynng.v2 as v2
+            from pynng import v2
         except ImportError:
             v2 = None  # type: ignore[assignment]
 
@@ -1994,3 +2096,51 @@ class TestAioEngineHeader:
         for sym in required_symbols:
             assert hasattr(lib, sym), f"_nng.lib missing AIO symbol {sym}"
             assert callable(getattr(lib, sym)), f"_nng.lib.{sym} is not callable"
+
+    @_skip_no_compiled_nng
+    @pytest.mark.skipif(sys.platform == "win32", reason="nm is POSIX-only")
+    def test_compiled_extensions_hide_internal_symbols(self):
+        """Verify _nng and _nng_v2 only export their PyInit entrypoints and do not leak NNG/TLS symbols."""
+        import shutil
+        import subprocess
+
+        import pynng._nng as nng_ext
+        import pynng._nng_v2 as nng_v2_ext
+
+        nm_bin = shutil.which("nm")
+        if nm_bin is None:
+            pytest.skip("nm not available")
+
+        cmake_path = os.path.join(_PROJECT_ROOT, "CMakeLists.txt")
+        with open(cmake_path, encoding="utf-8") as f:
+            cmake_src = f.read()
+        assert "set(CMAKE_C_VISIBILITY_PRESET hidden)" in cmake_src
+        assert "LINKER:-exported_symbol,_PyInit__nng" in cmake_src
+        assert "LINKER:-exported_symbol,_PyInit__nng_v2" in cmake_src
+        assert "LINKER:--exclude-libs,ALL" in cmake_src
+
+        for ext_mod, expected_init in (
+            (nng_ext, "PyInit__nng"),
+            (nng_v2_ext, "PyInit__nng_v2"),
+        ):
+            so_path = ext_mod.__file__
+            assert so_path is not None and os.path.isfile(so_path)
+            nm_args = (
+                [nm_bin, "-gU", so_path]
+                if sys.platform == "darwin"
+                else [nm_bin, "-D", "--defined-only", so_path]
+            )
+            proc = subprocess.run(nm_args, capture_output=True, text=True, check=True)
+            exported = [
+                line.split()[-1].lstrip("_")
+                for line in proc.stdout.splitlines()
+                if line.strip()
+            ]
+            assert expected_init in exported
+            leaked = [
+                sym
+                for sym in exported
+                if sym.startswith(("nng_", "nni_", "mbedtls_", "psa_", "wolfSSL_"))
+            ]
+            assert leaked == []
+

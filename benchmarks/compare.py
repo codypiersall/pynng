@@ -86,7 +86,7 @@ def compare_benchmarks(
             delta_str, status = format_delta(delta, higher_is_better=True)
             if delta < -5.0:
                 max_regression = max(max_regression, abs(delta))
-                if fail_threshold and abs(delta) >= fail_threshold:
+                if fail_threshold is not None and abs(delta) >= fail_threshold:
                     has_hard_regression = True
             lines.append(
                 f"| **{name}** | `{transport}` | {base_val:,.1f} | {pr_val:,.1f} | {delta_str} | {status} |"
@@ -121,7 +121,7 @@ def compare_benchmarks(
             delta_str, status = format_delta(delta, higher_is_better=False)
             if delta > 5.0:
                 max_regression = max(max_regression, delta)
-                if fail_threshold and delta >= fail_threshold:
+                if fail_threshold is not None and delta >= fail_threshold:
                     has_hard_regression = True
             lines.append(
                 f"| **{name}** | `{transport}` | {base_p50:.1f} µs | {pr_p50:.1f} µs | {base_p99:.1f} µs | {pr_p99:.1f} µs | {delta_str} | {status} |"

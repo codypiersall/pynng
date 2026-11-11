@@ -2,6 +2,9 @@ name: Performance Benchmarks
 
 on:
   push:
+    branches:
+      - master
+      - main
     paths:
       - 'pynng/**'
       - 'src/**'
@@ -60,6 +63,8 @@ jobs:
 
       # Step 1: Benchmark current branch
       - name: Build and Benchmark Current Branch
+        env:
+          BENCH_BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: |
           uv build --wheel -o dist/
           uv pip install --system --reinstall dist/*.whl
@@ -67,12 +72,16 @@ jobs:
 
       # Step 2: Checkout base branch and benchmark on the EXACT same VM
       - name: Build and Benchmark Base Branch
+        env:
+          INPUT_BASE_REF: ${{ inputs.base_ref }}
+          GITHUB_BASE_REF_ENV: ${{ github.base_ref }}
+          GITHUB_REF_NAME_ENV: ${{ github.ref_name }}
         run: |
-          TARGET_REF="${{ inputs.base_ref }}"
+          TARGET_REF="$INPUT_BASE_REF"
           if [ -z "$TARGET_REF" ]; then
-            if [ -n "${{ github.base_ref }}" ]; then
-              TARGET_REF="${{ github.base_ref }}"
-            elif [ "${{ github.ref_name }}" = "master" ]; then
+            if [ -n "$GITHUB_BASE_REF_ENV" ]; then
+              TARGET_REF="$GITHUB_BASE_REF_ENV"
+            elif [ "$GITHUB_REF_NAME_ENV" = "master" ]; then
               TARGET_REF="HEAD~1"
             else
               TARGET_REF="master"
@@ -92,7 +101,7 @@ jobs:
             git checkout "$RESOLVED_REF"
             uv build --wheel -o dist/
             uv pip install --system --reinstall dist/*.whl
-            python /tmp/bench_harness/bench.py -n 10000 --json base_bench.json
+            BENCH_BRANCH_NAME="$TARGET_REF" python /tmp/bench_harness/bench.py -n 10000 --json base_bench.json
           else
             echo "Base ref $TARGET_REF not found; skipping comparison."
           fi
@@ -100,10 +109,12 @@ jobs:
       # Step 3: Compare results & generate markdown table
       - name: Compare Benchmarks
         id: compare
+        env:
+          GITHUB_EVENT_NAME_ENV: ${{ github.event_name }}
         run: |
           if [ -f base_bench.json ]; then
             FAIL_ARG=""
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "$GITHUB_EVENT_NAME_ENV" = "pull_request" ]; then
               FAIL_ARG="--fail-on-regression 20"
             fi
             python /tmp/bench_harness/compare.py base_bench.json current_bench.json --output report.md $FAIL_ARG
@@ -119,11 +130,13 @@ jobs:
       # Step 4: Save benchmark report artifact for PR commenter workflow
       - name: Save PR Benchmark Artifact
         if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER_ENV: ${{ github.event.pull_request.number }}
         run: |
           mkdir -p pr_benchmark
           if [ -f report.md ]; then
             cp report.md pr_benchmark/
-            echo "${{ github.event.pull_request.number }}" > pr_benchmark/NR
+            echo "$PR_NUMBER_ENV" > pr_benchmark/NR
           fi
 
       - name: Upload PR Benchmark Artifact
