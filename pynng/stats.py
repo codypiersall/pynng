@@ -47,6 +47,19 @@ def _stat_unit_name(st_unit: int, _lib: _nng._Lib | _nng_v2._Lib = lib) -> str:
     }.get(st_unit, "unknown")
 
 
+_STAT_ATTRS: tuple[str, ...] = (
+    "name",
+    "desc",
+    "type",
+    "unit",
+    "value",
+    "timestamp",
+    "type_name",
+    "unit_name",
+    "children",
+)
+
+
 @dataclass(slots=True)
 class Stat(Mapping[str, StatValue]):
     """A structured representation of an nng runtime statistic.
@@ -66,28 +79,15 @@ class Stat(Mapping[str, StatValue]):
     children: list[Stat] = field(default_factory=list)
 
     def __getitem__(self, key: str) -> StatValue:
-        if hasattr(self, key):
-            return cast(StatValue, getattr(self, key))
-        # Allow looking up direct child by name
         for child in self.children:
             if child.name == key:
                 return child
+        if key in _STAT_ATTRS:
+            return cast(StatValue, getattr(self, key))
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(
-            (
-                "name",
-                "desc",
-                "type",
-                "unit",
-                "value",
-                "timestamp",
-                "type_name",
-                "unit_name",
-                "children",
-            )
-        )
+        return iter(_STAT_ATTRS)
 
     def __len__(self) -> int:
         return 9

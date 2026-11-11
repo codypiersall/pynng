@@ -254,6 +254,8 @@ class Rep0Service(AsyncIterator[Request]):
     ) -> None:
         if address is None and socket is None:
             raise ValueError("Either address or socket must be provided")
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise ValueError("workers must be >= 1")
         if socket is not None:
             expected = self._socket_class or pynng.Rep0
             if not isinstance(socket, expected):
@@ -317,6 +319,28 @@ class Rep0Service(AsyncIterator[Request]):
             else:
                 await self._start_asyncio()
         except BaseException:
+            self._running = False
+            for task in self._worker_tasks:
+                task.cancel()
+            self._worker_tasks.clear()
+            for ctx in self._contexts:
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
+            self._contexts.clear()
+            if self._nursery is not None:
+                try:
+                    self._nursery.cancel_scope.cancel()
+                except Exception:
+                    pass
+            if self._nursery_manager is not None:
+                try:
+                    await self._nursery_manager.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                self._nursery_manager = None
+                self._nursery = None
             self._release_socket()
             raise
 
@@ -361,10 +385,12 @@ class Rep0Service(AsyncIterator[Request]):
         while self._running:
             try:
                 data = await ctx.arecv()
+                if not self._running:
+                    break
                 replied_event = asyncio.Event()
-                await self._queue.put(
-                    Request(data, ctx, _replied_event=replied_event, _loop=loop)
-                )
+                req = Request(data, ctx, _replied_event=replied_event, _loop=loop)
+                req._replied = True
+                await self._queue.put(req)
                 # REP protocol requires reply before next receive on this context.
                 await replied_event.wait()
             except Closed:
@@ -403,15 +429,17 @@ class Rep0Service(AsyncIterator[Request]):
         while self._running:
             try:
                 data = await ctx.arecv()
+                if not self._running:
+                    break
                 replied_event: _EventLike = trio.Event()
-                await self._trio_send_channel.send(
-                    Request(
-                        data,
-                        ctx,
-                        _replied_event=replied_event,
-                        _trio_token=trio_tok,
-                    )
+                req = Request(
+                    data,
+                    ctx,
+                    _replied_event=replied_event,
+                    _trio_token=trio_tok,
                 )
+                req._replied = True
+                await self._trio_send_channel.send(req)
                 await replied_event.wait()
             except Closed:
                 break
@@ -441,49 +469,51 @@ class Rep0Service(AsyncIterator[Request]):
             await self._stop_asyncio()
 
     async def _stop_asyncio(self) -> None:
-        for ctx in self._contexts:
-            try:
-                ctx.close()
-            except Exception:
-                logger.debug("Exception closing context during shutdown", exc_info=True)
+        try:
+            for ctx in self._contexts:
+                try:
+                    ctx.close()
+                except Exception:
+                    logger.debug("Exception closing context during shutdown", exc_info=True)
 
-        for task in self._worker_tasks:
-            task.cancel()
+            for task in self._worker_tasks:
+                task.cancel()
 
-        for task in self._worker_tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.debug("Exception in worker during shutdown", exc_info=True)
+            for task in self._worker_tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.debug("Exception in worker during shutdown", exc_info=True)
 
-        if self._queue is not None:
-            await self._queue.put(self._sentinel)
-
-        self._worker_tasks.clear()
-        self._contexts.clear()
-
-        self._release_socket()
+            if self._queue is not None:
+                await self._queue.put(self._sentinel)
+        finally:
+            self._worker_tasks.clear()
+            self._contexts.clear()
+            self._release_socket()
 
     async def _stop_trio(self) -> None:
-        for ctx in self._contexts:
-            try:
-                ctx.close()
-            except Exception:
-                logger.debug("Exception closing context during shutdown", exc_info=True)
+        import trio
 
-        assert self._trio_send_channel is not None
-        assert self._nursery is not None
-        assert self._nursery_manager is not None
-        await self._trio_send_channel.aclose()
+        try:
+            for ctx in self._contexts:
+                try:
+                    ctx.close()
+                except Exception:
+                    logger.debug("Exception closing context during shutdown", exc_info=True)
 
-        self._nursery.cancel_scope.cancel()
-        await self._nursery_manager.__aexit__(None, None, None)
-
-        self._contexts.clear()
-
-        self._release_socket()
+            if self._nursery is not None:
+                self._nursery.cancel_scope.cancel()
+            if self._trio_send_channel is not None:
+                with trio.CancelScope(shield=True):
+                    await self._trio_send_channel.aclose()
+            if self._nursery_manager is not None:
+                await self._nursery_manager.__aexit__(None, None, None)
+        finally:
+            self._contexts.clear()
+            self._release_socket()
 
     def __aiter__(self: _ServiceSelfT) -> _ServiceSelfT:
         return self
@@ -500,6 +530,7 @@ class Rep0Service(AsyncIterator[Request]):
             assert self._trio_recv_channel is not None
             try:
                 req: Request = await self._trio_recv_channel.receive()
+                req._replied = False
                 return req
             except trio.EndOfChannel:
                 raise StopAsyncIteration from None
@@ -509,4 +540,5 @@ class Rep0Service(AsyncIterator[Request]):
             if item is self._sentinel:
                 raise StopAsyncIteration
             assert isinstance(item, Request)
+            item._replied = False
             return item

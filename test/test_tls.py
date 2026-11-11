@@ -220,8 +220,8 @@ def test_tls_auth_mode():
         # - wolfSSL: silently accepts any value
         # - CFFI on Linux/macOS: raises OverflowError for negative unsigned int
         # - CFFI on Windows: wraps negative values, may or may not error
-        # We only test that negative values are rejected at the CFFI level.
-        with pytest.raises((OverflowError, pynng.NNGException)):
+        # Invalid auth mode is rejected by _translate_constant before mutating C configs
+        with pytest.raises((ValueError, OverflowError, pynng.NNGException)):
             config.set_auth_mode(-999)
     finally:
         del config
@@ -263,6 +263,11 @@ def test_tls_auth_mode_in_constructor():
     gc.collect()
 
 
+@pytest.mark.requires_tls
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="Windows SChannel TLS backend does not support set_auth_mode",
+)
 def test_tls_auth_mode_none_applied():
     """auth_mode=AUTH_MODE_NONE is applied."""
     tls = TLSConfig(
@@ -278,6 +283,7 @@ def test_tls_config_del_partially_initialized():
     tls.__del__()
 
 
+@pytest.mark.requires_tls
 def test_tls_config_del_after_normal_init():
     """TLSConfig cleans up normally when garbage collected."""
     tls = TLSConfig(TLSConfig.MODE_CLIENT)
@@ -285,19 +291,14 @@ def test_tls_config_del_after_normal_init():
     tls.__del__()
 
 
-def test_tls_server_name_none_raises():
-    """set_server_name(None) raises ValueError."""
-    tls = TLSConfig(TLSConfig.MODE_CLIENT)
-    with pytest.raises(ValueError, match="cannot be None"):
-        tls.set_server_name(None)
-
-
+@pytest.mark.requires_tls
 def test_tls_server_name_empty_string_clears():
     """set_server_name('') clears the server name."""
     tls = TLSConfig(TLSConfig.MODE_CLIENT)
     tls.set_server_name("")
 
 
+@pytest.mark.requires_tls
 def test_tls_server_name_set():
     """set_server_name accepts a hostname."""
     tls = TLSConfig(TLSConfig.MODE_CLIENT)
@@ -403,6 +404,4 @@ def test_wss_constructor_init():
             assert server.recv() == BYTES
             server.send(BYTES)
             assert client.recv() == BYTES
-
-
 

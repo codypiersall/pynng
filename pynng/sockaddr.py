@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import struct
 from typing import TYPE_CHECKING, cast
@@ -19,7 +20,7 @@ class SockAddr:
 
     """
 
-    __slots__ = ("_ffi", "_sock_addr")
+    __slots__ = ("_ffi", "_lib", "_sock_addr")
 
     type_to_str: dict[int, str] = {
         pynng.lib.NNG_AF_UNSPEC: "Unspecified",
@@ -40,10 +41,15 @@ class SockAddr:
     }
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
         self._sock_addr = ffi_sock_addr
         self._ffi: cffi.FFI = ffi if ffi is not None else pynng.ffi
+        self._lib: _nng._Lib | _nng_v2._Lib = lib if lib is not None else pynng.lib
 
     @property
     def sock_addr(self) -> _nng.nng_sockaddr | _nng_v2.nng_sockaddr:
@@ -57,7 +63,23 @@ class SockAddr:
     @property
     def family_as_str(self) -> str:
         """The string representation of the address family."""
-        return self._base_type_to_str.get(self.family, f"unknown ({self.family})")
+        fam = self.family
+        _lib = self._lib
+        if fam == int(_lib.NNG_AF_UNSPEC):
+            return "Unspecified"
+        if fam == int(_lib.NNG_AF_INPROC):
+            return "inproc"
+        if fam == int(_lib.NNG_AF_IPC):
+            return "ipc"
+        if fam == int(_lib.NNG_AF_INET):
+            return "inet"
+        if fam == int(_lib.NNG_AF_INET6):
+            return "inetv6"
+        if hasattr(_lib, "NNG_AF_ZT") and fam == int(getattr(_lib, "NNG_AF_ZT")):
+            return "zerotier"
+        if fam == int(_lib.NNG_AF_ABSTRACT):
+            return "abstract"
+        return self._base_type_to_str.get(fam, f"unknown ({fam})")
 
     def __repr__(self) -> str:
         return f"nng_sockaddr {{.family = {self.family}}}"
@@ -67,9 +89,13 @@ class InprocAddr(SockAddr):
     __slots__ = ("_mem",)
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
-        super().__init__(ffi_sock_addr, ffi=ffi)
+        super().__init__(ffi_sock_addr, ffi=ffi, lib=lib)
         # union member
         self._mem = self.sock_addr.s_inproc
 
@@ -84,7 +110,7 @@ class InprocAddr(SockAddr):
 
     @property
     def name(self) -> str:
-        return self.name_bytes.decode()
+        return self.name_bytes.decode("utf-8", "surrogateescape")
 
     def __str__(self) -> str:
         return self.name
@@ -94,9 +120,13 @@ class IPCAddr(SockAddr):
     __slots__ = ("_mem",)
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
-        super().__init__(ffi_sock_addr, ffi=ffi)
+        super().__init__(ffi_sock_addr, ffi=ffi, lib=lib)
         # union member
         self._mem = self.sock_addr.s_ipc
 
@@ -111,7 +141,7 @@ class IPCAddr(SockAddr):
 
     @property
     def path(self) -> str:
-        return self.path_bytes.decode()
+        return os.fsdecode(self.path_bytes)
 
     def __str__(self) -> str:
         return self.path
@@ -121,9 +151,13 @@ class InAddr(SockAddr):
     __slots__ = ("_mem",)
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
-        super().__init__(ffi_sock_addr, ffi=ffi)
+        super().__init__(ffi_sock_addr, ffi=ffi, lib=lib)
         # union member
         self._mem = self.sock_addr.s_in
 
@@ -152,9 +186,13 @@ class In6Addr(SockAddr):
     __slots__ = ("_mem",)
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
-        super().__init__(ffi_sock_addr, ffi=ffi)
+        super().__init__(ffi_sock_addr, ffi=ffi, lib=lib)
         # union member
         self._mem = self.sock_addr.s_in6
 
@@ -173,7 +211,6 @@ class In6Addr(SockAddr):
         return bytes(self._mem.sa_addr)
 
     def __str__(self) -> str:
-        # TODO: not a good string repr at all
         ip = socket.inet_ntop(socket.AF_INET6, self.addr)
         port = socket.ntohs(self.port)
         return f"[{ip}]:{port}"
@@ -183,9 +220,13 @@ class ZTAddr(SockAddr):
     __slots__ = ("_mem",)
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
-        super().__init__(ffi_sock_addr, ffi=ffi)
+        super().__init__(ffi_sock_addr, ffi=ffi, lib=lib)
         # union member
         self._mem = cast("_nng.nng_sockaddr", self.sock_addr).s_zt
 
@@ -205,14 +246,21 @@ class ZTAddr(SockAddr):
     def port(self) -> int:
         return int(self._mem.sa_port)
 
+    def __str__(self) -> str:
+        return f"zt://{self.nodeid:010x}.{self.nwid:016x}:{self.port}"
+
 
 class AbstractAddr(SockAddr):
     __slots__ = ("_mem",)
 
     def __init__(
-        self, ffi_sock_addr: cffi.FFI.CData, *, ffi: cffi.FFI | None = None
+        self,
+        ffi_sock_addr: cffi.FFI.CData,
+        *,
+        ffi: cffi.FFI | None = None,
+        lib: _nng._Lib | _nng_v2._Lib | None = None,
     ) -> None:
-        super().__init__(ffi_sock_addr, ffi=ffi)
+        super().__init__(ffi_sock_addr, ffi=ffi, lib=lib)
         # union member
         self._mem = self.sock_addr.s_abstract
 
@@ -229,28 +277,13 @@ class AbstractAddr(SockAddr):
 
     @property
     def name(self) -> str:
-        # Decode the name bytes, handling any URI encoding
-        name_bytes = self.name_bytes
-        try:
-            # Try to decode as UTF-8 first
-            name_str = name_bytes.decode("utf-8")
-            # Unescape any URI-encoded characters
-            return urllib.parse.unquote(name_str)
-        except UnicodeDecodeError:
-            # If UTF-8 decoding fails, return a representation of the bytes
-            return repr(name_bytes)
+        # Decode the raw name bytes (sa_name is already unescaped in C by NNG)
+        return self.name_bytes.decode("utf-8", "surrogateescape")
 
     def __str__(self) -> str:
-        # Return the abstract socket URI format
-        try:
-            # Try to encode as UTF-8 and URI-encode
-            name_str = self.name_bytes.decode("utf-8")
-            encoded_name = urllib.parse.quote(name_str)
-            return f"abstract://{encoded_name}"
-        except UnicodeDecodeError:
-            # If UTF-8 encoding fails, use a hex representation
-            hex_name = self.name_bytes.hex()
-            return f"abstract://{hex_name}"
+        # Return the abstract socket URI format using quote_from_bytes on raw bytes
+        encoded_name = urllib.parse.quote_from_bytes(self.name_bytes)
+        return f"abstract://{encoded_name}"
 
 
 def _nng_sockaddr(
@@ -274,4 +307,4 @@ def _nng_sockaddr(
     # fall through to SockAddr, e.g. if it's unspecified
     sock_addr = cast("_nng.nng_sockaddr | _nng_v2.nng_sockaddr", sa[0])
     cls = lookup.get(sock_addr.s_family, SockAddr)
-    return cls(sa, ffi=_ffi)
+    return cls(sa, ffi=_ffi, lib=_lib)

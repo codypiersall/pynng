@@ -183,45 +183,53 @@ class TLSConfig:
             lib=self._lib,
             ffi=self._ffi,
         )
+        from ._base import _mark_nng_initialized
+
+        _mark_nng_initialized()
         self._tls_config = cast("_NngTlsConfig", tls_config_p[0])
-        _retain_closed(self)
 
         with _libs_lock:
             other_libs = [(lb, ff) for lb, ff in _libs if lb is not self._lib]
-        for alt_lib, alt_ffi in other_libs:
-            alt_mode = _translate_constant(mode, _MODE_NAMES, self._lib, alt_lib)
-            alt_p = alt_ffi.new("nng_tls_config **")
-            alt_tls_lib = cast(_TlsLibProtocol, alt_lib)
-            err = alt_tls_lib.nng_tls_config_alloc(alt_p, alt_mode)
-            if err == alt_lib.NNG_ENOTSUP:
-                # That library was built without TLS; using this config with
-                # it raises, using it with the others works.
-                try:
-                    pynng.check_err(err, lib=alt_lib, ffi=alt_ffi)
-                except pynng.NotSupported as exc:
-                    self._alt_configs[alt_lib] = _Unavailable(exc)
-                continue
-            pynng.check_err(err, lib=alt_lib, ffi=alt_ffi)
-            self._alt_configs[alt_lib] = (alt_ffi, cast("_NngTlsConfig", alt_p[0]))
+        try:
+            for alt_lib, alt_ffi in other_libs:
+                alt_mode = _translate_constant(mode, _MODE_NAMES, self._lib, alt_lib)
+                alt_p = alt_ffi.new("nng_tls_config **")
+                alt_tls_lib = cast(_TlsLibProtocol, alt_lib)
+                err = alt_tls_lib.nng_tls_config_alloc(alt_p, alt_mode)
+                if err == alt_lib.NNG_ENOTSUP:
+                    # That library was built without TLS; using this config with
+                    # it raises, using it with the others works.
+                    try:
+                        pynng.check_err(err, lib=alt_lib, ffi=alt_ffi)
+                    except pynng.NotSupported as exc:
+                        self._alt_configs[alt_lib] = _Unavailable(exc)
+                    continue
+                pynng.check_err(err, lib=alt_lib, ffi=alt_ffi)
+                self._alt_configs[alt_lib] = (alt_ffi, cast("_NngTlsConfig", alt_p[0]))
 
-        if server_name is not None:
-            self.set_server_name(server_name)
+            if server_name is not None:
+                self.set_server_name(server_name)
 
-        if ca_string:
-            self.set_ca_chain(ca_string)
+            if ca_string:
+                self.set_ca_chain(ca_string)
 
-        if own_key_string and own_cert_string:
-            self.set_own_cert(own_cert_string, own_key_string, passwd)
+            if own_key_string and own_cert_string:
+                self.set_own_cert(own_cert_string, own_key_string, passwd)
 
-        if auth_mode is not None:
-            self.set_auth_mode(auth_mode)
+            if auth_mode is not None:
+                self.set_auth_mode(auth_mode)
 
-        if ca_file_list:
-            for f in ca_file_list:
-                self.add_ca_file(f)
+            if ca_file_list:
+                for f in ca_file_list:
+                    self.add_ca_file(f)
 
-        if cert_key_file:
-            self.set_cert_key_file(cert_key_file, passwd)
+            if cert_key_file:
+                self.set_cert_key_file(cert_key_file, passwd)
+        except BaseException:
+            self._free_configs()
+            raise
+
+        _retain_closed(self)
 
     @staticmethod
     def _apply_op(
@@ -279,7 +287,15 @@ class TLSConfig:
 
     def _apply_everywhere(self, op_name: str, args: tuple[_TlsOpArg, ...]) -> None:
         assert self._tls_config is not None
-        self._apply_op(self._lib, self._ffi, self._tls_config, op_name, args)
+        translated_alt_ops: list[
+            tuple[_NngLib, cffi.FFI, _NngTlsConfig, tuple[_TlsOpArg, ...]]
+        ] = []
+        if op_name == "auth_mode":
+            mode_arg = args[0]
+            if isinstance(mode_arg, bool) or not isinstance(mode_arg, int):
+                raise ValueError(f"Unknown TLS constant {mode_arg!r}")
+            # Validate against self._lib first before mutating any config
+            _translate_constant(mode_arg, _AUTH_MODE_NAMES, self._lib, self._lib)
         for alt_lib, entry in list(self._alt_configs.items()):
             if isinstance(entry, _Unavailable):
                 continue
@@ -291,6 +307,9 @@ class TLSConfig:
                 alt_args = (
                     _translate_constant(mode_arg, _AUTH_MODE_NAMES, self._lib, alt_lib),
                 )
+            translated_alt_ops.append((alt_lib, alt_ffi, alt_cfg, alt_args))
+        self._apply_op(self._lib, self._ffi, self._tls_config, op_name, args)
+        for alt_lib, alt_ffi, alt_cfg, alt_args in translated_alt_ops:
             try:
                 self._apply_op(alt_lib, alt_ffi, alt_cfg, op_name, alt_args)
             except BaseException as exc:
@@ -328,30 +347,33 @@ class TLSConfig:
             raise entry.error
         return entry[1]
 
+    def _free_configs(self) -> None:
+        cfg = getattr(self, "_tls_config", None)
+        if cfg is not None and cfg != self._ffi.NULL:
+            self._tls_config = None
+            if not _is_nng_finalized(self._lib):
+                cast(_TlsLibProtocol, self._lib).nng_tls_config_free(cfg)
+        alt_configs = getattr(self, "_alt_configs", None)
+        if alt_configs:
+            for alt_lib, entry in list(alt_configs.items()):
+                if isinstance(entry, _Unavailable):
+                    div_entry = entry.diverged_cfg
+                    if div_entry is None:
+                        continue
+                    alt_ffi, alt_cfg = div_entry
+                else:
+                    alt_ffi, alt_cfg = entry
+                if (
+                    alt_cfg is not None
+                    and alt_cfg != alt_ffi.NULL
+                    and not _is_nng_finalized(alt_lib)
+                ):
+                    cast(_TlsLibProtocol, alt_lib).nng_tls_config_free(alt_cfg)
+            alt_configs.clear()
+
     def __del__(self) -> None:
         try:
-            if _is_nng_finalized():
-                self._tls_config = None
-                if hasattr(self, "_alt_configs"):
-                    self._alt_configs.clear()
-                return
-            cfg = getattr(self, "_tls_config", None)
-            if cfg is not None and cfg != self._ffi.NULL:
-                self._tls_config = None
-                cast(_TlsLibProtocol, self._lib).nng_tls_config_free(cfg)
-            alt_configs = getattr(self, "_alt_configs", None)
-            if alt_configs:
-                for alt_lib, entry in list(alt_configs.items()):
-                    if isinstance(entry, _Unavailable):
-                        div_entry = entry.diverged_cfg
-                        if div_entry is None:
-                            continue
-                        alt_ffi, alt_cfg = div_entry
-                    else:
-                        alt_ffi, alt_cfg = entry
-                    if alt_cfg is not None and alt_cfg != alt_ffi.NULL:
-                        cast(_TlsLibProtocol, alt_lib).nng_tls_config_free(alt_cfg)
-                alt_configs.clear()
+            self._free_configs()
         except (TypeError, AttributeError, ImportError):
             # During interpreter shutdown, globals (pynng, lib) may be None
             pass

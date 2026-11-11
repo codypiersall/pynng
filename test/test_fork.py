@@ -185,3 +185,95 @@ def test_fork_inherited_send_msg_raises_runtime_error(on_context, use_v2):
     assert kind == "RUNTIME_ERROR"
     assert expected_msg is not None
     assert err_msg == expected_msg
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is only supported on POSIX")
+def test_fork_after_v2_import_raises_in_child(tmp_path):
+    """Importing pynng.v2 initializes NNG v2 C runtime; fork() must raise RuntimeError in child."""
+    pytest.importorskip("pynng.v2")
+    pynng_parent_dir = str(os.path.dirname(os.path.dirname(os.path.abspath(pynng.__file__))))
+    script = tmp_path / "fork_v2_import.py"
+    script.write_text(f"""
+import sys
+sys.path.insert(0, {pynng_parent_dir!r})
+import multiprocessing as mp
+import pynng.v2 as v2
+
+def run_child(queue):
+    try:
+        s = v2.Pair0()
+        s.close()
+        queue.put("SUCCESS")
+    except RuntimeError as exc:
+        queue.put(f"RUNTIME_ERROR: {{exc}}")
+    except BaseException as exc:
+        queue.put(f"UNEXPECTED_EXCEPTION: {{type(exc).__name__}}: {{exc}}")
+
+if __name__ == "__main__":
+    ctx = mp.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=run_child, args=(queue,))
+    proc.start()
+    proc.join(timeout=5)
+    assert proc.exitcode == 0, f"child exited with {{proc.exitcode}}"
+    result = queue.get(timeout=2)
+    assert result.startswith("RUNTIME_ERROR:"), result
+    assert "does not support fork()" in result, result
+    print("FORK_V2_IMPORT_OK")
+""")
+    res = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == "FORK_V2_IMPORT_OK"
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is only supported on POSIX")
+def test_fork_after_tls_config_raises_in_child(tmp_path):
+    """Allocating TLSConfig initializes NNG C runtime; fork() must raise RuntimeError in child."""
+    pynng_parent_dir = str(os.path.dirname(os.path.dirname(os.path.abspath(pynng.__file__))))
+    script = tmp_path / "fork_tls_config.py"
+    script.write_text(f"""
+import sys
+sys.path.insert(0, {pynng_parent_dir!r})
+import multiprocessing as mp
+import pynng
+from pynng import TLSConfig
+
+def run_child(queue):
+    try:
+        s = pynng.Pair0()
+        s.close()
+        queue.put("SUCCESS")
+    except RuntimeError as exc:
+        queue.put(f"RUNTIME_ERROR: {{exc}}")
+    except BaseException as exc:
+        queue.put(f"UNEXPECTED_EXCEPTION: {{type(exc).__name__}}: {{exc}}")
+
+if __name__ == "__main__":
+    cfg = TLSConfig(TLSConfig.MODE_CLIENT)
+    ctx = mp.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=run_child, args=(queue,))
+    proc.start()
+    proc.join(timeout=5)
+    assert proc.exitcode == 0, f"child exited with {{proc.exitcode}}"
+    result = queue.get(timeout=2)
+    assert result.startswith("RUNTIME_ERROR:"), result
+    assert "does not support fork()" in result, result
+    print("FORK_TLS_CONFIG_OK")
+""")
+    res = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == "FORK_TLS_CONFIG_OK"
+

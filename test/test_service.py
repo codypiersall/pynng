@@ -459,3 +459,44 @@ def test_uninitialized_request_del_no_attribute_error():
         sys.unraisablehook = old_hook
     assert unraisable_errors == []
 
+
+def test_rep0_service_invalid_workers_raises():
+    """Rep0Service rejects workers < 1 or boolean workers."""
+    with pytest.raises(ValueError, match="workers must be >= 1"):
+        Rep0Service("inproc://invalid-workers-0", workers=0)
+    with pytest.raises(ValueError, match="workers must be >= 1"):
+        Rep0Service("inproc://invalid-workers-neg", workers=-2)
+    with pytest.raises(ValueError, match="workers must be >= 1"):
+        Rep0Service("inproc://invalid-workers-bool", workers=False)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_rep0_service_early_break_drains_queued_requests_without_warning():
+    """Breaking out of Rep0Service when extra requests are queued does not emit ResourceWarning."""
+    import gc
+
+    addr = _unique_addr("early-break-drain-asyncio")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always", ResourceWarning)
+        async with Rep0Service(
+            addr, workers=3, recv_timeout=3000, send_timeout=3000
+        ) as service:
+            c1 = pynng.Req0(dial=addr, recv_timeout=500, send_timeout=1000)
+            c2 = pynng.Req0(dial=addr, recv_timeout=500, send_timeout=1000)
+            wait_pipe_len(c1, 1)
+            wait_pipe_len(c2, 1)
+            await c1.asend(b"req-1")
+            await c2.asend(b"req-2")
+            await asyncio.sleep(0.05)
+            async for request in service:
+                await request.reply(b"rep-1")
+                break
+            c1.close()
+            c2.close()
+        gc.collect()
+        resource_warnings = [
+            item for item in w if issubclass(item.category, ResourceWarning)
+        ]
+        assert resource_warnings == []
+
+

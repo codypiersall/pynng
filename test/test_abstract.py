@@ -24,31 +24,21 @@ def test_abstract_addr_in_type_to_str():
 
 
 def test_nng_sockaddr_dispatch_includes_abstract():
-    """Test that _nng_sockaddr correctly dispatches NNG_AF_ABSTRACT to AbstractAddr.
-
-    NOTE: Uses Python mock objects to simulate CFFI structs.
-    This tests the Python-side dispatch logic but cannot catch issues
-    with actual CFFI memory access patterns. See Linux-specific tests
-    for real CFFI integration coverage.
-    """
+    """Test that _nng_sockaddr correctly dispatches NNG_AF_ABSTRACT to AbstractAddr."""
     from pynng.sockaddr import _nng_sockaddr
 
-    # Create a mock sockaddr with abstract family to verify dispatch
-    class MockAbstractSockAddr:
-        def __init__(self):
-            self.s_family = pynng.lib.NNG_AF_ABSTRACT
-            self.s_abstract = MockAbstract()
+    c_addr = pynng.ffi.new("nng_sockaddr *")
+    c_addr.s_family = pynng.lib.NNG_AF_ABSTRACT
+    c_addr.s_abstract.sa_len = 4
+    c_addr.s_abstract.sa_name[0:4] = b"test"
 
-    class MockAbstract:
-        def __init__(self):
-            self.sa_len = 4
-            self.sa_name = bytearray(107)
-            self.sa_name[0:4] = b"test"
-
-    mock_addr = [MockAbstractSockAddr()]
-    result = _nng_sockaddr(mock_addr)
+    result = _nng_sockaddr(c_addr)
     assert isinstance(result, pynng.sockaddr.AbstractAddr)
     assert result.family == pynng.lib.NNG_AF_ABSTRACT
+    assert result.family_as_str == "abstract"
+    assert result.name_bytes == b"test"
+    assert result.name == "test"
+    assert str(result) == "abstract://test"
 
 
 @pytest.mark.skipif(
@@ -197,92 +187,52 @@ def test_abstract_socket_error_on_non_linux():
 
 
 def test_abstract_addr_name_bytes():
-    """Test AbstractAddr name_bytes property.
+    """Test AbstractAddr name_bytes property with real CFFI nng_sockaddr."""
+    c_addr = pynng.ffi.new("nng_sockaddr *")
+    c_addr.s_family = pynng.lib.NNG_AF_ABSTRACT
+    c_addr.s_abstract.sa_len = 5
+    c_addr.s_abstract.sa_name[0:5] = b"test\x00"
 
-    NOTE: Uses Python mock objects to simulate CFFI structs.
-    This tests the Python-side dispatch logic but cannot catch issues
-    with actual CFFI memory access patterns. See Linux-specific tests
-    for real CFFI integration coverage.
-    """
-
-    # Create a mock abstract sockaddr
-    class MockAbstractSockAddr:
-        def __init__(self):
-            self.s_family = pynng.lib.NNG_AF_ABSTRACT
-            self.s_abstract = MockAbstract()
-
-    class MockAbstract:
-        def __init__(self):
-            self.sa_len = 5
-            self.sa_name = bytearray(107)
-            # Set first 5 bytes
-            self.sa_name[0:5] = [ord("t"), ord("e"), ord("s"), ord("t"), 0]
-
-    # Create a mock ffi_sock_addr
-    mock_sock_addr = [MockAbstractSockAddr()]
-
-    # Create AbstractAddr instance
-    abstract_addr = pynng.sockaddr.AbstractAddr(mock_sock_addr)
-
-    # Test name_bytes property
+    abstract_addr = pynng.sockaddr.AbstractAddr(c_addr)
     name_bytes = abstract_addr.name_bytes
     assert len(name_bytes) == 5
     assert name_bytes == b"test\x00"
 
 
 def test_abstract_addr_name_with_null_bytes():
-    """Test AbstractAddr name property with embedded NUL bytes in raw name data.
+    """Test AbstractAddr name property with embedded NUL and literal percent bytes."""
+    c_addr = pynng.ffi.new("nng_sockaddr *")
+    c_addr.s_family = pynng.lib.NNG_AF_ABSTRACT
+    test_bytes = b"test\x00%41socket"
+    c_addr.s_abstract.sa_len = len(test_bytes)
+    c_addr.s_abstract.sa_name[0 : len(test_bytes)] = test_bytes
 
-    NOTE: Uses Python mock objects to simulate CFFI structs.
-    This tests the Python-side dispatch logic but cannot catch issues
-    with actual CFFI memory access patterns. See Linux-specific tests
-    for real CFFI integration coverage.
-    """
+    abstract_addr = pynng.sockaddr.AbstractAddr(c_addr)
+    assert abstract_addr.name == "test\x00%41socket"
+    assert str(abstract_addr) == "abstract://test%00%2541socket"
 
-    class MockAbstractSockAddr:
-        def __init__(self):
-            self.s_family = pynng.lib.NNG_AF_ABSTRACT
-            self.s_abstract = MockAbstract()
 
-    class MockAbstract:
-        def __init__(self):
-            self.sa_len = 11
-            self.sa_name = bytearray(107)
-            test_bytes = b"test\x00socket"
-            self.sa_name[0:11] = test_bytes
+def test_abstract_addr_non_utf8():
+    """Test AbstractAddr name and str properties with non-UTF-8 raw bytes."""
+    c_addr = pynng.ffi.new("nng_sockaddr *")
+    c_addr.s_family = pynng.lib.NNG_AF_ABSTRACT
+    raw = b"\xff\xfe\x00ab"
+    c_addr.s_abstract.sa_len = len(raw)
+    c_addr.s_abstract.sa_name[0 : len(raw)] = raw
 
-    mock_sock_addr = [MockAbstractSockAddr()]
-    abstract_addr = pynng.sockaddr.AbstractAddr(mock_sock_addr)
-
-    # Verify the exact decoded name, including the NUL byte
-    name = abstract_addr.name
-    assert name == "test\x00socket"
+    abstract_addr = pynng.sockaddr.AbstractAddr(c_addr)
+    assert abstract_addr.name_bytes == raw
+    assert abstract_addr.name.encode("utf-8", errors="surrogateescape") == raw
+    assert str(abstract_addr) == "abstract://%FF%FE%00ab"
 
 
 def test_abstract_addr_str_representation():
-    """Test AbstractAddr string representation.
+    """Test AbstractAddr string representation."""
+    c_addr = pynng.ffi.new("nng_sockaddr *")
+    c_addr.s_family = pynng.lib.NNG_AF_ABSTRACT
+    test_bytes = b"test_name"
+    c_addr.s_abstract.sa_len = len(test_bytes)
+    c_addr.s_abstract.sa_name[0 : len(test_bytes)] = test_bytes
 
-    NOTE: Uses Python mock objects to simulate CFFI structs.
-    This tests the Python-side dispatch logic but cannot catch issues
-    with actual CFFI memory access patterns. See Linux-specific tests
-    for real CFFI integration coverage.
-    """
-
-    class MockAbstractSockAddr:
-        def __init__(self):
-            self.s_family = pynng.lib.NNG_AF_ABSTRACT
-            self.s_abstract = MockAbstract()
-
-    class MockAbstract:
-        def __init__(self):
-            self.sa_len = 9
-            self.sa_name = bytearray(107)
-            test_bytes = b"test_name"
-            self.sa_name[0:9] = test_bytes
-
-    mock_sock_addr = [MockAbstractSockAddr()]
-    abstract_addr = pynng.sockaddr.AbstractAddr(mock_sock_addr)
-
-    # Verify exact string representation
-    addr_str = str(abstract_addr)
-    assert addr_str == "abstract://test_name"
+    abstract_addr = pynng.sockaddr.AbstractAddr(c_addr)
+    assert str(abstract_addr) == "abstract://test_name"

@@ -93,7 +93,7 @@ class PermissionDenied(NNGException):  # NNG_EPERM
     pass
 
 
-class MessageTooLarge(NNGException):  # NNG_EMSGSiZE
+class MessageTooLarge(NNGException):  # NNG_EMSGSIZE
     pass
 
 
@@ -228,7 +228,7 @@ def check_err(
 
     msg = active_lib.nng_strerror(cast("_nng_v2.nng_err", err))
     raw = active_ffi.string(cast("cffi.FFI.CData", msg))
-    string = raw.decode() if isinstance(raw, bytes) else str(raw)
+    string = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
     exc = EXCEPTION_MAP.get(err, NNGException)
     if (
         exc is NNGException
