@@ -38,8 +38,10 @@ On Ubuntu/Debian:
 On macOS, Xcode's bundled ``libclang`` is usually sufficient. If you encounter
 issues with ``llvm-ranlib``, see the troubleshooting section below.
 
-On Windows, the build process installs LLVM automatically via Chocolatey during
-CI. For local builds, install LLVM from https://releases.llvm.org/.
+On Windows, standard builds from source only require a C compiler (such as MSVC)
+and CMake/Ninja. If you are regenerating CFFI declarations or ``.pyi`` stubs
+with ``headerkit`` (``PYNNG_USE_CACHED_CDEF=0``), install LLVM from
+https://releases.llvm.org/ or run ``python -m headerkit.install_libclang``.
 
 Customizing the build
 ---------------------
@@ -153,18 +155,24 @@ Troubleshooting
 macOS: ``llvm-ranlib`` error
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If the build fails with an error related to ``llvm-ranlib``, you may need to
-install LLVM via Homebrew and configure your path:
+If you have Homebrew's ``llvm`` installed and in your ``PATH``, ``llvm-ranlib``
+can produce GNU archive symbol tables on empty archives (such as mbedTLS's
+``libeverest.a`` and ``libp256m.a``) that Apple's ``ld`` rejects with
+``ld: archive member '/' not a mach-o file``. ``CMakeLists.txt`` automatically
+overrides ``llvm-ranlib`` with ``/usr/bin/ranlib`` on macOS, or you can force
+Apple's system archiver explicitly:
 
 .. code-block:: bash
 
-   brew install llvm
-   export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+   pip install -Ccmake.define.CMAKE_AR=/usr/bin/ar -Ccmake.define.CMAKE_RANLIB=/usr/bin/ranlib .
 
 Linux: ``libclang`` not found
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If headerkit cannot find ``libclang``:
+Standard builds from source use the pre-generated CFFI declarations in
+``pynng/_nng_cdef.py`` and do not require ``libclang``. If you are regenerating
+CFFI declarations or ``.pyi`` stubs from NNG's C headers
+(``PYNNG_USE_CACHED_CDEF=0``) and ``headerkit`` cannot find ``libclang``:
 
 .. code-block:: bash
 

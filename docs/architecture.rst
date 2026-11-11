@@ -51,8 +51,9 @@ Code Organization
       __init__.py       Public API re-exports (NNG v1 in pynng 1.x)
       nng.py            Core: Socket, Pipe, Context, Message, protocol classes
       _base.py          Shared v1/v2 base classes and generic option descriptors
-      _aio.py           Async layer: AIOHelper, asyncio/trio integration
-      _finalized.py     Process-exit finalization tracking
+      _aio.py           Async layer: AIOHelper, MPSCAIOEngine, asyncio/trio integration
+      _finalized.py     Process-exit finalization and fork-safety tracking
+      _nng_cdef.py      Pre-generated CFFI cdef strings and header lists (v1 & v2)
       options.py        Option getter/setter functions
       service.py        High-level concurrent Rep0Service
       stats.py          NNG runtime statistics tree wrapper
@@ -64,6 +65,8 @@ Code Organization
       _nng.*            Compiled CFFI extension and .pyi stub for nng v1 (generated at build time)
       _nng_v2.*         Compiled CFFI extension and .pyi stub for nng v2 (generated at build time)
       _version.py       Auto-generated version (setuptools-scm, not in source tree)
+    src/
+      aio_engine.h      Wait-free C11 MPSC intrusive completion queue & sync recv engine
 
 
 Key Patterns
@@ -121,24 +124,25 @@ extension stubs.
 Async Layer
 ^^^^^^^^^^^^
 
-``_aio.py`` wraps NNG's asynchronous I/O (``nng_aio``) with Python
-async/await support. The design supports multiple async frameworks:
+``_aio.py`` and ``src/aio_engine.h`` wrap NNG's asynchronous I/O (``nng_aio``)
+with Python async/await support. The design supports both ``asyncio`` and
+``trio``:
 
-1. ``AIOHelper`` is created for each async operation (send or receive).
-2. It uses `sniffio <https://sniffio.readthedocs.io/>`_ to detect whether
-   ``asyncio`` or ``trio`` is the active event loop.
-3. A framework-specific helper (``asyncio_helper`` or ``trio_helper``) creates:
-
-   - An **awaitable** that the calling code can ``await``
-   - A **rescheduler callback** that NNG's C callback will invoke to wake up
-     the Python coroutine
-
-4. NNG calls the C callback ``_async_complete`` when the async operation
-   finishes. This callback looks up the rescheduler in ``_aio_map`` and
-   invokes it.
-5. For asyncio, the rescheduler uses ``loop.call_soon_threadsafe()`` to
-   resolve a ``Future``. For trio, it uses ``trio.lowlevel.reschedule()``
-   to wake the task.
+1. ``Socket`` and ``Context`` maintain pools of reusable ``AIOHelper`` objects
+   (``_recv_pool`` and ``_send_pool``) so hot-path ``arecv``/``asend`` calls
+   avoid allocating and freeing ``nng_aio`` handles on every message.
+2. When an operation starts, ``sniffio`` detects whether ``asyncio`` or
+   ``trio`` is the active event loop.
+3. On ``asyncio`` event loops that support ``loop.add_reader`` (POSIX
+   ``SelectorEventLoop``), ``MPSCAIOEngine`` uses a wait-free C11 MPSC
+   intrusive completion queue (``src/aio_engine.h``) and a self-pipe wake-up
+   FD so NNG's C completion callback ``_mpsc_aio_cb`` enqueues completions in
+   pure C without acquiring the Python GIL. On event loops without
+   ``add_reader`` (such as Windows ``ProactorEventLoop``), ``asyncio_helper``
+   falls back to ``_async_complete`` and ``loop.call_soon_threadsafe()``.
+4. For ``trio``, ``trio_helper`` uses ``_async_complete`` and
+   ``trio.lowlevel.Task`` / ``trio_token.run_sync_soon()`` to reschedule the
+   waiting task.
 
 Both ``Socket`` and ``Context`` support ``async with`` (async context manager)
 and ``async for`` (async iteration over received messages).

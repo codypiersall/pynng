@@ -19,16 +19,16 @@ as before), but it matters if you build from source.
 
 - **Before (0.x):** setuptools with a custom CMake build step. CFFI
   bindings were handwritten.
-- **Now (1.0):** `scikit-build-core`_ with `headerkit`_ for automatic C
-  header generation. CFFI bindings are auto-generated from NNG headers.
+- **Now (1.0):** `scikit-build-core`_ with pre-generated CFFI declarations in
+  ``pynng/_nng_cdef.py`` (generated from NNG headers via `headerkit`_).
 
 **Impact on users:**
 
 - ``pip install pynng`` works exactly as before. No changes needed.
-- Building from source now requires ``libclang`` to be available for
-  headerkit's C header parsing. Install it via your system package manager
-  (e.g., ``apt install libclang-dev`` on Debian/Ubuntu, ``brew install
-  llvm`` on macOS).
+- Standard builds from source use the pre-generated CFFI declarations in
+  ``pynng/_nng_cdef.py`` and only require a C compiler and CMake/Ninja.
+  `headerkit`_ and ``libclang`` are only required when regenerating CFFI
+  declarations or ``.pyi`` stubs from NNG headers (``PYNNG_USE_CACHED_CDEF=0``).
 
 .. _scikit-build-core: https://scikit-build-core.readthedocs.io
 .. _headerkit: https://github.com/axiomantic/headerkit
@@ -209,5 +209,6 @@ Upgrade Checklist
    sending.
 5. **Optional improvements:** Consider adopting ``async with``, ``async for``,
    and ``aclose()`` for cleaner async code.
-6. **Building from source:** If you build from source, install ``libclang``
-   for the new build system.
+6. **Building from source:** Standard source builds only require a C compiler
+   and CMake/Ninja (``headerkit`` and ``libclang`` are only needed when
+   regenerating bindings with ``PYNNG_USE_CACHED_CDEF=0``).

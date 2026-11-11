@@ -92,7 +92,7 @@ running ``build_pynng.py`` directly):
 - ``PYNNG_USE_CACHED_CDEF``: Defaults to ``"1"`` so ``build_pynng.py`` uses the
   tracked ``pynng/_nng_cdef.py`` cache without invoking ``libclang``. Set to
   ``"0"`` (with ``headerkit`` installed) to re-parse headers with ``libclang``
-  and refresh ``_nng.pyi`` / ``_nng_v2.pyi``.
+  and refresh ``pynng/_nng_cdef.py`` and ``_nng.pyi`` / ``_nng_v2.pyi``.
 
 Testing without pulling dependencies from GitHub
 -------------------------------------------------
@@ -107,14 +107,15 @@ CMake defines:
 .. code-block:: bash
 
    # Clone once locally
-   git clone https://github.com/nanomsg/nng ~/deps/nng
-   git clone https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
-   git clone https://github.com/wolfSSL/wolfssl ~/deps/wolfssl
+   git clone --branch v1.12.5 https://github.com/nanomsg/nng ~/deps/nng
+   git clone --branch v2.1.0 https://github.com/nanomsg/nng ~/deps/nng_v2
+   git clone --branch v3.6.5 https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
+   git clone --branch v5.9.4-stable https://github.com/wolfSSL/wolfssl ~/deps/wolfssl
 
    # Build with local mbedTLS and NNG sources via *_SOURCE_DIR (or FETCHCONTENT_SOURCE_DIR_*)
    pip install -e . \
      -C cmake.define.NNG_SOURCE_DIR=$HOME/deps/nng \
-     -C cmake.define.NNG_V2_SOURCE_DIR=$HOME/deps/nng \
+     -C cmake.define.NNG_V2_SOURCE_DIR=$HOME/deps/nng_v2 \
      -C cmake.define.MBEDTLS_SOURCE_DIR=$HOME/deps/mbedtls
 
    # Or build with a local wolfSSL checkout

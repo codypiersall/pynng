@@ -114,12 +114,19 @@ Devices and Runtime Lifecycle
 
 .. autofunction:: pynng.nng_fini
 
+.. py:data:: pynng.nng_fini_at_exit
+   :type: bool
+   :value: False
+
+   Whether :func:`pynng.nng_fini` should be called automatically when the Python
+   interpreter exits. Defaults to ``False``.
+
 Runtime Statistics
 ------------------
 
-.. autofunction:: pynng.stats.stats
+.. autofunction:: pynng.stats
 
-.. autofunction:: pynng.stats.socket_stats
+.. autofunction:: pynng.socket_stats
 
-.. autoclass:: pynng.stats.Stat
+.. autoclass:: pynng.Stat
    :members:

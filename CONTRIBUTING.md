@@ -18,7 +18,7 @@ Looking for a place to start?
 - Python 3.10+
 - CMake 3.26+
 - ninja-build
-- libclang (for building from source -- headerkit uses it to parse NNG's C headers)
+- Optional: `libclang` (only required when regenerating CFFI declarations or `.pyi` stubs from NNG's C headers with `headerkit` via `PYNNG_USE_CACHED_CDEF=0`; standard builds from source use `pynng/_nng_cdef.py`)
   - Recommended: `python -m headerkit.install_libclang` (works across platforms without root)
   - Or via system packages:
     - Ubuntu/Debian: `sudo apt install ninja-build libclang-dev`
@@ -39,7 +39,7 @@ pre-commit install
 
 This will:
 1. Build NNG and mbedTLS from source via CMake (fetched automatically)
-2. Use headerkit to parse NNG's C headers and generate CFFI bindings
+2. Use pre-generated CFFI declarations in `pynng/_nng_cdef.py` (or re-parse NNG C headers with `headerkit` when `PYNNG_USE_CACHED_CDEF=0`)
 3. Compile the CFFI extension module
 4. Install test dependencies (pytest, pytest-asyncio, pytest-trio, trio)
 
@@ -64,18 +64,21 @@ pip install -e '.[dev]'
 
 ##### 2. Cache or reuse CMake dependencies locally
 
-By default, CMake's `FetchContent` downloads NNG and mbedTLS from GitHub during
-the build. To avoid re-downloading across rebuilds or clean environments, you can point CMake to local clones:
+By default, CMake's `FetchContent` downloads NNG (v1 and v2) and mbedTLS (or wolfSSL) from GitHub during
+the build. To avoid re-downloading across rebuilds or clean environments, you can place checkouts in-tree (`./nng`, `./nng_v2`, `./mbedtls`, `./wolfssl`, which `CMakeLists.txt` auto-detects) or point CMake to local clones via `NNG_SOURCE_DIR`, `NNG_V2_SOURCE_DIR`, `MBEDTLS_SOURCE_DIR`, `WOLFSSL_SOURCE_DIR` (or `FETCHCONTENT_SOURCE_DIR_*`):
 
 ```bash
 # Clone once locally
-git clone https://github.com/nanomsg/nng ~/deps/nng
-git clone https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
+git clone --branch v1.12.5 https://github.com/nanomsg/nng ~/deps/nng
+git clone --branch v2.1.0 https://github.com/nanomsg/nng ~/deps/nng_v2
+git clone --branch v3.6.5 https://github.com/Mbed-TLS/mbedtls ~/deps/mbedtls
+git clone --branch v5.9.4-stable https://github.com/wolfSSL/wolfssl ~/deps/wolfssl
 
 # Build with local sources via CMake defines
 pip install -e . \
-  -C cmake.define.FETCHCONTENT_SOURCE_DIR_NNG=$HOME/deps/nng \
-  -C cmake.define.FETCHCONTENT_SOURCE_DIR_MBEDTLS=$HOME/deps/mbedtls
+  -C cmake.define.NNG_SOURCE_DIR=$HOME/deps/nng \
+  -C cmake.define.NNG_V2_SOURCE_DIR=$HOME/deps/nng_v2 \
+  -C cmake.define.MBEDTLS_SOURCE_DIR=$HOME/deps/mbedtls
 ```
 
 #### Testing Free-Threaded Python (PEP 703)

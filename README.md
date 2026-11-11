@@ -171,8 +171,11 @@ Or pass it through scikit-build-core:
 
 ### Linux: `libclang` not found
 
-pynng requires `libclang` development headers to parse NNG's C headers at build
-time. Install the appropriate package for your distribution:
+Standard builds from source use the pre-generated CFFI declarations in
+`pynng/_nng_cdef.py` and do not require `libclang` or `headerkit`. `libclang`
+development headers are only required when regenerating CFFI declarations or
+`.pyi` stubs from NNG's C headers (`PYNNG_USE_CACHED_CDEF=0`). Install the
+appropriate package for your distribution if regenerating bindings:
 
     # Debian/Ubuntu
     sudo apt install libclang-dev

@@ -152,6 +152,17 @@ TLS, Services, Devices, and Statistics
 
 .. autofunction:: pynng.v2.nng_fini
 
+.. py:data:: pynng.v2.nng_fini_at_exit
+   :type: bool
+   :value: False
+
+   Whether :func:`pynng.v2.nng_fini` should be called automatically when the
+   Python interpreter exits. Defaults to ``False``.
+
 .. autofunction:: pynng.v2.stats
 
 .. autofunction:: pynng.v2.socket_stats
+
+.. autoclass:: pynng.v2.Stat
+   :no-index:
+   :members:

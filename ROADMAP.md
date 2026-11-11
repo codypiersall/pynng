@@ -73,7 +73,7 @@ This document outlines the planned direction, active initiatives, architectural 
 - [x] **Upstream NNG v1.12.5 Upgrade**: Bumped bundled v1 NNG from `v1.11` to `v1.12.5`, incorporating upstream fixes for large IOV scatter/gather transfers, mbedTLS CVE-2025-27809, and AIO task abort race conditions while eliminating legacy patch files.
 - [x] **Scikit-Build-Core Build Backend**: Migrated from legacy `setup.py` / `setuptools` to `scikit-build-core` and PEP 517.
 - [x] **Automated CFFI Generation via Headerkit**: Replaced fragile handwritten CFFI bindings with automated parsing and header generation via `headerkit`.
-- [x] **NNG v2.0.0 Dual-Version Coexistence**: Full dual-module architecture supporting nng v2.0.0 GA alongside v1 under `pynng.v2` and `_nng_v2`.
+- [x] **NNG v2.1.0 Dual-Version Coexistence**: Full dual-module architecture supporting nng v2.1.0 alongside v1 under `pynng.v2` and `_nng_v2`, including DTLS 1.2/1.3 (`dtls://`, `dtls4://`, `dtls6://`) transport support.
 - [x] **NNG v2 Endpoint URL & TLS Support**: Added `nng_dialer_get_url()` / `nng_listener_get_url()` endpoint URL resolution and native `TLSConfig` FFI bridging for `v2.Socket`, `v2.Listener`, and `v2.Dialer`.
 - [x] **Multi-Platform cibuildwheel Matrix**: Universal automated wheel generation and testing across Linux (x86_64, aarch64), macOS (universal2), and Windows (x64, arm64).
 
@@ -96,4 +96,4 @@ This document outlines the planned direction, active initiatives, architectural 
 - [x] **Kernel Forwarding Proxies**: Added `pynng.device()` and async `pynng.adevice()` forwarding proxies.
 - [x] **Zero-Copy Buffer Protocol**: Full `Py_buffer` / `memoryview` support for direct DMA/socket transmission without copying (`recv_into`, `arecv_into`).
 - [x] **Message Header Manipulation**: Added `msg.header`, `msg.header_insert()`, `msg.header_append()`, `msg.header_trim()`, and `msg.header_chop()`.
-- [x] **Runtime Statistics**: Exposed NNG internal diagnostics via `pynng.stats()` and `socket.get_stat()`.
+- [x] **Runtime Statistics**: Exposed NNG internal diagnostics via `pynng.stats()`, `pynng.socket_stats()`, and `socket.stat()`.

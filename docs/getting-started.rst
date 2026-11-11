@@ -14,7 +14,7 @@ Install pynng from PyPI::
 
 Pre-built wheels are available for Linux, macOS, and Windows on common Python
 versions. If no wheel is available for your platform, pip will build from
-source (which requires a C compiler and libclang).
+source (which requires a C compiler and CMake).
 
 Your First Pair Socket
 ----------------------
