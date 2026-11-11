@@ -1,9 +1,9 @@
 import asyncio
 import threading
-import time
 
 import pytest
 import pynng
+from _test_util import wait_pipe_len
 from conftest import random_addr, FAST_TIMEOUT
 
 
@@ -25,10 +25,13 @@ def test_sync_device_two_sockets():
     dev_thread = threading.Thread(target=run_dev, daemon=True)
     dev_thread.start()
 
-    time.sleep(0.05)
     with pynng.Req0(dial=front_addr, recv_timeout=FAST_TIMEOUT) as client, pynng.Rep0(
         dial=back_addr, recv_timeout=FAST_TIMEOUT
     ) as worker:
+        wait_pipe_len(rep, 1)
+        wait_pipe_len(req, 1)
+        wait_pipe_len(client, 1)
+        wait_pipe_len(worker, 1)
         client.send(b"request-to-device")
         recvd = worker.recv()
         assert recvd == b"request-to-device"
@@ -56,11 +59,15 @@ async def test_adevice_asyncio_forwarding_and_cancel():
     req = pynng.RawReq0(listen=back_addr, recv_timeout=FAST_TIMEOUT)
 
     dev_task = asyncio.create_task(pynng.adevice(rep, req))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0)
 
     with pynng.Req0(dial=front_addr, recv_timeout=FAST_TIMEOUT) as client, pynng.Rep0(
         dial=back_addr, recv_timeout=FAST_TIMEOUT
     ) as worker:
+        wait_pipe_len(rep, 1)
+        wait_pipe_len(req, 1)
+        wait_pipe_len(client, 1)
+        wait_pipe_len(worker, 1)
         await client.asend(b"async-ping")
         msg = await worker.arecv()
         assert msg == b"async-ping"
@@ -87,7 +94,7 @@ async def test_adevice_asyncio_socket_close():
     req = pynng.RawReq0(listen=back_addr, recv_timeout=FAST_TIMEOUT)
 
     dev_task = asyncio.create_task(pynng.adevice(rep, req))
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0)
 
     rep.close()
     with pytest.raises(pynng.Closed):
@@ -108,11 +115,15 @@ async def test_adevice_trio_forwarding_and_cancel():
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(pynng.adevice, rep, req)
-        await trio.sleep(0.05)
+        await trio.lowlevel.checkpoint()
 
         with pynng.Req0(
             dial=front_addr, recv_timeout=FAST_TIMEOUT
         ) as client, pynng.Rep0(dial=back_addr, recv_timeout=FAST_TIMEOUT) as worker:
+            wait_pipe_len(rep, 1)
+            wait_pipe_len(req, 1)
+            wait_pipe_len(client, 1)
+            wait_pipe_len(worker, 1)
             await client.asend(b"trio-ping")
             msg = await worker.arecv()
             assert msg == b"trio-ping"

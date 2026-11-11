@@ -1,10 +1,13 @@
 """Tests for Surveyor0.asurvey() ergonomic method."""
 
 import asyncio
+import contextlib
 import time
 
 import pynng
 import pytest
+
+from _test_util import wait_pipe_len
 
 
 @pytest.mark.asyncio
@@ -18,7 +21,9 @@ async def test_asurvey_multiple_respondents():
     ) as r1, pynng.Respondent0(
         dial=addr, recv_timeout=1000, send_timeout=1000
     ) as r2:
-        await asyncio.sleep(0.05)  # let pipes establish
+        wait_pipe_len(surveyor, 2)
+        wait_pipe_len(r1, 1)
+        wait_pipe_len(r2, 1)
 
         async def respond(respondent, reply):
             msg = await respondent.arecv()
@@ -106,10 +111,13 @@ async def test_asurvey_max_responses():
     ) as r1, pynng.Respondent0(
         dial=addr, recv_timeout=1000, send_timeout=1000
     ) as r2:
-        await asyncio.sleep(0.05)  # let pipes establish
+        wait_pipe_len(surveyor, 2)
+        wait_pipe_len(r1, 1)
+        wait_pipe_len(r2, 1)
 
         async def respond(respondent, reply):
             msg = await respondent.arecv()
+            assert msg == b"question"
             await respondent.asend(reply)
 
         task1 = asyncio.create_task(respond(r1, b"resp1"))
@@ -127,6 +135,7 @@ async def test_asurvey_max_responses():
                 pass
 
         assert len(responses) == 1
+        assert responses[0] in (b"resp1", b"resp2")
 
 
 @pytest.mark.asyncio
@@ -144,13 +153,12 @@ async def test_asurvey_uses_socket_recv_timeout():
 def test_surveyor0_context_recv_raises_timeout_when_survey_expires(nng):
     """A survey that ends with no response raises Timeout, not BadState."""
     with nng.Surveyor0(survey_time=50) as surveyor:
-        ctx = surveyor.new_context()
-        ctx.send(b"anyone?")
-        t0 = time.monotonic()
-        with pytest.raises(nng.Timeout):
-            ctx.recv()
-        assert time.monotonic() - t0 < 2.0
-        ctx.close()
+        with surveyor.new_context() as ctx:
+            ctx.send(b"anyone?")
+            t0 = time.monotonic()
+            with pytest.raises(nng.Timeout):
+                ctx.recv()
+            assert time.monotonic() - t0 < 2.0
 
 
 @pytest.mark.parametrize("use_context", [False, True])
@@ -159,10 +167,15 @@ def test_surveyor0_recv_timeout_shorter_than_survey_raises_timeout(
 ):
     """recv_timeout ends a recv before the survey ends."""
     with nng.Surveyor0(survey_time=5000) as surveyor:
-        target = surveyor.new_context() if use_context else surveyor
-        target.recv_timeout = 100
-        target.send(b"anyone?")
-        t0 = time.monotonic()
-        with pytest.raises(nng.Timeout):
-            target.recv()
-        assert time.monotonic() - t0 < 2.0
+        ctx_mgr = (
+            surveyor.new_context()
+            if use_context
+            else contextlib.nullcontext(surveyor)
+        )
+        with ctx_mgr as target:
+            target.recv_timeout = 100
+            target.send(b"anyone?")
+            t0 = time.monotonic()
+            with pytest.raises(nng.Timeout):
+                target.recv()
+            assert time.monotonic() - t0 < 2.0

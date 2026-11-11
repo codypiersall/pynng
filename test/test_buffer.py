@@ -117,20 +117,18 @@ def test_context_recv_into():
     with pynng.Rep0(listen=addr, recv_timeout=FAST_TIMEOUT) as rep, pynng.Req0(
         dial=addr, recv_timeout=FAST_TIMEOUT
     ) as req:
-        ctx_rep = rep.new_context()
-        ctx_req = req.new_context()
+        with rep.new_context() as ctx_rep, req.new_context() as ctx_req:
+            ctx_req.send(b"req into")
+            buf = bytearray(20)
+            n = ctx_rep.recv_into(buf)
+            assert n == 8
+            assert buf[:n] == b"req into"
 
-        ctx_req.send(b"req into")
-        buf = bytearray(20)
-        n = ctx_rep.recv_into(buf)
-        assert n == 8
-        assert buf[:n] == b"req into"
-
-        ctx_rep.send(b"rep into")
-        buf2 = bytearray(20)
-        n2 = ctx_req.recv_into(buf2)
-        assert n2 == 8
-        assert buf2[:n2] == b"rep into"
+            ctx_rep.send(b"rep into")
+            buf2 = bytearray(20)
+            n2 = ctx_req.recv_into(buf2)
+            assert n2 == 8
+            assert buf2[:n2] == b"rep into"
 
 
 @pytest.mark.asyncio
@@ -139,17 +137,15 @@ async def test_context_arecv_into_asyncio():
     with pynng.Rep0(listen=addr, recv_timeout=FAST_TIMEOUT) as rep, pynng.Req0(
         dial=addr, recv_timeout=FAST_TIMEOUT
     ) as req:
-        ctx_rep = rep.new_context()
-        ctx_req = req.new_context()
+        with rep.new_context() as ctx_rep, req.new_context() as ctx_req:
+            await ctx_req.asend(b"async req into")
+            buf = bytearray(30)
+            n = await ctx_rep.arecv_into(buf)
+            assert n == 14
+            assert buf[:n] == b"async req into"
 
-        await ctx_req.asend(b"async req into")
-        buf = bytearray(30)
-        n = await ctx_rep.arecv_into(buf)
-        assert n == 14
-        assert buf[:n] == b"async req into"
-
-        await ctx_rep.asend(b"async rep into")
-        buf2 = bytearray(30)
-        n2 = await ctx_req.arecv_into(buf2)
-        assert n2 == 14
-        assert buf2[:n2] == b"async rep into"
+            await ctx_rep.asend(b"async rep into")
+            buf2 = bytearray(30)
+            n2 = await ctx_req.arecv_into(buf2)
+            assert n2 == 14
+            assert buf2[:n2] == b"async rep into"

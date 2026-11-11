@@ -188,5 +188,13 @@ class _PynngModule(_types.ModuleType):
     def nng_fini_at_exit(self, value: bool) -> None:
         _nng_module.nng_fini_at_exit = value
 
+    @property
+    def _finalized(self) -> bool:
+        return _nng_module._finalized
+
+    @_finalized.setter
+    def _finalized(self, value: bool) -> None:
+        _nng_module._finalized = value
+
 
 _sys.modules[__name__].__class__ = _PynngModule

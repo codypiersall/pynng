@@ -300,19 +300,24 @@ def test_v2_dialer_listener_addresses_graceful():
         wait_pipe_len(s1, 1)
 
         # Accessing these properties must not raise AttributeError or crash
-        assert l.local_address is not None
+        assert isinstance(l.local_address, pynng.sockaddr.InprocAddr)
+        assert l.local_address.name == addr.removeprefix("inproc://")
         assert l.remote_address is None
-        assert d.local_address is not None
-        assert d.remote_address is not None
+        assert isinstance(d.local_address, pynng.sockaddr.SockAddr)
+        assert isinstance(d.remote_address, pynng.sockaddr.SockAddr)
 
 
 def test_v2_message_memory_safety():
     """Verify v2 Message frees memory on failure and handles __del__ safely."""
-    with pytest.raises(Exception):
-        v2.Message(None)
+    with pytest.raises(TypeError):
+        v2.Message(12345)
     gc.collect()
 
-    # Valid message lifecycle
+    # Default empty message and valid message lifecycle
+    empty_msg = v2.Message()
+    assert empty_msg.bytes == b""
+    del empty_msg
+
     msg = v2.Message(b"test data")
     assert msg.bytes == b"test data"
     del msg
@@ -1087,4 +1092,86 @@ async def test_v2_surveyor_post_expiry_arecv_raises_timeout_then_badstate():
         assert exc_info.value.errno == int(v2.lib.NNG_ETIMEDOUT)
         with pytest.raises(pynng.BadState):
             await s.arecv()
+
+
+def test_v2_context_post_close_raises_closed():
+    """Operations on a closed Context raise pynng.Closed instead of AssertionError."""
+    addr = random_addr()
+    with v2.Rep0(listen=addr) as rep:
+        ctx = rep.new_context()
+        ctx.close()
+        ctx.close()  # idempotent
+        with pytest.raises(pynng.Closed):
+            ctx.recv()
+        with pytest.raises(pynng.Closed):
+            ctx.send(b"nope")
+        with pytest.raises(pynng.Closed):
+            _ = ctx.recv_timeout
+
+
+def test_v2_context_close_after_parent_socket_close():
+    """Closing a Context after its parent Socket closed succeeds cleanly without raising Closed."""
+    addr = random_addr()
+    rep = v2.Rep0(listen=addr)
+    ctx = rep.new_context()
+    rep.close()
+    ctx.close()
+
+
+def test_v2_start_false_pipe_dialer_and_listener():
+    """Pipe.dialer and Pipe.listener resolve the endpoint even when created with start=False."""
+    addr = random_addr()
+    with v2.Pair0() as s0, v2.Pair0() as s1:
+        listener = s0.listen(addr, start=False)
+        listener.start()
+        dialer = s1.dial(addr, start=False)
+        dialer.start()
+        wait_pipe_len(s0, 1)
+        wait_pipe_len(s1, 1)
+        assert s0.pipes[0].listener is listener
+        assert s1.pipes[0].dialer is dialer
+
+
+def test_v2_utf8_socket_name_and_bool_int_rejection():
+    """Multi-byte UTF-8 socket names are not truncated."""
+    with v2.Pair0() as s:
+        s.name = "héllo-🌍"
+        assert s.name == "héllo-🌍"
+
+
+@pytest.mark.asyncio
+async def test_v2_device_cooked_socket_rejection_preserves_open_sockets():
+    """v2.device() and DeviceAIO do not mark sockets closed when nng_device_aio rejects cooked sockets."""
+    addr = random_addr()
+    with (
+        v2.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as s1,
+        v2.Pair0(dial=addr, recv_timeout=FAST_TIMEOUT) as s2,
+    ):
+        wait_pipe_len(s1, 1)
+        wait_pipe_len(s2, 1)
+        s1_c_sock = s1.socket
+        s2_c_sock = s2.socket
+
+        with pytest.raises((pynng.InvalidOperation, pynng.NotSupported)):
+            v2.device(s1, s2)
+
+        assert not s1._socket_closed
+        assert not s2._socket_closed
+
+        # Also verify DeviceAIO freed before run() does not mark sockets closed
+        with pynng._aio.DeviceAIO(
+            s1, s2, async_backend="asyncio", _default_lib=v2.lib, _default_ffi=v2.ffi
+        ):
+            pass
+        assert not s1._socket_closed
+        assert not s2._socket_closed
+
+        # Both sockets remain usable and open
+        await s1.asend(b"still-open")
+        assert await s2.arecv() == b"still-open"
+
+    raw_p = v2.ffi.new("bool *")
+    assert v2.lib.nng_socket_raw(s1_c_sock, raw_p) == v2.lib.NNG_ECLOSED
+    assert v2.lib.nng_socket_raw(s2_c_sock, raw_p) == v2.lib.NNG_ECLOSED
+
 

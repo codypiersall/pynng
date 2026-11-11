@@ -219,7 +219,7 @@ async def test_context_async_with_trio():
                 await ctx_rep.asend(b"world")
                 assert await ctx_req.arecv() == b"world"
             # ctx_rep should be closed now
-            assert ctx_rep._context is None
+            assert ctx_rep._ctx_closed
             ctx_rep.close()  # Second close must not raise
 
 
@@ -232,9 +232,9 @@ async def test_context_aclose_trio():
     """aclose() closes the context."""
     with pynng.Req0() as s:
         ctx = s.new_context()
-        assert ctx._context is not None
+        assert not ctx._ctx_closed
         await ctx.aclose()
-        assert ctx._context is None
+        assert ctx._ctx_closed
         ctx.close()  # Second close must not raise
 
 
@@ -299,6 +299,7 @@ async def test_dialer_async_context_manager_trio():
                 await dialer_sock.asend(b"hello from dialer")
                 assert (await listener_sock.arecv()) == b"hello from dialer"
             # after exiting async with, dialer is closed
+            assert dialer.id not in dialer_sock._dialers
 
 
 @pytest.mark.trio
@@ -307,8 +308,9 @@ async def test_listener_async_context_manager_trio():
     addr = random_addr()
     with pynng.Pair0() as sock:
         async with sock.listen(addr) as listener:
-            assert listener is not None
+            assert listener.id in sock._listeners
         # after exiting async with, listener is closed
+        assert listener.id not in sock._listeners
 
 
 @pytest.mark.trio
@@ -346,6 +348,7 @@ async def test_dialer_async_context_manager_asyncio():
             async with dialer:
                 await dialer_sock.asend(b"hello from dialer")
                 assert (await listener_sock.arecv()) == b"hello from dialer"
+            assert dialer.id not in dialer_sock._dialers
 
 
 @pytest.mark.asyncio
@@ -354,7 +357,8 @@ async def test_listener_async_context_manager_asyncio():
     addr = random_addr()
     with pynng.Pair0() as sock:
         async with sock.listen(addr) as listener:
-            assert listener is not None
+            assert listener.id in sock._listeners
+        assert listener.id not in sock._listeners
 
 
 @pytest.mark.asyncio

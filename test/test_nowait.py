@@ -100,54 +100,51 @@ def test_context_recv_nowait_empty_raises_tryagain():
     """Verify Context nowait methods raise TryAgain when empty."""
     addr = "inproc://test-nowait-ctx-1"
     with pynng.Rep0(listen=addr) as s1:
-        ctx = s1.new_context()
-        with pytest.raises(pynng.TryAgain):
-            ctx.recv_nowait()
-        with pytest.raises(pynng.TryAgain):
-            ctx.recv_msg_nowait()
+        with s1.new_context() as ctx:
+            with pytest.raises(pynng.TryAgain):
+                ctx.recv_nowait()
+            with pytest.raises(pynng.TryAgain):
+                ctx.recv_msg_nowait()
 
-        buf = bytearray(16)
-        with pytest.raises(pynng.TryAgain):
-            ctx.recv_into_nowait(buf)
+            buf = bytearray(16)
+            with pytest.raises(pynng.TryAgain):
+                ctx.recv_into_nowait(buf)
 
 
 def test_context_send_nowait_blocked_raises_tryagain_and_preserves_msg():
     """Verify Context send_nowait and send_msg_nowait raise TryAgain when blocked and keep msg retryable."""
     addr = "inproc://test-nowait-ctx-send-blocked"
     with pynng.Req0() as req:
-        ctx_req = req.new_context()
-        with pytest.raises(pynng.TryAgain):
-            ctx_req.send_nowait(b"unconnected")
+        with req.new_context() as ctx_req:
+            with pytest.raises(pynng.TryAgain):
+                ctx_req.send_nowait(b"unconnected")
 
-        msg = pynng.Message(b"retryable-ctx-msg")
-        with pytest.raises(pynng.TryAgain):
-            ctx_req.send_msg_nowait(msg)
+            msg = pynng.Message(b"retryable-ctx-msg")
+            with pytest.raises(pynng.TryAgain):
+                ctx_req.send_msg_nowait(msg)
 
-        # Message ownership must remain with Python after failed non-blocking send
-        assert not msg._mem_freed
-        assert msg.bytes == b"retryable-ctx-msg"
+            # Message ownership must remain with Python after failed non-blocking send
+            assert not msg._mem_freed
+            assert msg.bytes == b"retryable-ctx-msg"
 
-        with pynng.Rep0(listen=addr) as rep:
-            ctx_rep = rep.new_context()
-            req.dial(addr, block=True)
-            poll_nowait(lambda: ctx_req.send_msg_nowait(msg))
-            assert msg._mem_freed
-            assert poll_nowait(ctx_rep.recv_nowait) == b"retryable-ctx-msg"
-            ctx_rep.close()
-        ctx_req.close()
+            with pynng.Rep0(listen=addr) as rep:
+                with rep.new_context() as ctx_rep:
+                    req.dial(addr, block=True)
+                    poll_nowait(lambda: ctx_req.send_msg_nowait(msg))
+                    assert msg._mem_freed
+                    assert poll_nowait(ctx_rep.recv_nowait) == b"retryable-ctx-msg"
 
 
 def test_context_send_timeout_preserves_msg():
     """Verify blocking Context.send_msg detaches msg on Timeout so it does not leak or poison msg."""
     with pynng.Req0() as req:
-        ctx = req.new_context()
-        ctx.send_timeout = 20
-        msg = pynng.Message(b"timeout-ctx-msg")
-        with pytest.raises(pynng.Timeout):
-            ctx.send_msg(msg)
-        assert not msg._mem_freed
-        assert msg.bytes == b"timeout-ctx-msg"
-        ctx.close()
+        with req.new_context() as ctx:
+            ctx.send_timeout = 20
+            msg = pynng.Message(b"timeout-ctx-msg")
+            with pytest.raises(pynng.Timeout):
+                ctx.send_msg(msg)
+            assert not msg._mem_freed
+            assert msg.bytes == b"timeout-ctx-msg"
 
 
 
@@ -155,27 +152,25 @@ def test_context_send_recv_nowait():
     """Verify Context nowait methods roundtrip."""
     addr = "inproc://test-nowait-ctx-2"
     with pynng.Rep0(listen=addr) as rep, pynng.Req0(dial=addr) as req:
-        ctx_req = req.new_context()
-        ctx_rep = rep.new_context()
+        with req.new_context() as ctx_req, rep.new_context() as ctx_rep:
+            poll_nowait(lambda: ctx_req.send_nowait(b"request data"))
+            req_msg = poll_nowait(ctx_rep.recv_msg_nowait)
+            assert req_msg.bytes == b"request data"
 
-        poll_nowait(lambda: ctx_req.send_nowait(b"request data"))
-        req_msg = poll_nowait(ctx_rep.recv_msg_nowait)
-        assert req_msg.bytes == b"request data"
+            resp_msg = pynng.Message(b"response data")
+            poll_nowait(lambda: ctx_rep.send_msg_nowait(resp_msg))
+            resp = poll_nowait(ctx_req.recv_nowait)
+            assert resp == b"response data"
 
-        resp_msg = pynng.Message(b"response data")
-        poll_nowait(lambda: ctx_rep.send_msg_nowait(resp_msg))
-        resp = poll_nowait(ctx_req.recv_nowait)
-        assert resp == b"response data"
+            # Round 2
+            poll_nowait(lambda: ctx_req.send_nowait(b"request 2"))
+            buf = bytearray(32)
+            nbytes = poll_nowait(lambda: ctx_rep.recv_into_nowait(buf))
+            assert bytes(buf[:nbytes]) == b"request 2"
 
-        # Round 2
-        poll_nowait(lambda: ctx_req.send_nowait(b"request 2"))
-        buf = bytearray(32)
-        nbytes = poll_nowait(lambda: ctx_rep.recv_into_nowait(buf))
-        assert bytes(buf[:nbytes]) == b"request 2"
-
-        poll_nowait(lambda: ctx_rep.send_msg_nowait(pynng.Message(b"response 2")))
-        recvd_resp = poll_nowait(ctx_req.recv_msg_nowait)
-        assert recvd_resp.bytes == b"response 2"
+            poll_nowait(lambda: ctx_rep.send_msg_nowait(pynng.Message(b"response 2")))
+            recvd_resp = poll_nowait(ctx_req.recv_msg_nowait)
+            assert recvd_resp.bytes == b"response 2"
 
 
 def test_v2_socket_nowait():

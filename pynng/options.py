@@ -237,10 +237,11 @@ def _setopt_string_nonnull(
     _lib, _ffi = _resolve_lib_ffi(py_obj)
     from ._base import to_char
 
+    val_bytes = value.encode() if isinstance(value, str) else value
     opt_as_char = to_char(option, ffi=_ffi)
-    val_as_char = to_char(value, ffi=_ffi)
+    val_as_char = to_char(val_bytes, ffi=_ffi)
     obj, lib_func = _get_inst_and_func(py_obj, "", "set")
-    ret = lib_func(obj, opt_as_char, val_as_char, len(value))
+    ret = lib_func(obj, opt_as_char, val_as_char, len(val_bytes))
     pynng.check_err(ret, lib=_lib, ffi=_ffi)
 
 

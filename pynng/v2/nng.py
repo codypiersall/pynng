@@ -33,10 +33,8 @@ from pynng._base import (  # noqa: F401
     PointerOption,
     ReadOnlyBooleanOption,
     ReadOnlyIntOption,
-    ReadOnlyStringOption,
     SizeOption,
     SockAddrOption,
-    StringOption,
     _do_callbacks,
     _ensure_can_send,
     _NNGOption,
@@ -306,33 +304,40 @@ class Socket(_base.Socket):
                 lib=lib,
                 ffi=ffi,
             )
+            d_id = int(_c_lib.nng_dialer_id(dialer[0]))
+            dialer_cls = self._dialer_class or Dialer
+            py_dialer = dialer_cls(dialer, self)
+            assert isinstance(py_dialer, Dialer)
+            self._dialers[d_id] = py_dialer
             try:
                 if tls_config is not None:
                     tls_applied = self._set_endpoint_tls(
                         _c_lib.nng_dialer_set_tls, dialer[0], tls_config, explicit
                     )
+                    if tls_applied:
+                        py_dialer._tls_config_ref = tls_config
+                        _retain_closed(tls_config)
                 if start:
                     check_err(
                         _c_lib.nng_dialer_start(dialer[0], flags), lib=lib, ffi=ffi
                     )
             except BaseException:
+                self._dialers.pop(d_id, None)
                 _c_lib.nng_dialer_close(dialer[0])
                 raise
+            return py_dialer
         else:
             check_err(
                 _c_lib.nng_dial(self.socket, addr_ptr, dialer, flags),
                 lib=lib,
                 ffi=ffi,
             )
-        d_id = int(_c_lib.nng_dialer_id(dialer[0]))
-        dialer_cls = self._dialer_class or Dialer
-        py_dialer = dialer_cls(dialer, self)
-        assert isinstance(py_dialer, Dialer)
-        if tls_applied and tls_config is not None:
-            py_dialer._tls_config_ref = tls_config
-            _retain_closed(tls_config)
-        self._dialers[d_id] = py_dialer
-        return py_dialer
+            d_id = int(_c_lib.nng_dialer_id(dialer[0]))
+            dialer_cls = self._dialer_class or Dialer
+            py_dialer = dialer_cls(dialer, self)
+            assert isinstance(py_dialer, Dialer)
+            self._dialers[d_id] = py_dialer
+            return py_dialer
 
     def listen(
         self,
@@ -364,33 +369,40 @@ class Socket(_base.Socket):
                 lib=lib,
                 ffi=ffi,
             )
+            l_id = int(_c_lib.nng_listener_id(listener[0]))
+            listener_cls = self._listener_class or Listener
+            py_listener = listener_cls(listener, self)
+            assert isinstance(py_listener, Listener)
+            self._listeners[l_id] = py_listener
             try:
                 if tls_config is not None:
                     tls_applied = self._set_endpoint_tls(
                         _c_lib.nng_listener_set_tls, listener[0], tls_config, explicit
                     )
+                    if tls_applied:
+                        py_listener._tls_config_ref = tls_config
+                        _retain_closed(tls_config)
                 if start:
                     check_err(
                         _c_lib.nng_listener_start(listener[0], flags), lib=lib, ffi=ffi
                     )
             except BaseException:
+                self._listeners.pop(l_id, None)
                 _c_lib.nng_listener_close(listener[0])
                 raise
+            return py_listener
         else:
             check_err(
                 _c_lib.nng_listen(self.socket, addr_ptr, listener, flags),
                 lib=lib,
                 ffi=ffi,
             )
-        l_id = int(_c_lib.nng_listener_id(listener[0]))
-        listener_cls = self._listener_class or Listener
-        py_listener = listener_cls(listener, self)
-        assert isinstance(py_listener, Listener)
-        if tls_applied and tls_config is not None:
-            py_listener._tls_config_ref = tls_config
-            _retain_closed(tls_config)
-        self._listeners[l_id] = py_listener
-        return py_listener
+            l_id = int(_c_lib.nng_listener_id(listener[0]))
+            listener_cls = self._listener_class or Listener
+            py_listener = listener_cls(listener, self)
+            assert isinstance(py_listener, Listener)
+            self._listeners[l_id] = py_listener
+            return py_listener
 
     @property
     def _aio_recv_fn(
@@ -479,10 +491,12 @@ class Socket(_base.Socket):
     def stat(self, name: str) -> int | str | bool | None:
         """Get a single statistic value by name for this socket."""
         st = socket_stats(self)
-        assert st is not None
-        child = st[name]
-        assert isinstance(child, Stat)
-        return child.value
+        if st is None:
+            raise KeyError(name)
+        for child in st.children:
+            if child.name == name:
+                return child.value
+        raise KeyError(name)
 
     if TYPE_CHECKING:
 
@@ -891,12 +905,12 @@ class Sub0(Socket):
         """
         if isinstance(topic, str):
             topic = topic.encode()
-        check_err(
-            _c_lib.nng_sub0_socket_subscribe(self.socket, topic, len(topic)),
-            lib=lib,
-            ffi=ffi,
-        )
         with self._sub_lock:
+            check_err(
+                _c_lib.nng_sub0_socket_subscribe(self.socket, topic, len(topic)),
+                lib=lib,
+                ffi=ffi,
+            )
             self._subscriptions.add(topic)
 
     def unsubscribe(self, topic: str | bytes) -> None:
@@ -910,12 +924,12 @@ class Sub0(Socket):
         """
         if isinstance(topic, str):
             topic = topic.encode()
-        check_err(
-            _c_lib.nng_sub0_socket_unsubscribe(self.socket, topic, len(topic)),
-            lib=lib,
-            ffi=ffi,
-        )
         with self._sub_lock:
+            check_err(
+                _c_lib.nng_sub0_socket_unsubscribe(self.socket, topic, len(topic)),
+                lib=lib,
+                ffi=ffi,
+            )
             self._subscriptions.discard(topic)
 
     def subscribe_all(self, topics: Iterable[str | bytes]) -> None:
@@ -931,8 +945,11 @@ class Sub0(Socket):
         """Unsubscribe from all current subscriptions."""
         with self._sub_lock:
             current = list(self._subscriptions)
-        for topic in current:
-            self.unsubscribe(topic)
+            for topic in current:
+                try:
+                    self.unsubscribe(topic)
+                except pynng.NoEntry:
+                    pass
 
 
 class Req0(Socket):
@@ -1080,6 +1097,7 @@ class Surveyor0(Socket):
             self.survey_time = survey_time
 
     def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
+        _ensure_can_send(data)
         if not self.raw:
             self._survey_active = True
             try:
@@ -1091,6 +1109,8 @@ class Surveyor0(Socket):
             super().send(data, block=block)
 
     def send_msg(self, msg: _base.Message, block: bool = True) -> None:
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
         if not self.raw:
             self._survey_active = True
             try:
@@ -1102,6 +1122,7 @@ class Surveyor0(Socket):
             super().send_msg(msg, block=block)
 
     async def asend(self, data: _base.ReadableBuffer) -> None:
+        _ensure_can_send(data)
         if not self.raw:
             self._survey_active = True
             try:
@@ -1113,6 +1134,8 @@ class Surveyor0(Socket):
             await super().asend(data)
 
     async def asend_msg(self, msg: _base.Message) -> None:
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
         if not self.raw:
             self._survey_active = True
             try:
@@ -1739,7 +1762,7 @@ class Dialer(_base.Dialer):
             try:
                 if pipe.dialer == self:
                     return pipe.local_address
-            except (TypeError, KeyError):
+            except (TypeError, KeyError, Closed):
                 continue
         return None
 
@@ -1750,7 +1773,7 @@ class Dialer(_base.Dialer):
             try:
                 if pipe.dialer == self:
                     return pipe.remote_address
-            except (TypeError, KeyError):
+            except (TypeError, KeyError, Closed):
                 continue
         return None
 
@@ -1814,7 +1837,7 @@ class Listener(_base.Listener):
             try:
                 if pipe.listener == self:
                     return pipe.local_address
-            except (TypeError, KeyError):
+            except (TypeError, KeyError, Closed):
                 continue
         return None
 

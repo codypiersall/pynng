@@ -147,6 +147,7 @@ class _BaseLibProtocol(Protocol):
     ) -> int: ...
     def nng_close(self, s: _NngSocket) -> int: ...
     def nng_socket_close(self, s: _NngSocket) -> int: ...
+    def nng_socket_raw(self, s: _NngSocket, rawp: cffi.FFI.CData) -> int: ...
     def nng_send(
         self,
         s: _NngSocket,
@@ -393,8 +394,8 @@ def _sliced_aio_recv(
     try:
         aio = base_lib.pynng_sync_recv_aio(recv)
         base_lib.nng_aio_set_timeout(aio, timeout_ms)
-        recv_fn(target_handle, aio)
         try:
+            recv_fn(target_handle, aio)
             while not base_lib.pynng_sync_recv_wait(recv, slice_ms):
                 pass
         except BaseException:
@@ -468,7 +469,7 @@ def _do_callbacks(pipe: Pipe, callbacks: Iterable[Callable[[Pipe], object]]) -> 
             try:
                 cb(pipe)
             except Exception:
-                msg = "Exception raised in pre pipe connect callback {!r}"
+                msg = "Exception raised in pipe callback {!r}"
                 logger.exception(msg.format(cb))
     finally:
         _pipe_callback_thread.depth -= 1
@@ -606,20 +607,27 @@ class PipeEventStream(Generic[_PipeT, _PipeEventT]):
         self._socket.add_pre_pipe_connect_cb(self._on_pre_add)
         self._socket.add_post_pipe_connect_cb(self._on_post_add)
         self._socket.add_post_pipe_remove_cb(self._on_remove)
+        self._socket._pipe_event_streams.add(self)
 
     def _put_event(self, event: PipeEvent[Pipe]) -> None:
         """Thread-safe put of an event into the async queue."""
         if self._closed:
             return
         if self._backend == "asyncio":
-            self._loop.call_soon_threadsafe(
-                self._queue.put_nowait, cast("_PipeEventT", event)
-            )
+            try:
+                self._loop.call_soon_threadsafe(
+                    self._queue.put_nowait, cast("_PipeEventT", event)
+                )
+            except RuntimeError:
+                pass
         elif self._backend == "trio":
-            self._trio_token.run_sync_soon(
-                self._trio_send_nowait,
-                event,
-            )
+            try:
+                self._trio_token.run_sync_soon(
+                    self._trio_send_nowait,
+                    event,
+                )
+            except Exception:
+                pass
 
     def _trio_send_nowait(self, event: PipeEvent[Pipe]) -> None:
         """Wrapper for send_nowait that suppresses ClosedResourceError.
@@ -979,6 +987,9 @@ class Socket:
         self._async_backend = async_backend
         self._recv_pool: list[_aio.AIOHelper] = []
         self._send_pool: list[_aio.AIOHelper] = []
+        self._pipe_event_streams: weakref.WeakSet[
+            PipeEventStream[Pipe, PipeEvent[Pipe]]
+        ] = weakref.WeakSet()
 
         _ffi = self._ffi
 
@@ -997,30 +1008,34 @@ class Socket:
         opener_fn = cast("Callable[[cffi.FFI.CData], int]", self._opener)
         check_err(opener_fn(self._socket), lib=self._lib, ffi=_ffi)
 
-        if recv_timeout is not None:
-            self.recv_timeout = recv_timeout
-        if send_timeout is not None:
-            self.send_timeout = send_timeout
-        if recv_max_size is not None:
-            self.recv_max_size = recv_max_size
-        if reconnect_time_min is not None:
-            self.reconnect_time_min = reconnect_time_min
-        if reconnect_time_max is not None:
-            self.reconnect_time_max = reconnect_time_max
-        if recv_buffer_size is not None:
-            self.recv_buffer_size = recv_buffer_size
-        if send_buffer_size is not None:
-            self.send_buffer_size = send_buffer_size
+        try:
+            if recv_timeout is not None:
+                self.recv_timeout = recv_timeout
+            if send_timeout is not None:
+                self.send_timeout = send_timeout
+            if recv_max_size is not None:
+                self.recv_max_size = recv_max_size
+            if reconnect_time_min is not None:
+                self.reconnect_time_min = reconnect_time_min
+            if reconnect_time_max is not None:
+                self.reconnect_time_max = reconnect_time_max
+            if recv_buffer_size is not None:
+                self.recv_buffer_size = recv_buffer_size
+            if send_buffer_size is not None:
+                self.send_buffer_size = send_buffer_size
 
-        # set up pipe callbacks. This **must** be called before listen/dial to
-        # avoid race conditions.
-        self._setup_pipe_callbacks()
-        self._configure_protocol_options()
+            # set up pipe callbacks. This **must** be called before listen/dial to
+            # avoid race conditions.
+            self._setup_pipe_callbacks()
+            self._configure_protocol_options()
 
-        if listen is not None:
-            self.listen(listen)
-        if dial is not None:
-            self.dial(dial, block=block_on_dial)
+            if listen is not None:
+                self.listen(listen)
+            if dial is not None:
+                self.dial(dial, block=block_on_dial)
+        except BaseException:
+            self.close()
+            raise
 
     def _configure_protocol_options(self) -> None:
         """Hook for protocol subclasses to apply options before listen/dial."""
@@ -1244,12 +1259,17 @@ class Socket:
         if ref is not None and (ref() is self or ref() is None):
             _active_handles.pop(key, None)
         cast("Callable[[_NngSocket], int]", close_fn)(self.socket)
+        if hasattr(self, "_pipe_event_streams"):
+            for stream in list(self._pipe_event_streams):
+                stream.close()
         self._listeners = {}
         self._dialers = {}
-        while self._recv_pool:
-            self._recv_pool.pop()._free()
-        while self._send_pool:
-            self._send_pool.pop()._free()
+        recv_helpers, self._recv_pool = self._recv_pool, []
+        send_helpers, self._send_pool = self._send_pool, []
+        for h in recv_helpers:
+            h._free()
+        for h in send_helpers:
+            h._free()
 
     def _end_devices(self) -> None:
         """End the devices on this socket; nng closes the sockets they own."""
@@ -1263,7 +1283,7 @@ class Socket:
                 base_lib.nng_aio_wait(aio)
 
     def __del__(self) -> None:
-        if _is_nng_finalized():
+        if _is_nng_finalized(getattr(self, "_lib", None)):
             return
         try:
             self.close()
@@ -1428,7 +1448,10 @@ class Socket:
     def _acquire_recv_helper(self) -> _aio.AIOHelper:
         pool = self._recv_pool
         while pool:
-            helper = pool.pop()
+            try:
+                helper = pool.pop()
+            except IndexError:
+                break
             if helper.is_valid_for_current_loop():
                 return helper
             helper._free()
@@ -1441,13 +1464,20 @@ class Socket:
             and helper.is_valid_for_current_loop()
         ):
             self._recv_pool.append(helper)
+            if self._socket_closed:
+                helpers, self._recv_pool = self._recv_pool, []
+                for h in helpers:
+                    h._free()
         else:
             helper._free()
 
     def _acquire_send_helper(self) -> _aio.AIOHelper:
         pool = self._send_pool
         while pool:
-            helper = pool.pop()
+            try:
+                helper = pool.pop()
+            except IndexError:
+                break
             if helper.is_valid_for_current_loop():
                 return helper
             helper._free()
@@ -1460,6 +1490,10 @@ class Socket:
             and helper.is_valid_for_current_loop()
         ):
             self._send_pool.append(helper)
+            if self._socket_closed:
+                helpers, self._send_pool = self._send_pool, []
+                for h in helpers:
+                    h._free()
         else:
             helper._free()
 
@@ -1468,13 +1502,12 @@ class Socket:
         Asynchronously send the :class:`Message` ``msg`` on the socket.
 
         """
-        with msg._mem_freed_lock:
-            msg._ensure_can_send()
-            helper = self._acquire_send_helper()
-            try:
-                return await helper.asend_msg(msg)
-            finally:
-                self._release_send_helper(helper)
+        _check_fork()
+        helper = self._acquire_send_helper()
+        try:
+            return await helper.asend_msg(msg)
+        finally:
+            self._release_send_helper(helper)
 
     async def arecv_msg(self) -> Message:
         """
@@ -1701,6 +1734,65 @@ def _resolve_socket(
     return default_lib, default_ffi, cast("_NngSocket", obj)
 
 
+def _resolve_device_owners(
+    s1: Socket | _NngSocket | cffi.FFI.CData,
+    s2: Socket | _NngSocket | cffi.FFI.CData | None,
+    lib: _NngLib,
+) -> list[Socket]:
+    """Resolve participating Python :class:`Socket` wrappers for a device."""
+    base_lib = cast(_BaseLibProtocol, lib)
+    version_tag = "v2" if hasattr(lib, "nng_socket_close") else "v1"
+    owners: list[Socket] = []
+    for s in (s1, s2):
+        if s is None:
+            continue
+        if isinstance(s, Socket):
+            if s not in owners:
+                owners.append(s)
+        else:
+            sock_id = int(base_lib.nng_socket_id(cast("_NngSocket", s)))
+            if sock_id > 0:
+                ref = _active_handles.get((version_tag, sock_id))
+                owner = ref() if ref is not None else None
+                if owner is not None and owner not in owners:
+                    owners.append(owner)
+    return owners
+
+
+def _mark_v2_device_owners_closed(owners: Iterable[Socket], lib: _NngLib) -> None:
+    """Mark v2 sockets closed after ``nng_device_aio`` finishes.
+
+    In NNG v2, ``nng_device_aio`` closes both underlying ``nng_socket``
+    handles in C when the device terminates, but leaves them open if the
+    device was rejected before taking ownership (e.g. cooked sockets failing
+    with ``NNG_EINVAL``) or if ``DeviceAIO`` was freed before ``run()``.
+    Probing ``nng_socket_raw(owner.socket, raw_p) == NNG_ECLOSED`` ensures we
+    only mark wrappers whose underlying C socket was actually closed.
+    """
+    base_lib = cast(_BaseLibProtocol, lib)
+    for owner in owners:
+        raw_p = owner._ffi.new("bool *")
+        if base_lib.nng_socket_raw(owner.socket, raw_p) != base_lib.NNG_ECLOSED:
+            continue
+        with owner._close_lock:
+            owner._socket_closed = True
+        key = (owner._version_tag, int(base_lib.nng_socket_id(owner.socket)))
+        ref = _active_handles.get(key)
+        if ref is not None and (ref() is owner or ref() is None):
+            _active_handles.pop(key, None)
+        if hasattr(owner, "_pipe_event_streams"):
+            for stream in list(owner._pipe_event_streams):
+                stream.close()
+        owner._listeners = {}
+        owner._dialers = {}
+        recv_helpers, owner._recv_pool = owner._recv_pool, []
+        send_helpers, owner._send_pool = owner._send_pool, []
+        for h in recv_helpers:
+            h._free()
+        for h in send_helpers:
+            h._free()
+
+
 def _start_device(
     owners: Iterable[Socket],
     lib: _NngLib,
@@ -1719,11 +1811,16 @@ def _start_device(
             owner._device_aios.add(aio)
 
 
-def _stop_device(owners: Iterable[Socket], aio: _NngAio) -> None:
+def _stop_device(
+    owners: Iterable[Socket], aio: _NngAio, lib: _NngLib | None = None
+) -> None:
     """Forget a device aio; call this when it is done and before it is freed."""
+    owner_list = list(owners)
     with _device_section():
-        for owner in owners:
+        for owner in owner_list:
             owner._device_aios.discard(aio)
+    if lib is not None and hasattr(lib, "nng_socket_close"):
+        _mark_v2_device_owners_closed(owner_list, lib)
 
 
 def _device_sockets(
@@ -1922,8 +2019,16 @@ class Pipe:
         base_lib = cast(_BaseLibProtocol, self._lib)
         dialer = base_lib.nng_pipe_dialer(self.pipe)
         d_id = int(base_lib.nng_dialer_id(dialer))
-        if d_id < 0:
+        if d_id <= 0:
             raise TypeError("This pipe has no associated dialers.")
+        existing = self.socket._dialers.get(d_id)
+        if existing is not None:
+            return existing
+        dialer_p = self._ffi.new("nng_dialer *")
+        dialer_p[0] = dialer
+        dialer_cls = self.socket._dialer_class or Dialer
+        py_dialer = dialer_cls(dialer_p, self.socket)
+        self.socket._dialers.setdefault(d_id, py_dialer)
         return self.socket._dialers[d_id]
 
     @property
@@ -1936,8 +2041,16 @@ class Pipe:
         base_lib = cast(_BaseLibProtocol, self._lib)
         listener = base_lib.nng_pipe_listener(self.pipe)
         l_id = int(base_lib.nng_listener_id(listener))
-        if l_id < 0:
+        if l_id <= 0:
             raise TypeError("This pipe has no associated listeners.")
+        existing = self.socket._listeners.get(l_id)
+        if existing is not None:
+            return existing
+        listener_p = self._ffi.new("nng_listener *")
+        listener_p[0] = listener
+        listener_cls = self.socket._listener_class or Listener
+        py_listener = listener_cls(listener_p, self.socket)
+        self.socket._listeners.setdefault(l_id, py_listener)
         return self.socket._listeners[l_id]
 
     def close(self) -> None:
@@ -2005,6 +2118,10 @@ class Context:
         # need to set attributes first, so that if anything goes wrong,
         # __del__() doesn't throw an AttributeError
         self._context: cffi.FFI.CData | None = None
+        self._ctx_closed = True
+        self._close_lock = threading.Lock()
+        self._recv_pool: list[_aio.AIOHelper] = []
+        self._send_pool: list[_aio.AIOHelper] = []
         assert isinstance(socket, Socket)
         self._socket = socket
         _ffi = socket._ffi
@@ -2017,8 +2134,7 @@ class Context:
             lib=socket._lib,
             ffi=_ffi,
         )
-        self._recv_pool: list[_aio.AIOHelper] = []
-        self._send_pool: list[_aio.AIOHelper] = []
+        self._ctx_closed = False
 
         assert base_lib.nng_ctx_id(self.context) != -1
 
@@ -2035,7 +2151,10 @@ class Context:
     def _acquire_recv_helper(self) -> _aio.AIOHelper:
         pool = self._recv_pool
         while pool:
-            helper = pool.pop()
+            try:
+                helper = pool.pop()
+            except IndexError:
+                break
             if helper.is_valid_for_current_loop():
                 return helper
             helper._free()
@@ -2043,18 +2162,26 @@ class Context:
 
     def _release_recv_helper(self, helper: _aio.AIOHelper) -> None:
         if (
-            self._context is not None
+            not self._ctx_closed
+            and not self._socket._socket_closed
             and len(self._recv_pool) < self._MAX_POOL_SIZE
             and helper.is_valid_for_current_loop()
         ):
             self._recv_pool.append(helper)
+            if self._ctx_closed or self._socket._socket_closed:
+                helpers, self._recv_pool = self._recv_pool, []
+                for h in helpers:
+                    h._free()
         else:
             helper._free()
 
     def _acquire_send_helper(self) -> _aio.AIOHelper:
         pool = self._send_pool
         while pool:
-            helper = pool.pop()
+            try:
+                helper = pool.pop()
+            except IndexError:
+                break
             if helper.is_valid_for_current_loop():
                 return helper
             helper._free()
@@ -2062,11 +2189,16 @@ class Context:
 
     def _release_send_helper(self, helper: _aio.AIOHelper) -> None:
         if (
-            self._context is not None
+            not self._ctx_closed
+            and not self._socket._socket_closed
             and len(self._send_pool) < self._MAX_POOL_SIZE
             and helper.is_valid_for_current_loop()
         ):
             self._send_pool.append(helper)
+            if self._ctx_closed or self._socket._socket_closed:
+                helpers, self._send_pool = self._send_pool, []
+                for h in helpers:
+                    h._free()
         else:
             helper._free()
 
@@ -2252,20 +2384,25 @@ class Context:
 
     def close(self) -> None:
         """Close this context."""
+        with self._close_lock:
+            if self._ctx_closed:
+                return
+            self._ctx_closed = True
         base_lib = cast(_BaseLibProtocol, self._lib)
         from .exceptions import check_err
 
         ctx_err = 0
-        while self._recv_pool:
-            self._recv_pool.pop()._free()
-        while self._send_pool:
-            self._send_pool.pop()._free()
         if self._context is not None:
-            # check that nng still has a reference
             if base_lib.nng_ctx_id(self.context) != -1:
                 ctx_err = base_lib.nng_ctx_close(self.context)
-                self._context = None
-                check_err(ctx_err, lib=self._lib, ffi=self._ffi)
+        recv_helpers, self._recv_pool = self._recv_pool, []
+        send_helpers, self._send_pool = self._send_pool, []
+        for h in recv_helpers:
+            h._free()
+        for h in send_helpers:
+            h._free()
+        if ctx_err not in (0, base_lib.NNG_ECLOSED):
+            check_err(ctx_err, lib=self._lib, ffi=self._ffi)
 
     def __enter__(self: _ContextSelfT) -> _ContextSelfT:
         return self
@@ -2314,7 +2451,9 @@ class Context:
         return cast("_NngCtx", self._context[0])
 
     def __del__(self) -> None:
-        if _is_nng_finalized():
+        if getattr(self, "_ctx_closed", True) or _is_nng_finalized(
+            getattr(self, "_lib", None)
+        ):
             return
         try:
             self.close()
@@ -2325,13 +2464,12 @@ class Context:
         """
         Asynchronously send the :class:`Message` ``msg`` on the context.
         """
-        with msg._mem_freed_lock:
-            msg._ensure_can_send()
-            helper = self._acquire_send_helper()
-            try:
-                return await helper.asend_msg(msg)
-            finally:
-                self._release_send_helper(helper)
+        _check_fork()
+        helper = self._acquire_send_helper()
+        try:
+            return await helper.asend_msg(msg)
+        finally:
+            self._release_send_helper(helper)
 
     async def arecv_msg(self) -> Message:
         """
@@ -2369,7 +2507,7 @@ class Message:
 
     def __init__(
         self,
-        data: ReadableBuffer | _NngMsg | cffi.FFI.CData,
+        data: ReadableBuffer | _NngMsg | cffi.FFI.CData = b"",
         pipe: Pipe | None = None,
         *,
         _lib: _NngLib | None = None,
@@ -2452,16 +2590,22 @@ class Message:
         if not isinstance(pipe, Pipe):
             msg = f"pipe must be type Pipe, not {type(pipe)}"
             raise ValueError(msg)
+        if pipe._lib is not self.__lib:
+            raise ValueError(
+                "Cannot attach a Pipe from a different nng library version"
+            )
         from .exceptions import check_err
 
-        check_err(
-            cast(_BaseLibProtocol, self.__lib).nng_msg_set_pipe(
-                self._nng_msg, pipe.pipe
-            ),
-            lib=self.__lib,
-            ffi=self.__ffi,
-        )
-        self._pipe = pipe
+        with self._mem_freed_lock:
+            self._ensure_can_send()
+            check_err(
+                cast(_BaseLibProtocol, self.__lib).nng_msg_set_pipe(
+                    self._nng_msg, pipe.pipe
+                ),
+                lib=self.__lib,
+                ffi=self.__ffi,
+            )
+            self._pipe = pipe
 
     @property
     def _buffer(self) -> cffi.FFI.buffer:
@@ -2597,7 +2741,7 @@ class Message:
         return self.copy()
 
     def __del__(self) -> None:
-        if _is_nng_finalized():
+        if _is_nng_finalized(getattr(self, "_Message__lib", None)):
             return
         if not hasattr(self, "_mem_freed_lock"):
             return

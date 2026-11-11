@@ -173,6 +173,21 @@ def test_message_pipe_setter_rejects_non_pipe():
         msg.pipe = 42
 
 
+def test_message_pipe_setter_after_send_raises_message_state_error():
+    """Setting msg.pipe on a sent message raises MessageStateError instead of dereferencing freed memory."""
+    addr = random_addr()
+    with pynng.Pair0(listen=addr, recv_timeout=FAST_TIMEOUT) as s1, pynng.Pair0(
+        dial=addr, recv_timeout=FAST_TIMEOUT
+    ) as s2:
+        wait_pipe_len(s1, 1)
+        pipe = s1.pipes[0]
+        msg = pynng.Message(b"already-sent")
+        s1.send_msg(msg)
+        assert s2.recv() == b"already-sent"
+        with pytest.raises(pynng.MessageStateError):
+            msg.pipe = pipe
+
+
 def test_message_mem_freed_after_send():
     """Verify that sending a message marks it as freed so __del__ doesn't double-free"""
     addr = random_addr()

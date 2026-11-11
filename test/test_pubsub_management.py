@@ -130,28 +130,17 @@ def test_topic_filtering_integration():
     """Integration test: only messages matching subscribed topics are received."""
     addr = random_addr()
     with pynng.Pub0(listen=addr) as pub, \
-         pynng.Sub0(dial=addr, recv_timeout=FAST_TIMEOUT) as sub:
+         pynng.Sub0(dial=addr, topics=b"even:", recv_timeout=FAST_TIMEOUT) as sub:
         wait_pipe_len(pub, 1)
-
-        # Subscribe only to "even:" topics
-        sub.subscribe(b"even:")
-        time.sleep(0.05)  # brief settle for subscription propagation
 
         pub.send(b"even:2")
         pub.send(b"odd:1")
         pub.send(b"even:4")
 
-        received = []
-        for _ in range(3):
-            try:
-                msg = sub.recv()
-                received.append(msg)
-            except pynng.Timeout:
-                break
-
-        assert b"even:2" in received
-        assert b"even:4" in received
-        assert b"odd:1" not in received
+        received = [sub.recv(), sub.recv()]
+        assert received == [b"even:2", b"even:4"]
+        with pytest.raises(pynng.TryAgain):
+            sub.recv_nowait()
 
 
 @pytest.mark.skipif(

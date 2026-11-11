@@ -167,7 +167,7 @@ async def test_pipe_events_stops_after_close():
 
 @pytest.mark.asyncio
 async def test_pipe_events_multiple_streams():
-    """Multiple streams on the same socket each receive events."""
+    """Multiple streams on the same socket each receive events and closing one leaves the other active."""
     addr = "inproc://test-pipe-events-multi"
     with pynng.Pair0(listen=addr) as s0:
         stream1 = s0.pipe_events()
@@ -177,9 +177,40 @@ async def test_pipe_events_multiple_streams():
                 event1 = await asyncio.wait_for(stream1.__anext__(), timeout=5)
                 event2 = await asyncio.wait_for(stream2.__anext__(), timeout=5)
                 assert event1.event_type == event2.event_type
+
+                stream1.close()
+            # Closing s1 triggers remove event on remaining stream2
+            events2 = [event2]
+            while not any(e.event_type == "remove" for e in events2):
+                events2.append(await asyncio.wait_for(stream2.__anext__(), timeout=5))
+            assert any(e.event_type == "remove" for e in events2)
         finally:
             stream1.close()
             stream2.close()
+
+
+@pytest.mark.asyncio
+async def test_v2_pipe_events_and_socket_close():
+    """pynng.v2 pipe_events() emits v2 PipeEvent objects and terminates when socket closes."""
+    from pynng import v2
+
+    addr = "inproc://test-v2-pipe-events"
+    s0 = v2.Pair0(listen=addr)
+    stream = s0.pipe_events()
+    with v2.Pair0(dial=addr) as s1:
+        events = []
+        while not any(e.event_type == "post_add" for e in events):
+            events.append(await asyncio.wait_for(stream.__anext__(), timeout=5))
+        post_add = next(e for e in events if e.event_type == "post_add")
+        assert isinstance(post_add, v2.PipeEvent)
+        assert isinstance(post_add.pipe, v2.Pipe)
+    # Drain remaining events and close s0; stream must terminate with StopAsyncIteration
+    s0.close()
+    while True:
+        try:
+            await asyncio.wait_for(stream.__anext__(), timeout=5)
+        except StopAsyncIteration:
+            break
 
 
 # --- Trio variants ---

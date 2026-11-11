@@ -150,7 +150,7 @@ class MPSCAIOEngine:
     )
 
     _loop_engines: weakref.WeakKeyDictionary[
-        asyncio.AbstractEventLoop, dict[int, MPSCAIOEngine]
+        asyncio.AbstractEventLoop, dict[int, MPSCAIOEngine | None]
     ] = weakref.WeakKeyDictionary()
     _lock = threading.Lock()
 
@@ -172,6 +172,8 @@ class MPSCAIOEngine:
             self._read_fd = r
             self._write_fd = w
             self._queue = aio_lib.pynng_mpsc_queue_new(w)
+            if self._queue == ffi.NULL:
+                raise MemoryError("pynng_mpsc_queue_new failed")
             self._slots: dict[int, asyncio.Future[None]] = {}
             self._slot_counter = 0
             self._batch_size = 256
@@ -202,7 +204,8 @@ class MPSCAIOEngine:
             for existing_loop, existing_by_lib in list(cls._loop_engines.items()):
                 if existing_loop.is_closed():
                     for eng in existing_by_lib.values():
-                        eng.close()
+                        if eng is not None:
+                            eng.close()
                     cls._loop_engines.pop(existing_loop, None)
 
             by_lib = cls._loop_engines.get(loop)
@@ -210,13 +213,18 @@ class MPSCAIOEngine:
                 by_lib = {}
                 cls._loop_engines[loop] = by_lib
             lib_key = id(lib)
-            engine = by_lib.get(lib_key)
-            if engine is None or engine._closed:
-                try:
-                    engine = cls(loop, lib, ffi)
-                    by_lib[lib_key] = engine
-                except (AttributeError, NotImplementedError, OSError, RuntimeError):
+            if lib_key in by_lib:
+                engine = by_lib[lib_key]
+                if engine is None:
                     return None
+                if not engine._closed:
+                    return engine
+            try:
+                engine = cls(loop, lib, ffi)
+                by_lib[lib_key] = engine
+            except (AttributeError, NotImplementedError, OSError, RuntimeError):
+                by_lib[lib_key] = None
+                return None
             return engine
 
     def _on_notify(self) -> None:
@@ -339,15 +347,23 @@ def asyncio_helper(
     async def wait_for_aio() -> None:
         assert aio.aio is not None
         already_called_nng_aio_cancel = False
-        while True:
-            try:
-                await asyncio.shield(fut)
-            except asyncio.CancelledError:
-                if not already_called_nng_aio_cancel:
-                    aio_lib.nng_aio_cancel(aio.aio)
-                    already_called_nng_aio_cancel = True
-            else:
-                break
+        try:
+            while True:
+                try:
+                    await asyncio.shield(fut)
+                except asyncio.CancelledError:
+                    if not already_called_nng_aio_cancel:
+                        aio_lib.nng_aio_cancel(aio.aio)
+                        already_called_nng_aio_cancel = True
+                    if fut.cancelled():
+                        aio_lib.nng_aio_wait(aio.aio)
+                        raise
+                else:
+                    break
+        except BaseException:
+            aio_lib.nng_aio_cancel(aio.aio)
+            aio_lib.nng_aio_wait(aio.aio)
+            raise
         err = aio_lib.nng_aio_result(aio.aio)
         if already_called_nng_aio_cancel or err == _lib.NNG_ECANCELED:
             raise asyncio.CancelledError
@@ -400,7 +416,12 @@ def trio_helper(
             return trio.lowlevel.Abort.FAILED
 
         # Put the Trio task to sleep.
-        await trio.lowlevel.wait_task_rescheduled(abort_fn)
+        try:
+            await trio.lowlevel.wait_task_rescheduled(abort_fn)
+        except BaseException:
+            aio_lib.nng_aio_cancel(aio.aio)
+            aio_lib.nng_aio_wait(aio.aio)
+            raise
 
         err = aio_lib.nng_aio_result(aio.aio)
         if err == _lib.NNG_ECANCELED and raise_cancel_fn is not None:
@@ -446,7 +467,8 @@ class AIOHelper:
         "_sending",
         "cb_arg",
         "awaitable",
-        "obj",
+        "_obj_ref",
+        "_message_class",
         "_lib",
         "_ffi",
         "_nng_obj",
@@ -524,11 +546,17 @@ class AIOHelper:
             else:
                 self._lib_arecv = aio_lib.nng_recv_aio
                 self._lib_asend = aio_lib.nng_send_aio
+            self._message_class: type[_base.Message] = (
+                obj._message_class or _base.Message
+            )
         else:
             self._nng_obj = obj.context
             self._lib_arecv = aio_lib.nng_ctx_recv
             self._lib_asend = aio_lib.nng_ctx_send
-        self.obj = obj
+            self._message_class = obj._socket._message_class or _base.Message
+        self._obj_ref: weakref.ReferenceType[_base.Socket | _base.Context] = (
+            weakref.ref(obj)
+        )
         if async_backend is None:
             async_backend = sniffio.current_async_library()
         if async_backend not in self._aio_helper_map:
@@ -550,14 +578,22 @@ class AIOHelper:
             self._aio_entry = aio_lib.pynng_aio_entry_new(
                 _ffi.NULL, 0, self._mpsc_engine._queue
             )
+            if cast("cffi.FFI.CData", self._aio_entry) == _ffi.NULL:
+                self._aio_entry = None
+                raise MemoryError("pynng_aio_entry_new failed")
             aio_p = _ffi.new("nng_aio **")
-            check_err(
-                aio_lib.nng_aio_alloc(
-                    aio_p, aio_lib.pynng_native_aio_complete, self._aio_entry
-                ),
-                lib=_lib,
-                ffi=_ffi,
-            )
+            try:
+                check_err(
+                    aio_lib.nng_aio_alloc(
+                        aio_p, aio_lib.pynng_native_aio_complete, self._aio_entry
+                    ),
+                    lib=_lib,
+                    ffi=_ffi,
+                )
+            except BaseException:
+                aio_lib.pynng_aio_entry_free(self._aio_entry)
+                self._aio_entry = None
+                raise
             self.aio = cast("_NngAio", aio_p[0])
         else:
             self.awaitable, self.cb_arg = self._aio_helper_map[async_backend](self)
@@ -575,6 +611,10 @@ class AIOHelper:
                 _aio_map.pop(idarg, None)
                 raise
             self.aio = cast("_NngAio", aio_p[0])
+
+    @property
+    def obj(self) -> _base.Socket | _base.Context | None:
+        return self._obj_ref()
 
     def is_valid_for_current_loop(self) -> bool:
         engine = self._mpsc_engine
@@ -642,8 +682,15 @@ class AIOHelper:
                         if not already_cancelled:
                             aio_lib.nng_aio_cancel(self.aio)
                             already_cancelled = True
+                        if fut.cancelled():
+                            aio_lib.nng_aio_wait(self.aio)
+                            raise
                     else:
                         break
+            except BaseException:
+                aio_lib.nng_aio_cancel(self.aio)
+                aio_lib.nng_aio_wait(self.aio)
+                raise
             finally:
                 if self._current_slot is not None:
                     self._mpsc_engine.unregister(self._current_slot)
@@ -685,18 +732,7 @@ class AIOHelper:
         check_err(aio_lib.nng_aio_result(self.aio), lib=_lib, ffi=_ffi)
         msg = aio_lib.nng_aio_get_msg(self.aio)
         aio_lib.nng_aio_set_msg(self.aio, _ffi.NULL)
-        from ._base import Context, Message, Socket
-
-        # Use the socket's message class if available
-        msg_cls: type[Message] = Message
-        if isinstance(self.obj, Socket) and self.obj._message_class is not None:
-            msg_cls = self.obj._message_class
-        elif (
-            isinstance(self.obj, Context)
-            and self.obj._socket._message_class is not None
-        ):
-            msg_cls = self.obj._socket._message_class
-        return msg_cls(msg, _lib=_lib, _ffi=_ffi)
+        return self._message_class(msg, _lib=_lib, _ffi=_ffi)
 
     async def asend(self, data: _base.ReadableBuffer) -> None:
         assert self.aio is not None
@@ -743,18 +779,18 @@ class AIOHelper:
         _lib = self._lib
         _ffi = self._ffi
         aio_lib = cast(_AioLibProtocol, _lib)
-        msg._ensure_can_send()
-        self._prepare_aio()
-        aio_lib.nng_aio_set_msg(self.aio, msg._nng_msg)
-        msg._mem_freed = True
-        self._sending = True
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
+            msg._mem_freed = True
         try:
+            self._prepare_aio()
+            aio_lib.nng_aio_set_msg(self.aio, msg._nng_msg)
             self._lib_asend(self._nng_obj, self.aio)
         except BaseException:
-            self._sending = False
             self._cleanup_prepared_aio()
             aio_lib.nng_aio_set_msg(self.aio, _ffi.NULL)
-            aio_lib.nng_msg_free(msg._nng_msg)
+            with msg._mem_freed_lock:
+                msg._mem_freed = False
             raise
         try:
             await self._wait_for_aio()
@@ -762,17 +798,16 @@ class AIOHelper:
             leftover = aio_lib.nng_aio_get_msg(self.aio)
             if cast("cffi.FFI.CData", leftover) != _ffi.NULL:
                 aio_lib.nng_aio_set_msg(self.aio, _ffi.NULL)
-                aio_lib.nng_msg_free(leftover)
+                with msg._mem_freed_lock:
+                    msg._mem_freed = False
             raise
-        finally:
-            self._sending = False
 
     def _free(self) -> None:
         """
         Free resources allocated with nng
         """
         try:
-            if _is_nng_finalized():
+            if _is_nng_finalized(getattr(self, "_lib", None)):
                 self.aio = None
                 self._aio_entry = None
                 if self.cb_arg is not None:
@@ -785,6 +820,10 @@ class AIOHelper:
             self._mpsc_engine.unregister(self._current_slot)
             self._current_slot = None
         self._current_fut = None
+
+        if self.cb_arg is not None:
+            _aio_map.pop(id(self.cb_arg), None)
+            self.cb_arg = None
 
         if self.aio is not None:
             _lib = self._lib
@@ -810,10 +849,6 @@ class AIOHelper:
             loop = self._mpsc_engine._loop
             if loop is None or loop.is_closed():
                 self._mpsc_engine.close()
-
-        if self.cb_arg is not None:
-            _aio_map.pop(id(self.cb_arg), None)
-            self.cb_arg = None
 
         if self.awaitable is not None:
             try:
@@ -882,7 +917,7 @@ class DeviceAIO:
         self._lib, self._ffi, sock1, sock2 = _base._device_sockets(
             s1, s2, _default_lib, _default_ffi
         )
-        self._owners = tuple(s for s in (s1, s2) if isinstance(s, _base.Socket))
+        self._owners = tuple(_base._resolve_device_owners(s1, s2, self._lib))
         self._sock1 = sock1
         self._sock2 = sock2
         aio_lib = cast(_AioLibProtocol, self._lib)
@@ -911,14 +946,22 @@ class DeviceAIO:
             self._aio_entry = aio_lib.pynng_aio_entry_new(
                 self._ffi.NULL, 0, self._mpsc_engine._queue
             )
+            if cast("cffi.FFI.CData", self._aio_entry) == self._ffi.NULL:
+                self._aio_entry = None
+                raise MemoryError("pynng_aio_entry_new failed")
             aio_p = self._ffi.new("nng_aio **")
-            check_err(
-                aio_lib.nng_aio_alloc(
-                    aio_p, aio_lib.pynng_native_aio_complete, self._aio_entry
-                ),
-                lib=self._lib,
-                ffi=self._ffi,
-            )
+            try:
+                check_err(
+                    aio_lib.nng_aio_alloc(
+                        aio_p, aio_lib.pynng_native_aio_complete, self._aio_entry
+                    ),
+                    lib=self._lib,
+                    ffi=self._ffi,
+                )
+            except BaseException:
+                aio_lib.pynng_aio_entry_free(self._aio_entry)
+                self._aio_entry = None
+                raise
             self.aio = cast("_NngAio", aio_p[0])
         else:
             self.awaitable, self.cb_arg = AIOHelper._aio_helper_map[async_backend](self)
@@ -965,8 +1008,15 @@ class DeviceAIO:
                             if not already_cancelled:
                                 aio_lib.nng_aio_cancel(self.aio)
                                 already_cancelled = True
+                            if fut.cancelled():
+                                aio_lib.nng_aio_wait(self.aio)
+                                raise
                         else:
                             break
+                except BaseException:
+                    aio_lib.nng_aio_cancel(self.aio)
+                    aio_lib.nng_aio_wait(self.aio)
+                    raise
                 finally:
                     if self._current_slot is not None:
                         self._mpsc_engine.unregister(self._current_slot)
@@ -988,7 +1038,7 @@ class DeviceAIO:
 
     def _free(self) -> None:
         try:
-            if _is_nng_finalized():
+            if _is_nng_finalized(getattr(self, "_lib", None)):
                 self.aio = None
                 self._aio_entry = None
                 if self.cb_arg is not None:
@@ -1001,11 +1051,15 @@ class DeviceAIO:
             self._mpsc_engine.unregister(self._current_slot)
             self._current_slot = None
 
+        if self.cb_arg is not None:
+            _aio_map.pop(id(self.cb_arg), None)
+            self.cb_arg = None
+
         if self.aio is not None:
             aio_lib = cast(_AioLibProtocol, self._lib)
             aio_lib.nng_aio_cancel(self.aio)
             aio_lib.nng_aio_wait(self.aio)
-            self._stop_device(self._owners, self.aio)
+            self._stop_device(self._owners, self.aio, self._lib)
             aio_lib.nng_aio_free(self.aio)
             self.aio = None
 
@@ -1017,10 +1071,6 @@ class DeviceAIO:
             loop = self._mpsc_engine._loop
             if loop is None or loop.is_closed():
                 self._mpsc_engine.close()
-
-        if self.cb_arg is not None:
-            _aio_map.pop(id(self.cb_arg), None)
-            self.cb_arg = None
 
         if self.awaitable is not None:
             try:

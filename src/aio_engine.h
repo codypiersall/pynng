@@ -190,6 +190,16 @@ void pynng_native_aio_complete(void *arg) {
         q->entries[q->head] = entry;
         q->head = (q->head + 1) % q->capacity;
         q->count++;
+    } else {
+        /* Allocation failed while growing the ring buffer; revert entry state
+           to IDLE (0) so it does not remain permanently stuck in QUEUED (1). */
+        atomic_store_explicit(&entry->state, 0, memory_order_release);
+#if defined(_WIN32)
+        LeaveCriticalSection(&q->cs);
+#else
+        pthread_mutex_unlock(&q->lock);
+#endif
+        return;
     }
 
     /* Written under the lock: pynng_mpsc_queue_close() takes the lock, so once
@@ -350,7 +360,18 @@ void pynng_sync_recv_free(pynng_sync_recv_t *r) {
     if (!r) return;
     /* nng_aio_free() waits for a running callback to return, and the
        callback still holds the mutex after it sets done. */
-    if (r->aio) nng_aio_free(r->aio);
+    if (r->aio) {
+        if (!r->done) {
+            nng_aio_cancel(r->aio);
+            nng_aio_wait(r->aio);
+        }
+        nng_msg *msg = nng_aio_get_msg(r->aio);
+        if (msg) {
+            nng_aio_set_msg(r->aio, NULL);
+            nng_msg_free(msg);
+        }
+        nng_aio_free(r->aio);
+    }
     if (r->cv) nng_cv_free(r->cv);
     if (r->mtx) nng_mtx_free(r->mtx);
     free(r);

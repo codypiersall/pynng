@@ -219,27 +219,55 @@ async def test_can_asend_from_pipe():
         assert await s1.arecv() == b"msg from pipe async"
 
 
-def test_bad_callbacks_dont_cause_extra_failures():
+def test_bad_callbacks_dont_cause_extra_failures(caplog):
+    import logging
+
     called_pre_connect = False
+    called_post_connect = False
+    called_post_remove = False
 
     def pre_connect_cb(pipe):
         nonlocal called_pre_connect
         called_pre_connect = True
 
+    def post_connect_cb(pipe):
+        nonlocal called_post_connect
+        called_post_connect = True
+
+    def post_remove_cb(pipe):
+        nonlocal called_post_remove
+        called_post_remove = True
+
     addr = random_addr()
-    with pynng.Pair0(listen=addr) as s0:
-        # adding something that is not a callback should still allow correct
-        # things to work.
-        s0.add_pre_pipe_connect_cb(8)
-        s0.add_pre_pipe_connect_cb(pre_connect_cb)
-        with pynng.Pair0(dial=addr) as _:
-            wait_pipe_len(s0, 1)
+    with caplog.at_level(logging.ERROR):
+        with pynng.Pair0(listen=addr) as s0:
+            # adding something that is not a callback should still allow correct
+            # things to work across pre_connect, post_connect, and post_remove.
+            s0.add_pre_pipe_connect_cb(8)
+            s0.add_pre_pipe_connect_cb(pre_connect_cb)
+            s0.add_post_pipe_connect_cb(8)
+            s0.add_post_pipe_connect_cb(post_connect_cb)
+            s0.add_post_pipe_remove_cb(8)
+            s0.add_post_pipe_remove_cb(post_remove_cb)
+            with pynng.Pair0(dial=addr) as _:
+                wait_pipe_len(s0, 1)
+                later = time.monotonic() + 10
+                while later > time.monotonic():
+                    if called_pre_connect and called_post_connect:
+                        break
+                    time.sleep(0.0005)
+                assert called_pre_connect
+                assert called_post_connect
             later = time.monotonic() + 10
             while later > time.monotonic():
-                if called_pre_connect:
+                if called_post_remove:
                     break
                 time.sleep(0.0005)
-            assert called_pre_connect
+            assert called_post_remove
+    assert any(
+        "Exception raised in pipe callback" in record.message
+        for record in caplog.records
+    )
 
 
 def test_pipe_dialer_property():

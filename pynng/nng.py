@@ -306,10 +306,12 @@ class Socket(_base.Socket):
     def stat(self, name: str) -> int | str | bool | None:
         """Get a single statistic value by name for this socket."""
         st = socket_stats(self)
-        assert st is not None
-        child = st[name]
-        assert isinstance(child, Stat)
-        return child.value
+        if st is None:
+            raise KeyError(name)
+        for child in st.children:
+            if child.name == name:
+                return child.value
+        raise KeyError(name)
 
     if TYPE_CHECKING:
 
@@ -868,8 +870,8 @@ class Sub0(Socket):
         """
         if isinstance(topic, str):
             topic = topic.encode()
-        options._setopt_string_nonnull(self, b"sub:subscribe", topic)
         with self._sub_lock:
+            options._setopt_string_nonnull(self, b"sub:subscribe", topic)
             self._subscriptions.add(topic)
 
     def unsubscribe(self, topic: str | bytes) -> None:
@@ -884,8 +886,8 @@ class Sub0(Socket):
         """
         if isinstance(topic, str):
             topic = topic.encode()
-        options._setopt_string_nonnull(self, b"sub:unsubscribe", topic)
         with self._sub_lock:
+            options._setopt_string_nonnull(self, b"sub:unsubscribe", topic)
             self._subscriptions.discard(topic)
 
     def subscribe_all(self, topics: Iterable[str | bytes]) -> None:
@@ -1120,6 +1122,7 @@ class Surveyor0(Socket):
             self.survey_time = survey_time
 
     def send(self, data: _base.ReadableBuffer, block: bool = True) -> None:
+        _ensure_can_send(data)
         if not self.raw:
             self._survey_active = True
             try:
@@ -1131,6 +1134,8 @@ class Surveyor0(Socket):
             super().send(data, block=block)
 
     def send_msg(self, msg: _base.Message, block: bool = True) -> None:
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
         if not self.raw:
             self._survey_active = True
             try:
@@ -1142,6 +1147,7 @@ class Surveyor0(Socket):
             super().send_msg(msg, block=block)
 
     async def asend(self, data: _base.ReadableBuffer) -> None:
+        _ensure_can_send(data)
         if not self.raw:
             self._survey_active = True
             try:
@@ -1153,6 +1159,8 @@ class Surveyor0(Socket):
             await super().asend(data)
 
     async def asend_msg(self, msg: _base.Message) -> None:
+        with msg._mem_freed_lock:
+            msg._ensure_can_send()
         if not self.raw:
             self._survey_active = True
             try:
@@ -2056,7 +2064,7 @@ def _device(
     _base._mark_nng_initialized()
     _lib, _ffi, s1_raw, s2_raw = _base._device_sockets(s1, s2, default_lib, default_ffi)
     base_lib = cast(_base._BaseLibProtocol, _lib)
-    owners = [s for s in (s1, s2) if isinstance(s, _base.Socket)]
+    owners = _base._resolve_device_owners(s1, s2, _lib)
     aio_p = _ffi.new("nng_aio **")
     check_err(base_lib.nng_aio_alloc(aio_p, _ffi.NULL, _ffi.NULL), lib=_lib, ffi=_ffi)
     aio: _base._NngAio = aio_p[0]
@@ -2065,7 +2073,7 @@ def _device(
         try:
             base_lib.nng_aio_wait(aio)
         finally:
-            _base._stop_device(owners, aio)
+            _base._stop_device(owners, aio, _lib)
         check_err(base_lib.nng_aio_result(aio), lib=_lib, ffi=_ffi)
     finally:
         base_lib.nng_aio_free(aio)
