@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 dependencies = ["cffi>=1.15.0", "sniffio>=1.3.0"]
-description = "Networking made simply using nng"
+description = "Networking made simple, using nng"
 license = "MIT"
 license-files = ["LICENSE.txt", "LICENSES_THIRD_PARTY.txt"]
 dynamic = ["version"]
