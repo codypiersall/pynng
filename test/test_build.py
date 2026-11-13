@@ -2115,8 +2115,8 @@ class TestAioEngineHeader:
         with open(cmake_path, encoding="utf-8") as f:
             cmake_src = f.read()
         assert "set(CMAKE_C_VISIBILITY_PRESET hidden)" in cmake_src
-        assert "LINKER:-exported_symbol,_PyInit__nng" in cmake_src
-        assert "LINKER:-exported_symbol,_PyInit__nng_v2" in cmake_src
+        assert "LINKER:-exported_symbol,*[Ii]nit__nng" in cmake_src
+        assert "LINKER:-exported_symbol,*[Ii]nit__nng_v2" in cmake_src
         assert "LINKER:--exclude-libs,ALL" in cmake_src
 
         for ext_mod, expected_init in (

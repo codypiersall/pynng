@@ -83,7 +83,7 @@ jobs:
         uses: pypa/cibuildwheel@v4.3.5
         env:
           CIBW_ENVIRONMENT_WINDOWS: CMAKE_C_COMPILER_LAUNCHER=sccache SCCACHE_DIRECT=true
-          CIBW_ENVIRONMENT_MACOS: CMAKE_C_COMPILER_LAUNCHER=sccache SCCACHE_DIRECT=true
+          CIBW_ENVIRONMENT_MACOS: CMAKE_C_COMPILER_LAUNCHER=sccache SCCACHE_DIRECT=true SCCACHE_CACHE_MULTIARCH=1
 
       - uses: actions/upload-artifact@v7
         with:
