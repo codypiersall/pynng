@@ -122,28 +122,27 @@ async def test_pub_sub_trio():
     def is_even(i):
         return i % 2 == 0
 
-    async def pub():
+    async def pub(pubber):
         # Both subscribers set their topic before they dial, and the send
         # buffer holds every message this test sends to a pipe, so no message
         # can be dropped once both pipes are started.
-        with pynng.Pub0(send_buffer_size=128) as pubber:
-            async with pubber.pipe_events() as events:
-                pubber.listen(addr)
-                started = 0
-                async for event in events:
-                    if event.event_type == "post_add":
-                        started += 1
-                        if started == 2:
-                            break
+        async with pubber.pipe_events() as events:
+            pubber.listen(addr)
+            started = 0
+            async for event in events:
+                if event.event_type == "post_add":
+                    started += 1
+                    if started == 2:
+                        break
 
-            for i in range(20):
-                prefix = "even" if is_even(i) else "odd"
-                msg = f"{prefix}:{i}"
-                await pubber.asend(msg.encode("ascii"))
+        for i in range(20):
+            prefix = "even" if is_even(i) else "odd"
+            msg = f"{prefix}:{i}"
+            await pubber.asend(msg.encode("ascii"))
 
-            # signal completion
-            await pubber.asend(b"odd:None")
-            await pubber.asend(b"even:None")
+        # signal completion
+        await pubber.asend(b"odd:None")
+        await pubber.asend(b"even:None")
 
     async def subs(which):
         if which == "even":
@@ -170,13 +169,14 @@ async def test_pub_sub_trio():
                 f"expected {expected_values!r}"
             )
 
-    async with trio.open_nursery() as n:
-        # whip up the subs
-        for _, lot in itertools.product(range(1), ("even", "odd")):
-            n.start_soon(subs, lot)
+    with pynng.Pub0(send_buffer_size=128) as pubber:
+        async with trio.open_nursery() as n:
+            # whip up the subs
+            for _, lot in itertools.product(range(1), ("even", "odd")):
+                n.start_soon(subs, lot)
 
-        # head over to the pub
-        await pub()
+            # head over to the pub
+            await pub(pubber)
 
 
 @pytest.mark.asyncio
