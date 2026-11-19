@@ -62,7 +62,7 @@ Documentation = "https://pynng.readthedocs.io/en/latest/"
 [build-system]
 build-backend = "scikit_build_core.build"
 requires = [
-    "scikit-build-core>=0.8.0",
+    "scikit-build-core>=1.1.2",
     "cffi",
     "setuptools-scm",
 ]
